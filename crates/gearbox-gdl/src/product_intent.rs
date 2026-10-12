@@ -327,21 +327,26 @@ fn build_gears(
         ) else {
             continue;
         };
-        let source = match SourceId::new(record.source.clone()) {
-            Ok(id) => id,
-            Err(e) => {
+        // Absent means "whichever open source declares it", which only the
+        // catalogue can answer; a source that is written must still be one the
+        // description declares.
+        let source = match record.source.as_deref().map(|s| (s, SourceId::new(s))) {
+            None => None,
+            Some((_, Ok(id))) => Some(id),
+            Some((written, Err(e))) => {
                 diagnostics.push(invalid(
                     Location::or_file(record.declared_at.as_ref(), uri),
                     format!(
-                        "use_gear(\"{gear}\", source = \"{}\") is not a valid source id: {e}",
-                        record.source
+                        "use_gear(\"{gear}\", source = \"{written}\") is not a valid source id: {e}"
                     ),
                     "source ids are kebab-case",
                 ));
                 continue;
             }
         };
-        if !sources.contains_key(&source) {
+        if let Some(source) = &source
+            && !sources.contains_key(source)
+        {
             diagnostics.push(invalid(
                 Location::or_file(record.declared_at.as_ref(), uri),
                 format!("use_gear(\"{gear}\") names source `{source}`, which is not declared"),
@@ -365,7 +370,10 @@ fn build_gears(
         // dropping them on a path source would let a description carry a
         // requirement nobody honours -- the reader would believe a version was
         // pinned when the directory on disk is whatever it is.
-        if !matches!(sources.get(&source), Some(SourceDecl::Registry { .. })) {
+        if !matches!(
+            source.as_ref().and_then(|s| sources.get(s)),
+            Some(SourceDecl::Registry { .. })
+        ) {
             for (field, value) in [
                 ("version", record.version.as_ref()),
                 ("package", record.package.as_ref()),
@@ -373,7 +381,14 @@ fn build_gears(
                 if value.is_some() {
                     diagnostics.push(invalid(
                         Location::or_file(record.declared_at.as_ref(), uri),
-                        format!("`{gear}` sets `{field}`, but source `{source}` is not a registry"),
+                        match &source {
+                            Some(source) => format!(
+                                "`{gear}` sets `{field}`, but source `{source}` is not a registry"
+                            ),
+                            None => format!(
+                                "`{gear}` sets `{field}`, but names no source to take it from"
+                            ),
+                        },
                         format!(
                             "remove `{field}`, or declare the source as \
                              `registry(\"crates.io\")`"

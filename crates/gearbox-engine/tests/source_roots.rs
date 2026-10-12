@@ -74,13 +74,13 @@ fn open(id: &str, path: &Path) -> SourceRoot {
 }
 
 #[test]
-fn two_roots_declaring_one_gear_keep_the_first_and_say_so() {
+fn two_roots_declaring_one_gear_keep_the_first_and_list_the_other() {
     let first = root("from the first root");
     let second = root("from the second root");
     let scan = load_catalogue(&[open("alpha", &first), open("beta", &second)]);
 
-    // One entry, not two: the id is the identity, and two entries under one id is
-    // not a state the rest of the engine has a meaning for.
+    // One entry in `gears`: the id is the identity every join uses. Without a
+    // product to choose, the first root's copy is the one there.
     let id = GearId::new("demo").unwrap();
     let kept = scan
         .catalogue
@@ -97,25 +97,26 @@ fn two_roots_declaring_one_gear_keep_the_first_and_say_so() {
         "and it is recorded as coming from the root it was read from"
     );
 
-    // And the collision is reported rather than resolved silently. A catalogue that
-    // picked a side without saying so was the previous behaviour, and it disagreed
-    // with its own diagnostic, which claimed both were declared and kept neither
-    // in particular.
-    let complaint = scan
+    // The other copy is listed, not reported. Two sources declaring one id is
+    // an organization's fork of a platform gear, which a product chooses
+    // between with `use_gear(id, source = ...)` (tests/source_choice.rs); the
+    // error is reserved for a product that had to choose and did not (GBX0325).
+    assert!(
+        !scan
+            .catalogue
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "GBX0105"),
+        "{:?}",
+        scan.catalogue.diagnostics
+    );
+    let other: Vec<(&str, Option<&str>)> = scan
         .catalogue
-        .diagnostics
+        .alternatives
         .iter()
-        .find(|d| d.code.as_str() == "GBX0105")
-        .expect("a duplicate gear id is an error");
-    let message = &complaint.message;
-    assert!(
-        message.contains("alpha") && message.contains("beta"),
-        "the message has to name both sources, or it cannot be acted on: {message}"
-    );
-    assert!(
-        message.contains("the first is the one in the catalogue"),
-        "and it has to say which one won: {message}"
-    );
+        .map(|g| (g.source.as_str(), g.description.as_deref()))
+        .collect();
+    assert_eq!(other, [("beta", Some("from the second root"))]);
 }
 
 #[test]

@@ -366,6 +366,10 @@ Path dependencies reached from patched crates or from path gears, `workspace = t
 
 `git` and `source` are keyword-only. `path` / `registry` take the first string positionally. `path(...)` is relative to the product file. `git` with only `branch` pins a moving line; accepted, recorded as such.
 
+**Several sources, and which root is which.** The engine reads directories, never fetches: a caller checks each source out and passes one root per source. `--root ID=DIR` names the `source(id = ...)` a checkout is, which is how a `git(...)` source arrives (`gearbox resolve --root platform=/co/platform --root org=/co/org --product product.gdl`). A bare `--root DIR` is named after its directory, unless the product declares that same directory as a `path(...)` source, in which case it takes the product's id. The lock records a `git(...)` source as what it is: `kind = "git"`, the URL with the declared reference (`https://.../platform.git?tag=v1.2.0`), and as its digest the commit the checkout is at (`git:<sha>`, read from its `.git`; a checkout without one keeps the content digest).
+
+**One gear id in two sources.** An organization's fork of a platform gear keeps the platform's id, so both sources declare it. That is not an error: the catalogue lists the second copy under `alternatives`, and the product picks with `use_gear(id, source = ...)`. A product that uses such a gear without naming one of its sources is **GBX0325**, also for a gear the closure pulls in, which then needs a `use_gear` of its own; naming an open source that lacks the gear is **GBX0326**. The same id twice in *one* source stays **GBX0105**. A version per gear is a source per version: two tags of one repository are two sources.
+
 A `registry` source is the registry itself rather than one package, so a product naming six gears from it fetches six packages and everything they depend on through one declaration. `prefix` turns a gear id into a package name: `api-gateway` under `prefix = "cf-gears-"` is `cf-gears-api-gateway`. `use_gear(package = ...)` is the exit for a gear that does not follow the house naming. The fetching is cargo's: a synthesised manifest plus `cargo metadata`, which is also what buys authentication, offline mode and whatever mirror the machine is configured with.
 
 ### Deployment profiles
@@ -382,10 +386,10 @@ kubernetes(id, discovery, namespace?, image_registry?)
 
 ```
 plugin("gear-id", config = {}, profiles = [])
-use_gear("gear-id", source, version?, package?, features = [], config = {}, plugins = [])
+use_gear("gear-id", source?, version?, package?, features = [], config = {}, plugins = [])
 ```
 
-Only the gear id is positional: `use_gear("api-gateway", source = "gears-rust")`. `source` names a `source(id = ...)`. `version` and `package` are registry-only; on `path`/`git` they are an error. `config` is a map of JSON-shaped values (string, number, bool, list, map; no `None`, no records; nesting ≤ 32). Keys must be fields the gear actually declares (**GBX0115**) and types must match (**GBX0113**). Both are checked against `config_schema`, so a gear that declares none has no field list to check against. A field Rust declares secret (`secrecy::SecretString`) may hold only `"${UPPER_NAME}"`, naming an environment variable the generator reads; a literal is **GBX0116**, and so is `"${VAR:-default}"`, because the default half is a live value.
+Only the gear id is positional: `use_gear("api-gateway", source = "gears-rust")`. `source` names a `source(id = ...)`, and decides which copy is used when several open sources declare the id. Omitted, or naming a source no open root carries, the gear comes from the one open source that declares it; two candidates are **GBX0325**. `version` and `package` are registry-only; on `path`/`git` they are an error. `config` is a map of JSON-shaped values (string, number, bool, list, map; no `None`, no records; nesting ≤ 32). Keys must be fields the gear actually declares (**GBX0115**) and types must match (**GBX0113**). Both are checked against `config_schema`, so a gear that declares none has no field list to check against. A field Rust declares secret (`secrecy::SecretString`) may hold only `"${UPPER_NAME}"`, naming an environment variable the generator reads; a literal is **GBX0116**, and so is `"${VAR:-default}"`, because the default half is a live value.
 
 `plugin` names an implementing gear. Which extension point it fills comes from the catalogue. The same implementation twice for one host in one profile is **GBX0110**.
 
@@ -508,6 +512,8 @@ This table is the authoring subset, curated and hand-written, because the stage 
 | GBX0116 | a credential is written into the file | validate / resolve |
 | GBX0111 | `--profile` asked for a profile the file does not declare | resolve |
 | GBX0316 | a selected feature belongs to another deployment kind | resolve |
+| GBX0325 | several sources declare a gear and the product names none of them | validate / resolve |
+| GBX0326 | `use_gear(source = ...)` names an open source that lacks the gear | validate / resolve |
 | GBX0506 | a provider needs a credential and the scope names no source | resolve |
 | GBX0508 | a `cluster_profile` name no selected gear implements | resolve |
 | GBX0318 | a gear's roles cannot all be deployed (warning) | resolve |

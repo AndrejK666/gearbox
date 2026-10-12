@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 106, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 108, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -438,6 +438,22 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "warning",
     domain: "topology",
     docs: "A product links a gear its description calls `deprecated`: still\navailable, not for new products.",
+    requiresEvidence: false,
+  },
+  GBX0325: {
+    code: "GBX0325",
+    title: "gear is declared by several sources and the product names none of them",
+    severity: "error",
+    domain: "topology",
+    docs: "Several open sources declare a gear the product uses, and the product\ndoes not say which one.\n\nTwo sources declaring one id is a legitimate layout -- an organization's\nfork of a platform gear keeps the platform's id -- so the catalogue lists\nboth. Using one is where the choice has to be made: `use_gear(id,\nsource = ...)`. Picking the first root would make the build depend on\nthe order a caller happened to pass its roots in.",
+    requiresEvidence: false,
+  },
+  GBX0326: {
+    code: "GBX0326",
+    title: "the named source does not declare the gear",
+    severity: "error",
+    domain: "topology",
+    docs: "`use_gear(id, source = X)` names an open source that does not declare\nthe gear, while another open source does.\n\nDistinct from GBX0301 because the gear exists: the choice of source is\nwhat is wrong, and the message names the sources that do declare it.",
     requiresEvidence: false,
   },
   GBX0401: {

@@ -868,6 +868,18 @@ pub struct Catalogue {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub designs: BTreeMap<GearId, DesignGear>,
 
+    /// Copies of a gear id in `gears` that another source also declares.
+    ///
+    /// **Listed, never resolved.** `gears` keeps one descriptor per id because
+    /// every join the resolver makes is by id; a second source declaring the
+    /// same id -- an organization's fork of a platform gear -- is a legitimate
+    /// layout, so it is kept here rather than reported, and a product chooses
+    /// between them with `use_gear(id, source = ...)`. Which copy is in `gears`
+    /// is the one the product chose when the catalogue was loaded for it, and
+    /// otherwise the first root's. Sorted by `(id, source)`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alternatives: Vec<GearDescriptor>,
+
     /// Problems found while building the catalogue.
     #[serde(default)]
     pub diagnostics: Diagnostics,
@@ -877,6 +889,23 @@ impl Catalogue {
     #[must_use]
     pub fn gear(&self, id: &GearId) -> Option<&GearDescriptor> {
         self.gears.get(id)
+    }
+
+    /// Every source that declares `id`: the one in `gears` first, then the
+    /// alternatives in source order.
+    #[must_use]
+    pub fn sources_declaring(&self, id: &GearId) -> Vec<&SourceId> {
+        self.gears
+            .get(id)
+            .map(|g| &g.source)
+            .into_iter()
+            .chain(
+                self.alternatives
+                    .iter()
+                    .filter(|g| &g.id == id)
+                    .map(|g| &g.source),
+            )
+            .collect()
     }
 
     #[must_use]

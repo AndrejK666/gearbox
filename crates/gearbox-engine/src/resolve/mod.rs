@@ -115,6 +115,15 @@ pub fn resolve_at(
 
     // Step 2 -- the co-location closure.
     let closure = closure::expand(catalogue, intent, profile, &uri, &mut diagnostics);
+    // Which copy of each gear: the product's choice where several open sources
+    // declare one id, and an error where it had to choose and did not.
+    crate::gear_sources::check(
+        catalogue,
+        intent,
+        closure.members.keys(),
+        &uri,
+        &mut diagnostics,
+    );
     // What the product links below `stable` -- known now, for every member.
     closure::maturity_diagnostics(
         catalogue,

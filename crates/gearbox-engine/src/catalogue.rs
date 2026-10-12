@@ -127,6 +127,48 @@ pub fn load_catalogue(roots: &[SourceRoot]) -> CatalogueScan {
     load_catalogue_staged(roots, &mut |_| Continue::Yes)
 }
 
+/// Which source each gear id is taken from, where a product says so.
+///
+/// Built by [`source_pins`] from a product's `use_gear(id, source = ...)`.
+/// An id that is absent here takes the first root's copy.
+pub type SourcePins = BTreeMap<gearbox_ir::GearId, gearbox_ir::SourceId>;
+
+/// The pins a product makes against the roots that are open.
+///
+/// Only a `source = ` naming an open root pins anything. A source no root
+/// carries -- a product written for a checkout this caller did not open -- is
+/// treated as unnamed, so a product that names its corpus `gears-rust` still
+/// resolves against the one corpus a caller opened under another id. Whether
+/// that leaves a choice to make is GBX0325's question, asked by
+/// [`crate::gear_sources::check`].
+#[must_use]
+pub fn source_pins(intent: &gearbox_ir::ProductIntent, roots: &[SourceRoot]) -> SourcePins {
+    intent
+        .selected_gears
+        .iter()
+        .filter_map(|selection| {
+            let source = selection.source.as_ref()?;
+            roots
+                .iter()
+                .any(|root| &root.id == source)
+                .then(|| (selection.gear.clone(), source.clone()))
+        })
+        .collect()
+}
+
+/// [`load_catalogue`] for one product: each gear id it pins is taken from the
+/// source it names, and the other sources' copies are listed as
+/// `alternatives`.
+///
+/// A catalogue loaded for a product rather than adjusted afterwards, because
+/// the copy that is used is also the one whose contracts and plugin
+/// declarations the catalogue absorbs; swapping descriptors after the fact
+/// would leave the platform's contracts behind the fork's gear.
+#[must_use]
+pub fn load_catalogue_pinned(roots: &[SourceRoot], pins: &SourcePins) -> CatalogueScan {
+    load_catalogue_staged_pinned(roots, pins, &mut |_| Continue::Yes)
+}
+
 /// The same load, reporting each stage as it completes.
 ///
 /// Two passes, not one per gear, and the order is the point: **every description
@@ -142,6 +184,41 @@ pub fn load_catalogue(roots: &[SourceRoot]) -> CatalogueScan {
 #[must_use]
 pub fn load_catalogue_staged(
     roots: &[SourceRoot],
+    on_event: &mut dyn FnMut(LoadEvent<'_>) -> Continue,
+) -> CatalogueScan {
+    load_catalogue_staged_pinned(roots, &SourcePins::new(), on_event)
+}
+
+/// Every description under every root, with the root it was found in. A root
+/// the walk cannot read is a diagnostic, not an empty source.
+fn discover_roots<'r>(
+    roots: &'r [SourceRoot],
+    diagnostics: &mut Diagnostics,
+) -> Vec<(&'r SourceRoot, PathBuf)> {
+    let mut discovered = Vec::new();
+    for root in roots {
+        let (found, failures) = discover(&root.root);
+        discovered.extend(found.into_iter().map(|p| (root, p)));
+        for failure in failures {
+            diagnostics.push(
+                Diagnostic::error(
+                    DiagnosticCode::GdlEval,
+                    format!("cannot search `{}` for descriptions: {failure}", root.id),
+                    "a directory the application cannot read is indistinguishable from one with no \
+                     gears in it; check its permissions",
+                )
+                .at(Location::file(gearbox_ir::file_uri(&root.root))),
+            );
+        }
+    }
+    discovered
+}
+
+/// [`load_catalogue_staged`], loaded for a product's [`SourcePins`].
+#[must_use]
+pub fn load_catalogue_staged_pinned(
+    roots: &[SourceRoot],
+    pins: &SourcePins,
     on_event: &mut dyn FnMut(LoadEvent<'_>) -> Continue,
 ) -> CatalogueScan {
     let gdl = GdlEngine::new();
@@ -162,22 +239,7 @@ pub fn load_catalogue_staged(
     }
 
     // ---- S0: discover -------------------------------------------------------
-    let mut discovered: Vec<(&SourceRoot, PathBuf)> = Vec::new();
-    for root in roots {
-        let (found, failures) = discover(&root.root);
-        discovered.extend(found.into_iter().map(|p| (root, p)));
-        for failure in failures {
-            diagnostics.push(
-                Diagnostic::error(
-                    DiagnosticCode::GdlEval,
-                    format!("cannot search `{}` for descriptions: {failure}", root.id),
-                    "a directory the application cannot read is indistinguishable from one with no \
-                     gears in it; check its permissions",
-                )
-                .at(Location::file(gearbox_ir::file_uri(&root.root))),
-            );
-        }
-    }
+    let discovered = discover_roots(roots, &mut diagnostics);
 
     // The digest of each source, now that discovery knows what is under it.
     //
@@ -189,16 +251,7 @@ pub fn load_catalogue_staged(
     // Set even when the load is about to stop below, because a caller that
     // stopped still holds a catalogue and its sources should not claim `unread`
     // for a root that was in fact read.
-    for root in roots {
-        let under: Vec<PathBuf> = discovered
-            .iter()
-            .filter(|(r, _)| r.id == root.id)
-            .map(|(_, path)| path.clone())
-            .collect();
-        if let Some(source) = catalogue.sources.get_mut(&root.id) {
-            source.digest = crate::source::content_digest(&root.root, &under);
-        }
-    }
+    record_digests(&mut catalogue, roots, &discovered);
 
     let files: Vec<PathBuf> = discovered.iter().map(|(_, p)| p.clone()).collect();
     if on_event(LoadEvent::Discovered {
@@ -319,37 +372,17 @@ pub fn load_catalogue_staged(
 
             let Some(merged) = merged else { continue };
 
-            let id = merged.gear.id.clone();
-            implemented
-                .entry(id.clone())
-                .or_insert_with(|| merged.implemented_traits.clone());
-            // **The first declaration wins, and the second is an error.**
-            //
-            // This used to `insert` unconditionally, so the diagnostic below said
-            // "declared twice" while the catalogue quietly kept the *second* one.
-            // Deterministic -- discovery is sorted -- but arbitrary, and it meant
-            // the tree disagreed with its own complaint: the gear a reader was
-            // told about was not the gear that resolution would use.
-            //
-            // Keeping the first is the choice that can be stated in one sentence
-            // ("the earliest declared root wins"), and with roots now derived from
-            // a product's own `sources` list, "earliest" is an order the person
-            // wrote down. See ADR `cpt-gearbox-adr-multiple-source-roots`.
-            if let Some(previous) = catalogue.gears.get(&id) {
-                diagnostics.push(declared_twice(
-                    &id,
-                    (&previous.gdl_path, &previous.source),
-                    identity,
-                ));
-            } else {
-                catalogue.gears.insert(id.clone(), merged.gear);
-            }
-            contracts.absorb(merged.provided, merged.consumed, &id);
-
             // Borrowed from the catalogue, so the callback sees the merged gear
             // rather than a copy made for its benefit.
-            if let Some(stored) = catalogue.gears.get(&id)
-                && on_event(LoadEvent::Projected(stored)) == Continue::Stop
+            if let Some(stored) = place(
+                &mut catalogue,
+                &mut contracts,
+                &mut implemented,
+                pins,
+                identity,
+                merged,
+                &mut diagnostics,
+            ) && on_event(LoadEvent::Projected(stored)) == Continue::Stop
             {
                 break;
             }
@@ -357,6 +390,9 @@ pub fn load_catalogue_staged(
     }
 
     catalogue.contracts = contracts.finish();
+    catalogue
+        .alternatives
+        .sort_by(|a, b| (&a.id, &a.source).cmp(&(&b.id, &b.source)));
 
     // A gear that has code and a design description of the same id: someone
     // wrote the crate and left the design behind. Both stay listed -- the
@@ -422,6 +458,74 @@ pub fn load_catalogue_staged(
         scan_requests: scans.scan_requests(),
         pending,
     }
+}
+
+/// Each source's digest, over the descriptions discovery found under it.
+fn record_digests(
+    catalogue: &mut Catalogue,
+    roots: &[SourceRoot],
+    discovered: &[(&SourceRoot, PathBuf)],
+) {
+    for root in roots {
+        let under: Vec<PathBuf> = discovered
+            .iter()
+            .filter(|(r, _)| r.id == root.id)
+            .map(|(_, path)| path.clone())
+            .collect();
+        if let Some(source) = catalogue.sources.get_mut(&root.id) {
+            source.digest = crate::source::content_digest(&root.root, &under);
+        }
+    }
+}
+
+/// Put one projected gear where it belongs, and return it if it entered the
+/// catalogue.
+///
+/// **One copy per id in `gears`, and the product says which.** Two
+/// declarations from the *same* source are a mistake: the first is kept and the
+/// second is GBX0105, as ADR `cpt-gearbox-adr-multiple-source-roots` decided.
+/// Two from *different* sources are a layout -- an organization's fork of a
+/// platform gear keeps the platform's id -- so the copy that is not used is
+/// listed in `alternatives` instead of reported. Which copy is used: the one
+/// the product pinned with `use_gear(id, source = ...)`, or the first root's.
+/// A copy pinned away is never absorbed into `contracts` or the plugin join, so
+/// a fork's contracts are the ones the product resolves against, not the
+/// platform's.
+fn place<'c>(
+    catalogue: &'c mut Catalogue,
+    contracts: &mut ContractMerge,
+    implemented: &mut BTreeMap<GearId, std::collections::BTreeSet<String>>,
+    pins: &SourcePins,
+    identity: &FileIdentity,
+    merged: crate::merge::MergedGear,
+    diagnostics: &mut Diagnostics,
+) -> Option<&'c GearDescriptor> {
+    let id = merged.gear.id.clone();
+    let here = &identity.source;
+    if let Some(previous) = catalogue.gears.get(&id)
+        && previous.source == *here
+    {
+        diagnostics.push(declared_twice(
+            &id,
+            (&previous.gdl_path, &previous.source),
+            identity,
+        ));
+        // As before: the duplicate's contracts still count, so the error is
+        // the only thing that changes for this mistake.
+        contracts.absorb(merged.provided, merged.consumed, &id);
+        return None;
+    }
+    let pinned_elsewhere = pins.get(&id).is_some_and(|pin| pin != here);
+    if catalogue.gears.contains_key(&id) || pinned_elsewhere {
+        catalogue.alternatives.push(merged.gear);
+        return catalogue.alternatives.last();
+    }
+    implemented
+        .entry(id.clone())
+        .or_insert_with(|| merged.implemented_traits.clone());
+    contracts.absorb(merged.provided, merged.consumed, &id);
+    catalogue.gears.insert(id.clone(), merged.gear);
+    catalogue.gears.get(&id)
 }
 
 /// "Declared twice", for a gear or a design gear: the first one is kept.

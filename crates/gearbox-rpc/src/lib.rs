@@ -336,15 +336,40 @@ fn open_roots(paths: &[PathBuf]) -> (Vec<SourceRoot>, Vec<FailedRoot>) {
     // them distinct can only be applied to a set. See
     // `gearbox_engine::default_source_ids` for why two roots sharing an id is a
     // silent loss of gears rather than a cosmetic clash.
-    for (path, id) in paths.iter().zip(default_source_ids(paths)) {
+    //
+    // A root may also be `ID=DIR`, naming the product's `source(id = ...)` it
+    // is a checkout of; see `gearbox_engine::parse_root_arg`.
+    let parsed: Vec<(Option<SourceId>, PathBuf)> = paths
+        .iter()
+        .map(|p| gearbox_engine::parse_root_arg(p))
+        .collect();
+    let dirs: Vec<&PathBuf> = parsed.iter().map(|(_, dir)| dir).collect();
+    let mut taken: Vec<SourceId> = Vec::new();
+    for ((explicit, path), id) in parsed.iter().zip(default_source_ids(&dirs)) {
         let spelling = path.display().to_string();
-        match SourceId::new(id) {
+        let id = match explicit {
+            Some(id) => Ok(id.clone()),
+            None => SourceId::new(id),
+        };
+        if let Ok(id) = &id
+            && taken.contains(id)
+        {
+            failed.push(FailedRoot {
+                path: spelling,
+                error: format!("source id `{id}` is already used by another root"),
+            });
+            continue;
+        }
+        match id {
             Err(e) => failed.push(FailedRoot {
                 path: spelling,
                 error: e.to_string(),
             }),
-            Ok(id) => match SourceRoot::open(id, path) {
-                Ok(root) => opened.push(root),
+            Ok(id) => match SourceRoot::open(id.clone(), path) {
+                Ok(root) => {
+                    taken.push(id);
+                    opened.push(root);
+                }
                 Err(e) => failed.push(FailedRoot {
                     path: spelling,
                     error: e.to_string(),
@@ -1113,7 +1138,22 @@ fn resolve_once(
     // them.
     let roots = state.roots.clone();
     let (catalogue, loaded) = catalogue_for(state);
-    let sources = gearbox_engine::lock_sources(&roots, catalogue, &path);
+    // The cached catalogue keeps the first root's copy of a gear id several
+    // roots declare. A product that takes one from another source is resolved
+    // against a catalogue loaded for it -- not cached, since the next product
+    // may choose differently -- so the fork's contracts come with the fork.
+    let pins = gearbox_engine::source_pins(&intent, &roots);
+    let pinned;
+    let catalogue = if pins
+        .iter()
+        .any(|(gear, source)| catalogue.gear(gear).is_some_and(|g| &g.source != source))
+    {
+        pinned = gearbox_engine::load_catalogue_pinned(&roots, &pins).catalogue;
+        &pinned
+    } else {
+        catalogue
+    };
+    let sources = gearbox_engine::lock_sources_declared(&roots, catalogue, &path, &intent.sources);
     let resolution = gearbox_engine::resolve::resolve_at(catalogue, &intent, &profile, Some(&path));
     let product =
         gearbox_engine::resolve::product::assemble(catalogue, &intent, &resolution, sources);

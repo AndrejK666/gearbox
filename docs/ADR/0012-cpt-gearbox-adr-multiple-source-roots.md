@@ -144,6 +144,18 @@ to partition the corpus.
 * Constrains: `docs/plans/prototype.md` §9 (the product session's initialization
   order).
 
+## Amendment 2026-10-12: `use_gear(source = ...)` decides, and one id in two sources is a layout
+
+Rule 1 and the "not built" paragraph of rule 2 are superseded. An organization's fork of a platform gear keeps the platform's id, because everything that names a gear names it by id, so two sources declaring one id became the case to support rather than a mistake to report (studio-web ADR-0042, phase 4).
+
+* **The catalogue lists both.** `gears` still holds one descriptor per id; a copy from another source goes to `Catalogue::alternatives` instead of GBX0105. The same id twice in one source is still GBX0105.
+* **The product chooses, at load time.** `use_gear(id, source = X)` pins the id to root X (`source_pins`), and `load_catalogue_pinned` puts X's copy in `gears`. Loaded rather than swapped afterwards, because the copy used is also the one whose contracts and plugin declarations are absorbed. Without a pin the first root's copy is in `gears`, as before.
+* **Undecided is an error where it matters.** A used gear, selected or pulled in by the closure, that several open sources declare and the product does not pin is GBX0325; a pin onto an open source that lacks the gear is GBX0326. A `source` naming no open root counts as unnamed, so a product still resolves against the one corpus a caller opened under another id.
+* **Root ids can be the product's.** `--root ID=DIR` names a root explicitly, and a bare `--root DIR` takes the id of a product `path(...)` source pointing at the same directory. `source` in `use_gear` is now optional.
+* **The lock says where a git source came from.** For a source the product declares as `git(...)`, the lock records `kind = "git"`, the URL with its tag/rev/branch, and the checkout's commit as `git:<sha>`.
+
+Asserted in `crates/gearbox-engine/tests/source_choice.rs`.
+
 ## Amendment 2026-09-29: a checkout whose crates the build takes from a registry
 
 Every gear in `gears-rust` is also published on crates.io, at the version the checkout declares (`cf-gears-api-gateway 0.5.2`, `cf-gears-toolkit 0.10.0`). A generated product still named every one of them by a path into the checkout, so the repository it was generated into could not be built without that checkout next to it.

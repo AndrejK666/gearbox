@@ -21,6 +21,18 @@ export type Catalogue = { gears: { [key in GearId]: GearDescriptor }, contracts:
  */
 designs?: { [key in GearId]: DesignGear }, 
 /**
+ * Copies of a gear id in `gears` that another source also declares.
+ *
+ * **Listed, never resolved.** `gears` keeps one descriptor per id because
+ * every join the resolver makes is by id; a second source declaring the
+ * same id -- an organization's fork of a platform gear -- is a legitimate
+ * layout, so it is kept here rather than reported, and a product chooses
+ * between them with `use_gear(id, source = ...)`. Which copy is in `gears`
+ * is the one the product chose when the catalogue was loaded for it, and
+ * otherwise the first root's. Sorted by `(id, source)`.
+ */
+alternatives?: Array<GearDescriptor>, 
+/**
  * Problems found while building the catalogue.
  */
 diagnostics: Diagnostics, };

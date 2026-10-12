@@ -325,7 +325,15 @@ pub struct GearSelection {
     pub gear: GearId,
 
     /// Which declared source to read it from.
-    pub source: SourceId,
+    ///
+    /// **Decides which copy is used** when several open sources declare the
+    /// gear id -- a platform gear and an organization's fork of it, say. Absent,
+    /// the gear is taken from the one open source that declares it, and two
+    /// candidates are GBX0325 rather than a silent pick. A source no open root
+    /// carries is treated as absent: a product written for a source checked out
+    /// elsewhere still resolves against the one corpus a caller opened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SourceId>,
 
     /// The version requirement, when the source is a registry.
     ///

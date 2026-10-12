@@ -428,7 +428,8 @@ gdl_record! {
     /// `use_gear("name", source = ..., features = [...], config = {...})`
     UseGearRecord as "gdl_use_gear" {
         pub gear: String,
-        pub source: String,
+        /// Absent: whichever single open source declares the gear.
+        pub source: Option<String>,
         /// Registry only: the version requirement, in Cargo's spelling.
         pub version: Option<String>,
         /// Registry only: the package name, when the source's prefix is wrong

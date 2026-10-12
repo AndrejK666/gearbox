@@ -13,7 +13,7 @@ use anyhow::Context as _;
 use gearbox_engine::{CatalogueScan, SourceRoot};
 use gearbox_ir::{Diagnostic, ProductIntent, ProfileId, ResolvedProduct};
 
-use crate::{open_roots, refuse_catalogue_errors, report};
+use crate::{open_roots_for_product, refuse_catalogue_errors, report};
 
 /// A product resolved for one profile, with everything either command goes on
 /// to need.
@@ -56,12 +56,6 @@ pub fn resolve(
     product_file: &Path,
     profile: Option<&str>,
 ) -> anyhow::Result<Outcome> {
-    let opened = open_roots(roots, source_id)?;
-    let scan = gearbox_engine::load_catalogue(&opened);
-    if let Some(code) = refuse_catalogue_errors(&scan.catalogue) {
-        return Ok(Outcome::Refused(code));
-    }
-
     let product_file = product_file.canonicalize().with_context(|| {
         format!(
             "cannot read product description `{}`",
@@ -74,6 +68,17 @@ pub fn resolve(
         report(&diagnostics);
         anyhow::bail!("`{}` could not be evaluated", product_file.display());
     };
+
+    // After the product, because the product decides two things about the
+    // roots: the id a bare `--root DIR` takes when the product declares that
+    // directory as a `path(...)` source, and which source's copy of a gear id
+    // is used when several roots declare it.
+    let opened = open_roots_for_product(roots, source_id, Some(&intent), Some(&product_file))?;
+    let pins = gearbox_engine::source_pins(&intent, &opened);
+    let scan = gearbox_engine::load_catalogue_pinned(&opened, &pins);
+    if let Some(code) = refuse_catalogue_errors(&scan.catalogue) {
+        return Ok(Outcome::Refused(code));
+    }
 
     // The product's own default when none is named, so the common invocation is
     // short and the answer still comes from the description rather than from a
@@ -89,7 +94,12 @@ pub fn resolve(
         &profile,
         Some(&product_file),
     );
-    let sources = gearbox_engine::lock_sources(&opened, &scan.catalogue, &product_file);
+    let sources = gearbox_engine::lock_sources_declared(
+        &opened,
+        &scan.catalogue,
+        &product_file,
+        &intent.sources,
+    );
     let lock =
         gearbox_engine::resolve::product::assemble(&scan.catalogue, &intent, &resolution, sources);
     diagnostics.extend(lock.diagnostics.as_slice().iter().cloned());

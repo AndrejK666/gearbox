@@ -306,7 +306,7 @@ fn a_product_is_told_what_it_links_below_stable_including_what_it_did_not_choose
     assert_eq!(*severity, gearbox_ir::Severity::Warning);
     // Not blocking: the levels warn, and the product still resolves.
     assert!(
-        !resolution.diagnostics.iter().any(|d| d.is_error()),
+        !resolution.diagnostics.iter().any(gearbox_ir::Diagnostic::is_error),
         "{:?}",
         resolution.diagnostics
     );

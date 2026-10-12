@@ -38,7 +38,7 @@ struct Cli {
 enum Command {
     /// Scan source roots for `gear.gdl` files and print the catalogue.
     Catalogue {
-        /// A source root to scan. Repeatable; each is scanned in order.
+        /// A source root to scan, `DIR` or `ID=DIR`. Repeatable; each is scanned in order.
         #[arg(long, value_name = "DIR", required = true)]
         root: Vec<PathBuf>,
 
@@ -71,7 +71,7 @@ enum Command {
     /// resolves what it *will* use, per deployment profile -- which is a
     /// different question, because the choice is profile-scoped.
     Plugins {
-        /// A source root to scan. Repeatable.
+        /// A source root to scan, `DIR` or `ID=DIR`. Repeatable.
         #[arg(long, value_name = "DIR", required = true)]
         root: Vec<PathBuf>,
 
@@ -91,7 +91,7 @@ enum Command {
     /// profile. Nothing is written to disk: this prints, and `--format toml`
     /// prints exactly what a lock file would contain.
     Resolve {
-        /// A source root to scan. Repeatable.
+        /// A source root to scan, `DIR` or `ID=DIR`. Repeatable.
         #[arg(long, value_name = "DIR", required = true)]
         root: Vec<PathBuf>,
 
@@ -119,7 +119,7 @@ enum Command {
     ///
     /// Exits non-zero when any diagnostic is an error.
     Validate {
-        /// A source root to scan. Repeatable; each is scanned in order.
+        /// A source root to scan, `DIR` or `ID=DIR`. Repeatable; each is scanned in order.
         #[arg(long, value_name = "DIR", required = true)]
         root: Vec<PathBuf>,
 
@@ -156,7 +156,7 @@ enum Command {
     /// source root: everything lands under `.gearbox/<product>/<profile>/`,
     /// including the `product.lock` the tree was generated from.
     Generate {
-        /// A source root to scan. Repeatable.
+        /// A source root to scan, `DIR` or `ID=DIR`. Repeatable.
         #[arg(long, value_name = "DIR", required = true)]
         root: Vec<PathBuf>,
 
@@ -505,7 +505,10 @@ fn print_intent(intent: &gearbox_ir::ProductIntent) {
 
     println!("\n  gears");
     for selection in &intent.selected_gears {
-        println!("    {} from {}", selection.gear, selection.source);
+        match &selection.source {
+            Some(source) => println!("    {} from {source}", selection.gear),
+            None => println!("    {} from whichever source declares it", selection.gear),
+        }
         // Which extension point each implements is a catalogue fact, so it is not
         // shown here: this command evaluates the product alone. `gearbox
         // plugins --product` resolves them against the catalogue.
@@ -616,6 +619,30 @@ pub(crate) fn open_roots(
     open_source_roots(roots, source_id)
 }
 
+/// Open the roots for one product: as [`open_roots`], and then a root opened
+/// from a bare `--root DIR` takes the id of the product's
+/// `source(id, at = path(...))` that points at the same directory.
+///
+/// That is what makes `use_gear(id, source = ...)` mean a root: the product's
+/// ids are the ones it writes, and a directory name is only a default.
+pub(crate) fn open_roots_for_product(
+    roots: &[PathBuf],
+    source_id: Option<&str>,
+    intent: Option<&gearbox_ir::ProductIntent>,
+    product_file: Option<&std::path::Path>,
+) -> anyhow::Result<Vec<SourceRoot>> {
+    let (mut opened, adoptable) = open_named_roots(roots, source_id)?;
+    if let (Some(intent), Some(file)) = (intent, product_file) {
+        let dir = file
+            .canonicalize()
+            .ok()
+            .and_then(|f| f.parent().map(std::path::Path::to_path_buf))
+            .unwrap_or_default();
+        gearbox_engine::adopt_product_source_ids(&mut opened, &adoptable, &intent.sources, &dir);
+    }
+    Ok(opened)
+}
+
 /// Open every root, naming the ones that were not named explicitly.
 ///
 /// One function because there were two copies of this loop and they had the same
@@ -627,6 +654,86 @@ pub(crate) fn open_roots(
 /// two are different mistakes: one is a person saying something impossible, the
 /// other is a layout that is perfectly reasonable.
 fn open_source_roots(
+    roots: &[PathBuf],
+    source_id: Option<&str>,
+) -> anyhow::Result<Vec<SourceRoot>> {
+    Ok(open_named_roots(roots, source_id)?.0)
+}
+
+/// Open every root, and say which ones were named only by default.
+///
+/// A root is `--root DIR`, named after its directory, or `--root ID=DIR`,
+/// named explicitly -- the form for several sources checked out by the
+/// caller, each the `source(id = ...)` a product declares. The second value is
+/// `true` for a root whose id is only the default, which a product's own
+/// `path(...)` declaration may replace.
+fn open_named_roots(
+    roots: &[PathBuf],
+    source_id: Option<&str>,
+) -> anyhow::Result<(Vec<SourceRoot>, Vec<bool>)> {
+    let parsed: Vec<(Option<SourceId>, PathBuf)> = roots
+        .iter()
+        .map(|r| gearbox_engine::parse_root_arg(r))
+        .collect();
+    if parsed.iter().any(|(id, _)| id.is_some()) {
+        anyhow::ensure!(
+            source_id.is_none(),
+            "`--source-id` cannot be combined with `--root ID=DIR`; name each root as `ID=DIR`"
+        );
+        return open_explicit_roots(parsed);
+    }
+    let opened = open_default_roots(roots, source_id)?;
+    let adoptable = vec![source_id.is_none(); opened.len()];
+    Ok((opened, adoptable))
+}
+
+/// Roots of which at least one is named `ID=DIR`.
+///
+/// The unnamed ones are named after their directories as usual, made distinct
+/// from the explicit ids as well as from each other. Two explicit roots with
+/// one id are refused: that is the caller saying something impossible.
+fn open_explicit_roots(
+    parsed: Vec<(Option<SourceId>, PathBuf)>,
+) -> anyhow::Result<(Vec<SourceRoot>, Vec<bool>)> {
+    let mut taken: Vec<String> = Vec::new();
+    for id in parsed.iter().filter_map(|(id, _)| id.as_ref()) {
+        anyhow::ensure!(
+            !taken.iter().any(|t| t == id.as_str()),
+            "source `{id}` is named by two `--root` values"
+        );
+        taken.push(id.as_str().to_owned());
+    }
+    let unnamed: Vec<&PathBuf> = parsed
+        .iter()
+        .filter(|(id, _)| id.is_none())
+        .map(|(_, path)| path)
+        .collect();
+    let mut defaults = gearbox_engine::default_source_ids(&unnamed).into_iter();
+
+    let mut opened = Vec::with_capacity(parsed.len());
+    let mut adoptable = Vec::with_capacity(parsed.len());
+    for (id, path) in parsed {
+        let (id, by_default) = if let Some(id) = id {
+            (id, false)
+        } else {
+            let base = defaults.next().unwrap_or_else(|| "local".to_owned());
+            let mut candidate = base.clone();
+            let mut nth = 1_u32;
+            while taken.contains(&candidate) {
+                nth += 1;
+                candidate = format!("{base}-{nth}");
+            }
+            taken.push(candidate.clone());
+            (SourceId::new(candidate)?, true)
+        };
+        opened.push(SourceRoot::open(id, &path)?);
+        adoptable.push(by_default);
+    }
+    Ok((opened, adoptable))
+}
+
+/// Roots given as bare directories, the form every caller used until `ID=DIR`.
+fn open_default_roots(
     roots: &[PathBuf],
     source_id: Option<&str>,
 ) -> anyhow::Result<Vec<SourceRoot>> {
@@ -793,8 +900,6 @@ fn validate(
     product_file: Option<&std::path::Path>,
     format: Format,
 ) -> anyhow::Result<ExitCode> {
-    let opened = open_roots(roots, source_id)?;
-
     // The product is evaluated first so its own GBX01xx are reported even when
     // it cannot be used for the join. A product that does not evaluate is a
     // different failure from a product that names a gear nobody described, and
@@ -806,6 +911,7 @@ fn validate(
         product_diagnostics.extend(scan.diagnostics.as_slice().iter().cloned());
         intent = scan.intent;
     }
+    let opened = open_roots_for_product(roots, source_id, intent.as_ref(), product_file)?;
 
     let checked = gearbox_engine::validate::validate_at(&opened, intent.as_ref(), product_file);
 
@@ -881,6 +987,9 @@ fn print_summary(scan: &gearbox_engine::CatalogueScan) {
         scan.crates_scanned, scan.scan_requests
     );
 
+    // The source beside each path only when there is more than one: a
+    // platform gear and an organization's fork share an id and differ by it.
+    let several_sources = catalogue.sources.len() > 1;
     for gear in catalogue.gears.values() {
         let caps: Vec<&str> = gear.runtime_caps.iter().map(|c| c.as_str()).collect();
         // The level only below `stable`, where it is news.
@@ -889,7 +998,11 @@ fn print_summary(scan: &gearbox_engine::CatalogueScan) {
             level => format!(" ({})", level.as_str()),
         };
         println!("\n  {}{maturity} [{}]", gear.id, caps.join(", "));
-        println!("    {}", gear.gdl_path);
+        if several_sources {
+            println!("    {}  (source {})", gear.gdl_path, gear.source);
+        } else {
+            println!("    {}", gear.gdl_path);
+        }
         if !gear.colocated_deps.is_empty() {
             let deps: Vec<&str> = gear
                 .colocated_deps
@@ -927,6 +1040,18 @@ fn print_summary(scan: &gearbox_engine::CatalogueScan) {
                     caps.join(", ")
                 );
             }
+        }
+    }
+
+    // The other sources' copies of an id listed above. Usable, but only by a
+    // product that names their source in `use_gear(id, source = ...)`.
+    if !catalogue.alternatives.is_empty() {
+        println!("\n  also declared by another source:");
+        for gear in &catalogue.alternatives {
+            println!(
+                "    {}  {}  (source {})",
+                gear.id, gear.gdl_path, gear.source
+            );
         }
     }
 
@@ -1078,7 +1203,8 @@ mod tests {
     };
 
     use super::{
-        describe_source, list_plugins, open_source_roots, refuse_catalogue_errors, without_userinfo,
+        describe_source, list_plugins, open_named_roots, open_source_roots,
+        refuse_catalogue_errors, without_userinfo,
     };
 
     fn gear(id: &str) -> GearDescriptor {
@@ -1203,6 +1329,51 @@ mod tests {
             err.to_string().contains("2 roots were given"),
             "the message should say how many roots it saw: {err}"
         );
+    }
+
+    #[test]
+    fn a_root_named_id_equals_dir_takes_that_id_and_the_others_keep_theirs() {
+        let base = std::env::temp_dir().join(format!("gbx-cli-named-roots-{}", std::process::id()));
+        let platform = base.join("checkout-a");
+        let org = base.join("platform");
+        std::fs::create_dir_all(&platform).unwrap();
+        std::fs::create_dir_all(&org).unwrap();
+
+        // `platform=` names the first; the second is a bare directory whose own
+        // name is `platform`, so its default has to step aside.
+        let (opened, adoptable) = open_named_roots(
+            &[
+                PathBuf::from(format!("platform={}", platform.display())),
+                org.clone(),
+            ],
+            None,
+        )
+        .unwrap();
+        let ids: Vec<&str> = opened.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["platform", "platform-2"]);
+        assert_eq!(
+            adoptable,
+            [false, true],
+            "only a default id may be replaced"
+        );
+
+        let twice = open_named_roots(
+            &[
+                PathBuf::from(format!("org={}", platform.display())),
+                PathBuf::from(format!("org={}", org.display())),
+            ],
+            None,
+        )
+        .expect_err("one id cannot name two checkouts");
+        assert!(twice.to_string().contains("named by two"), "{twice}");
+
+        let mixed = open_named_roots(
+            &[PathBuf::from(format!("org={}", org.display()))],
+            Some("other"),
+        )
+        .expect_err("--source-id and ID=DIR say the same thing twice");
+        assert!(mixed.to_string().contains("cannot be combined"), "{mixed}");
+        drop(std::fs::remove_dir_all(&base));
     }
 
     #[test]

@@ -98,7 +98,7 @@ fn intent(key: &str, value: serde_json::Value) -> ProductIntent {
     let dev = gearbox_ir::ProfileId::new("dev").unwrap();
     let mut selection = gearbox_ir::GearSelection {
         gear: GearId::new("demo").unwrap(),
-        source: SourceId::new("s").unwrap(),
+        source: Some(SourceId::new("s").unwrap()),
         version: None,
         package: None,
         features: Vec::new(),

@@ -102,6 +102,7 @@ fn slice() -> Catalogue {
         gears: gears.into_iter().map(|g| (g.id.clone(), g)).collect(),
         contracts: BTreeMap::new(),
         designs: BTreeMap::new(),
+        alternatives: Vec::new(),
         sources: BTreeMap::from([(
             source_id(),
             ResolvedSource {

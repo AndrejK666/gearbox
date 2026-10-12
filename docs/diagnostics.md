@@ -15,7 +15,7 @@ remedy at the point it is raised
 (`cpt-gearbox-nfr-actionable-diagnostics`), which is per-occurrence and
 so is not listed here.
 
-Codes: **106**.
+Codes: **108**.
 
 ## `GBX01xx` — Parsing and evaluating GDL
 
@@ -436,6 +436,8 @@ nothing pointing back at the description.
 | [GBX0322](#gbx0322) | warning | gear is experimental |
 | [GBX0323](#gbx0323) | info | gear is at preview |
 | [GBX0324](#gbx0324) | warning | gear is deprecated |
+| [GBX0325](#gbx0325) | error | gear is declared by several sources and the product names none of them |
+| [GBX0326](#gbx0326) | error | the named source does not declare the gear |
 
 ### GBX0301
 
@@ -754,6 +756,29 @@ warning on every product would be noise that hides GBX0322 and GBX0324.
 
 A product links a gear its description calls `deprecated`: still
 available, not for new products.
+
+### GBX0325
+
+**gear is declared by several sources and the product names none of them**
+
+Several open sources declare a gear the product uses, and the product
+does not say which one.
+
+Two sources declaring one id is a legitimate layout -- an organization's
+fork of a platform gear keeps the platform's id -- so the catalogue lists
+both. Using one is where the choice has to be made: `use_gear(id,
+source = ...)`. Picking the first root would make the build depend on
+the order a caller happened to pass its roots in.
+
+### GBX0326
+
+**the named source does not declare the gear**
+
+`use_gear(id, source = X)` names an open source that does not declare
+the gear, while another open source does.
+
+Distinct from GBX0301 because the gear exists: the choice of source is
+what is wrong, and the message names the sources that do declare it.
 
 ## `GBX04xx` — Contract bindings and severability
 

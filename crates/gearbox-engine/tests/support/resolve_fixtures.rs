@@ -99,7 +99,7 @@ pub fn intent(gears: &[&str]) -> ProductIntent {
             .iter()
             .map(|g| GearSelection {
                 gear: gid(g),
-                source: source(),
+                source: Some(source()),
                 version: None,
                 package: None,
                 features: Vec::new(),

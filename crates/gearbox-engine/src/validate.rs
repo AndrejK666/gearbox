@@ -93,7 +93,13 @@ pub fn validate_at(
     // The cost is one scan per press, in a session whose roots are usually the
     // single gear being authored. Reported as waste once; recorded here so it is
     // not reported again.
-    let scan = crate::catalogue::load_catalogue(roots);
+    //
+    // Loaded for the product when there is one, so a gear it takes from a
+    // particular source is checked as that source's copy.
+    let pins = product.map_or_else(crate::catalogue::SourcePins::new, |intent| {
+        crate::catalogue::source_pins(intent, roots)
+    });
+    let scan = crate::catalogue::load_catalogue_pinned(roots, &pins);
 
     let mut diagnostics = Diagnostics::new();
     for diagnostic in &scan.catalogue.diagnostics {
@@ -105,6 +111,7 @@ pub fn validate_at(
         Some(intent) => {
             let uri = product_uri(intent, product_path);
             check_selections(roots, &scan, intent, &uri, &mut diagnostics);
+            crate::gear_sources::check(&scan.catalogue, intent, [], &uri, &mut diagnostics);
             // The other join that needs no resolver: a config value against the
             // type its gear declares for that field.
             crate::config_check::check(&scan.catalogue, intent, &uri, &mut diagnostics);
@@ -159,9 +166,12 @@ fn check_selections(
     // A set, because two profiles may each name the same gear.
     let selected: std::collections::BTreeSet<&gearbox_ir::GearId> =
         intent.selected_gears.iter().map(|s| &s.gear).collect();
-    let selected = selected
-        .into_iter()
-        .map(|g| (g, std::slice::from_ref(&gearbox_ir::InclusionReason::Selected)));
+    let selected = selected.into_iter().map(|g| {
+        (
+            g,
+            std::slice::from_ref(&gearbox_ir::InclusionReason::Selected),
+        )
+    });
     crate::resolve::closure::maturity_diagnostics(
         &scan.catalogue,
         selected,
@@ -175,7 +185,8 @@ fn check_selections(
             continue;
         }
         let at = gearbox_ir::Location::or_file(selection.declared_at.as_ref(), uri);
-        if let Some(design) = crate::resolve::closure::at_design(&scan.catalogue, &selection.gear, &at)
+        if let Some(design) =
+            crate::resolve::closure::at_design(&scan.catalogue, &selection.gear, &at)
         {
             diagnostics.push(design);
             continue;

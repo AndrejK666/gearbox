@@ -18,6 +18,7 @@ pub mod description;
 pub mod docs;
 pub mod feature_check;
 pub mod features;
+pub mod gear_sources;
 pub mod generate;
 pub mod manifest_check;
 pub mod merge;
@@ -34,7 +35,10 @@ pub mod source;
 pub mod undescribed;
 pub mod validate;
 
-pub use catalogue::{CatalogueScan, Continue, LoadEvent, load_catalogue, load_catalogue_staged};
+pub use catalogue::{
+    CatalogueScan, Continue, LoadEvent, SourcePins, load_catalogue, load_catalogue_pinned,
+    load_catalogue_staged, load_catalogue_staged_pinned, source_pins,
+};
 pub use cluster::ClusterProjection;
 pub use description::check_description;
 pub use generate::{
@@ -46,6 +50,7 @@ pub use plugin_select::{PointResolution, check as check_plugins};
 pub use product::{ProductScan, eval_product_text, load_product};
 pub use scans::CrateScans;
 pub use source::{
-    DIGEST_UNREAD, SourceRoot, SourceRootError, content_digest, default_source_ids, lock_sources,
-    owning_source_root,
+    DIGEST_UNREAD, SourceRoot, SourceRootError, adopt_product_source_ids, checkout_commit,
+    content_digest, default_source_ids, lock_sources, lock_sources_declared, owning_source_root,
+    parse_root_arg,
 };

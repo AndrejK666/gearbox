@@ -330,7 +330,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     /// `use_gear("name", source = ..., features = [...], config = {...}, plugins = [...])`
     fn use_gear<'v>(
         #[starlark(require = pos)] gear: &str,
-        #[starlark(require = named)] source: &str,
+        #[starlark(require = named)] source: Option<&str>,
         #[starlark(require = named)] version: Option<&str>,
         #[starlark(require = named)] package: Option<&str>,
         #[starlark(require = named)] features: Option<UnpackList<String>>,
@@ -340,7 +340,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     ) -> anyhow::Result<UseGearRecord> {
         Ok(UseGearRecord {
             gear: gear.to_owned(),
-            source: source.to_owned(),
+            source: source.map(str::to_owned),
             version: version.map(str::to_owned),
             package: package.map(str::to_owned),
             features: strings(features),

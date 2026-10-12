@@ -293,3 +293,153 @@ fn relative_to(base: &Path, target: &Path) -> String {
         parts.join("/")
     }
 }
+
+/// A `--root` value: `DIR`, or `ID=DIR` to name the source explicitly.
+///
+/// `ID=DIR` is how a caller that checked several sources out itself -- a
+/// platform corpus and an organization's own gears, each at its own tag --
+/// says which checkout is which `source(id = ...)` of the product. The id is
+/// taken only when the text before the first `=` is a valid source id, so a
+/// directory whose name happens to contain `=` is still a directory; write it
+/// as `./a=b` to be sure.
+#[must_use]
+pub fn parse_root_arg(arg: &Path) -> (Option<SourceId>, PathBuf) {
+    if let Some(text) = arg.to_str()
+        && let Some((id, dir)) = text.split_once('=')
+        && !dir.is_empty()
+        && let Ok(id) = SourceId::new(id)
+    {
+        return (Some(id), PathBuf::from(dir));
+    }
+    (None, arg.to_path_buf())
+}
+
+/// Rename roots after the product's own `source(id, at = path(...))`.
+///
+/// A root opened from a bare `--root DIR` is named after its directory, while
+/// the product names the same checkout in its `sources`. When the two point at
+/// the same directory, the product's id is the one `use_gear(source = ...)`
+/// means, so the root takes it. Only roots in `adoptable` are renamed -- an
+/// id given explicitly is the caller's word and stays -- and never onto an id
+/// another root already carries.
+pub fn adopt_product_source_ids(
+    roots: &mut [SourceRoot],
+    adoptable: &[bool],
+    declared: &std::collections::BTreeMap<SourceId, gearbox_ir::SourceDecl>,
+    product_dir: &Path,
+) {
+    for (id, decl) in declared {
+        let gearbox_ir::SourceDecl::Path { at, .. } = decl else {
+            continue;
+        };
+        let Ok(dir) = product_dir.join(at).canonicalize() else {
+            continue;
+        };
+        if roots.iter().any(|r| &r.id == id) {
+            continue;
+        }
+        if let Some(root) = roots
+            .iter_mut()
+            .zip(adoptable)
+            .find(|(root, adoptable)| **adoptable && root.root == dir)
+            .map(|(root, _)| root)
+        {
+            root.id = id.clone();
+        }
+    }
+}
+
+/// The commit a Git checkout at `dir` has checked out, read from `.git`.
+///
+/// Read rather than asked of `git`: the engine runs where no `git` may be
+/// installed, and the three places a commit can be written -- a detached
+/// `HEAD`, a loose ref, `packed-refs` -- are plain text. A worktree's `.git`
+/// file and its `commondir` are followed. `None` when `dir` is not the top of
+/// a checkout or the ref cannot be found; the caller then records what it
+/// read instead.
+#[must_use]
+pub fn checkout_commit(dir: &Path) -> Option<String> {
+    let dot_git = dir.join(".git");
+    let git_dir = if dot_git.is_file() {
+        let text = std::fs::read_to_string(&dot_git).ok()?;
+        let target = text.trim().strip_prefix("gitdir:")?.trim();
+        dir.join(target)
+    } else {
+        dot_git
+    };
+    let common_dir = std::fs::read_to_string(git_dir.join("commondir"))
+        .ok()
+        .map_or_else(|| git_dir.clone(), |c| git_dir.join(c.trim()));
+
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head.trim();
+    let Some(reference) = head.strip_prefix("ref:").map(str::trim) else {
+        return is_object_id(head).then(|| head.to_owned());
+    };
+    for base in [&git_dir, &common_dir] {
+        if let Ok(text) = std::fs::read_to_string(base.join(reference)) {
+            let id = text.trim();
+            if is_object_id(id) {
+                return Some(id.to_owned());
+            }
+        }
+    }
+    let packed = std::fs::read_to_string(common_dir.join("packed-refs")).ok()?;
+    packed.lines().find_map(|line| {
+        let (id, name) = line.split_once(' ')?;
+        (name.trim() == reference && is_object_id(id)).then(|| id.to_owned())
+    })
+}
+
+/// A SHA-1 or SHA-256 object id, in hex.
+fn is_object_id(text: &str) -> bool {
+    matches!(text.len(), 40 | 64) && text.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// [`lock_sources`], told what the product declared for each source.
+///
+/// A source the product declares as `git(url, tag | rev | branch)` and the
+/// caller checked out itself is recorded as what it is rather than as the
+/// directory it happened to land in: `kind = "git"`, the URL with the declared
+/// reference in Cargo's spelling (`?tag=v1.2.0`), and as its digest the commit
+/// the checkout is at, `git:<sha>`. A temporary checkout path means nothing on
+/// another machine; the URL and the commit are what reproduce it. When the
+/// checkout carries no readable `.git`, the content digest stays.
+#[must_use]
+pub fn lock_sources_declared(
+    roots: &[SourceRoot],
+    catalogue: &gearbox_ir::Catalogue,
+    product_file: &Path,
+    declared: &std::collections::BTreeMap<SourceId, gearbox_ir::SourceDecl>,
+) -> std::collections::BTreeMap<SourceId, ResolvedSource> {
+    let mut sources = lock_sources(roots, catalogue, product_file);
+    for root in roots {
+        let Some(gearbox_ir::SourceDecl::Git {
+            url,
+            tag,
+            rev,
+            branch,
+            ..
+        }) = declared.get(&root.id)
+        else {
+            continue;
+        };
+        let Some(resolved) = sources.get_mut(&root.id) else {
+            continue;
+        };
+        let query: Vec<String> = [("tag", tag), ("rev", rev), ("branch", branch)]
+            .into_iter()
+            .filter_map(|(key, value)| value.as_ref().map(|v| format!("{key}={v}")))
+            .collect();
+        resolved.kind = SourceKind::Git;
+        resolved.location = if query.is_empty() {
+            url.clone()
+        } else {
+            format!("{url}?{}", query.join("&"))
+        };
+        if let Some(commit) = checkout_commit(&root.root) {
+            resolved.digest = format!("git:{commit}");
+        }
+    }
+    sources
+}

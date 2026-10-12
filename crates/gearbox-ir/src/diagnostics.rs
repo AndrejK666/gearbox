@@ -864,6 +864,23 @@ diagnostic_codes! {
     /// available, not for new products.
     TopologyDeprecatedGear = "GBX0324", Topology, Warning, false, "gear is deprecated";
 
+    /// Several open sources declare a gear the product uses, and the product
+    /// does not say which one.
+    ///
+    /// Two sources declaring one id is a legitimate layout -- an organization's
+    /// fork of a platform gear keeps the platform's id -- so the catalogue lists
+    /// both. Using one is where the choice has to be made: `use_gear(id,
+    /// source = ...)`. Picking the first root would make the build depend on
+    /// the order a caller happened to pass its roots in.
+    TopologyAmbiguousGearSource = "GBX0325", Topology, Error, false, "gear is declared by several sources and the product names none of them";
+
+    /// `use_gear(id, source = X)` names an open source that does not declare
+    /// the gear, while another open source does.
+    ///
+    /// Distinct from GBX0301 because the gear exists: the choice of source is
+    /// what is wrong, and the message names the sources that do declare it.
+    TopologyGearNotInSource = "GBX0326", Topology, Error, false, "the named source does not declare the gear";
+
     // ---------------------------------------------------------------- GBX04xx
     /// This consumer and provider could be placed in separate processes, but the
     /// dependency between them is not declared as a contract consumption.

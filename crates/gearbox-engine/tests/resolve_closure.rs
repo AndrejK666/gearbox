@@ -245,7 +245,7 @@ fn an_unknown_selected_gear_is_reported_and_the_rest_still_resolves() {
     let mut broken = prod;
     broken.selected_gears.push(gearbox_ir::GearSelection {
         gear: gid("no-such-gear"),
-        source: SourceId::new("gears-rust").unwrap(),
+        source: Some(SourceId::new("gears-rust").unwrap()),
         version: None,
         package: None,
         features: Vec::new(),
