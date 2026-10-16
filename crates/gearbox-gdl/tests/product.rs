@@ -423,7 +423,8 @@ fn a_cluster_scope_without_a_cache_is_refused() {
 fn gear_is_not_callable_in_a_product() {
     // Separate global sets, so a file that mixes the two fails at the call
     // rather than producing half of each.
-    let (_, _, messages) = eval(r#"gear(maturity = "stable", package = cargo(crate_name = "c", lib = "c"))"#);
+    let (_, _, messages) =
+        eval(r#"gear(maturity = "stable", package = cargo(crate_name = "c", lib = "c"))"#);
     assert!(
         messages.contains("gear"),
         "expected an unbound-name error naming `gear`: {messages}"

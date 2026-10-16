@@ -815,7 +815,9 @@ fn a_host_is_matched_by_the_vendor_field_its_point_names() {
     // GBX0512 against `static-idp-plugin` (vendor "cf") -- which the runtime
     // finds. Its point now says `selector = "idp.vendor"`.
     let cat = require!();
-    let am = cat.gear(&gearbox_ir::GearId::new("account-management").unwrap()).unwrap();
+    let am = cat
+        .gear(&gearbox_ir::GearId::new("account-management").unwrap())
+        .unwrap();
     assert_eq!(am.vendor_selector.as_deref(), Some("cf"));
 
     let (codes, messages) = check(

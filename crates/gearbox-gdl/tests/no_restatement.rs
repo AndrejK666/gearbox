@@ -156,7 +156,9 @@ gear(
 fn an_unknown_field_is_still_a_distinct_code() {
     // A typo is not a restatement; conflating them would send the author
     // looking for a Rust attribute that does not exist.
-    let (codes, _) = eval(&format!(r#"gear(maturity = "stable", {PACKAGE}, kind = "service")"#));
+    let (codes, _) = eval(&format!(
+        r#"gear(maturity = "stable", {PACKAGE}, kind = "service")"#
+    ));
     assert_eq!(codes, [DiagnosticCode::GdlUnknownArgument]);
 }
 

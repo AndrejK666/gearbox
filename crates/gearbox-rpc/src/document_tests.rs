@@ -853,9 +853,15 @@ fn completion_inside_an_unparseable_call_offers_its_parameters() {
     );
     // Accepted only to be refused by name: offering them invites the mistake.
     for refused in ["fills", "runtime_caps", "cluster_providers"] {
-        assert!(!labels.contains(&refused), "`{refused}` is offered: {labels:?}");
+        assert!(
+            !labels.contains(&refused),
+            "`{refused}` is offered: {labels:?}"
+        );
     }
-    assert!(labels.contains(&"maturity"), "the required field is offered: {labels:?}");
+    assert!(
+        labels.contains(&"maturity"),
+        "the required field is offered: {labels:?}"
+    );
 }
 
 /// At the top of a file, the constructs that file kind admits.

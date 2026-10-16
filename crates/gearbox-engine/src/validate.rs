@@ -159,9 +159,12 @@ fn check_selections(
     // A set, because two profiles may each name the same gear.
     let selected: std::collections::BTreeSet<&gearbox_ir::GearId> =
         intent.selected_gears.iter().map(|s| &s.gear).collect();
-    let selected = selected
-        .into_iter()
-        .map(|g| (g, std::slice::from_ref(&gearbox_ir::InclusionReason::Selected)));
+    let selected = selected.into_iter().map(|g| {
+        (
+            g,
+            std::slice::from_ref(&gearbox_ir::InclusionReason::Selected),
+        )
+    });
     crate::resolve::closure::maturity_diagnostics(
         &scan.catalogue,
         selected,
@@ -175,7 +178,8 @@ fn check_selections(
             continue;
         }
         let at = gearbox_ir::Location::or_file(selection.declared_at.as_ref(), uri);
-        if let Some(design) = crate::resolve::closure::at_design(&scan.catalogue, &selection.gear, &at)
+        if let Some(design) =
+            crate::resolve::closure::at_design(&scan.catalogue, &selection.gear, &at)
         {
             diagnostics.push(design);
             continue;

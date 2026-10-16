@@ -10,8 +10,8 @@
 //! types carry no such attribute for the same reason.
 
 use gearbox_ir::{
-    ConfigValue, Diagnostic, ExplanationGraph, FileAction, FilePlan, GearDescriptor, Ownership,
-    DesignGear, PendingGear, ProductIntent, ResolvedProduct,
+    ConfigValue, DesignGear, Diagnostic, ExplanationGraph, FileAction, FilePlan, GearDescriptor,
+    Ownership, PendingGear, ProductIntent, ResolvedProduct,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

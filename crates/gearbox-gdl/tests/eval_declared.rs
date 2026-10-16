@@ -365,10 +365,12 @@ fn a_design_gear_refuses_what_describes_code() {
 
 #[test]
 fn an_unknown_maturity_is_refused() {
-    let message = refusal(
-        r#"gear(maturity = "planned", package = cargo(crate_name = "p", lib = "p"))"#,
+    let message =
+        refusal(r#"gear(maturity = "planned", package = cargo(crate_name = "p", lib = "p"))"#);
+    assert!(
+        message.contains("unknown maturity `planned`"),
+        "got: {message}"
     );
-    assert!(message.contains("unknown maturity `planned`"), "got: {message}");
 }
 
 #[test]
@@ -382,7 +384,10 @@ fn a_stable_gear_still_may_not_restate_its_id() {
 #[test]
 fn maturity_is_required() {
     let message = refusal(r#"gear(package = cargo(crate_name = "p", lib = "p"))"#);
-    assert!(message.contains("a gear declares its maturity"), "got: {message}");
+    assert!(
+        message.contains("a gear declares its maturity"),
+        "got: {message}"
+    );
 }
 
 #[test]
@@ -415,11 +420,16 @@ fn an_extension_point_selector_is_a_dotted_field_path() {
     let (decl, codes) = eval(&point("idp.vendor"));
     assert!(codes.is_empty(), "{codes:?}");
     assert_eq!(
-        decl.expect("evaluates").extension_points[0].selector.as_deref(),
+        decl.expect("evaluates").extension_points[0]
+            .selector
+            .as_deref(),
         Some("idp.vendor")
     );
     for bad in ["", "idp..vendor", "Idp.vendor", "idp.vendor!"] {
         let message = refusal(&point(bad));
-        assert!(message.contains("dotted path of config field names"), "`{bad}`: {message}");
+        assert!(
+            message.contains("dotted path of config field names"),
+            "`{bad}`: {message}"
+        );
     }
 }

@@ -162,22 +162,7 @@ pub fn load_catalogue_staged(
     }
 
     // ---- S0: discover -------------------------------------------------------
-    let mut discovered: Vec<(&SourceRoot, PathBuf)> = Vec::new();
-    for root in roots {
-        let (found, failures) = discover(&root.root);
-        discovered.extend(found.into_iter().map(|p| (root, p)));
-        for failure in failures {
-            diagnostics.push(
-                Diagnostic::error(
-                    DiagnosticCode::GdlEval,
-                    format!("cannot search `{}` for descriptions: {failure}", root.id),
-                    "a directory the application cannot read is indistinguishable from one with no \
-                     gears in it; check its permissions",
-                )
-                .at(Location::file(gearbox_ir::file_uri(&root.root))),
-            );
-        }
-    }
+    let discovered = discover_all(roots, &mut diagnostics);
 
     // The digest of each source, now that discovery knows what is under it.
     //
@@ -226,19 +211,8 @@ pub fn load_catalogue_staged(
             continue;
         };
 
-        let source = match std::fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(e) => {
-                diagnostics.push(
-                    Diagnostic::error(
-                        DiagnosticCode::GdlEval,
-                        format!("cannot read `{}`: {e}", path.display()),
-                        "check the file's permissions",
-                    )
-                    .at(Location::file(identity.uri.clone())),
-                );
-                continue;
-            }
+        let Some(source) = read_description(path, &identity, &mut diagnostics) else {
+            continue;
         };
 
         let outcome = gdl.eval_gear(&identity, &source);
@@ -246,24 +220,16 @@ pub fn load_catalogue_staged(
         let Some(decl) = outcome.value else { continue };
 
         if decl.maturity == Some(gearbox_gdl::Maturity::Design) {
-            let Some(design) = design_gear(root, &identity, &decl, &mut scans, &mut diagnostics)
-            else {
-                continue;
-            };
-            let id = design.id.clone();
-            // The same rule as for gears below: the first declaration wins.
-            if let Some(previous) = catalogue.designs.get(&id) {
-                diagnostics.push(declared_twice(
-                    &id,
-                    (&previous.gdl_path, &previous.source),
-                    &identity,
-                ));
-                continue;
-            }
-            catalogue.designs.insert(id.clone(), design);
-            if let Some(stored) = catalogue.designs.get(&id)
-                && on_event(LoadEvent::Design(stored)) == Continue::Stop
-            {
+            let admitted = admit_design(
+                root,
+                &identity,
+                &decl,
+                &mut catalogue,
+                &mut scans,
+                &mut diagnostics,
+                on_event,
+            );
+            if admitted == Continue::Stop {
                 stopped = true;
                 break;
             }
@@ -441,6 +407,84 @@ fn declared_twice(
          `attr = \"...\"`; if both are wanted, they need distinct gear ids",
     )
     .at(Location::file(identity.uri.clone()))
+}
+
+/// Every description under every root, each with the root it was found in.
+fn discover_all<'r>(
+    roots: &'r [SourceRoot],
+    diagnostics: &mut Diagnostics,
+) -> Vec<(&'r SourceRoot, PathBuf)> {
+    let mut discovered = Vec::new();
+    for root in roots {
+        let (found, failures) = discover(&root.root);
+        discovered.extend(found.into_iter().map(|p| (root, p)));
+        for failure in failures {
+            diagnostics.push(
+                Diagnostic::error(
+                    DiagnosticCode::GdlEval,
+                    format!("cannot search `{}` for descriptions: {failure}", root.id),
+                    "a directory the application cannot read is indistinguishable from one with no \
+                     gears in it; check its permissions",
+                )
+                .at(Location::file(gearbox_ir::file_uri(&root.root))),
+            );
+        }
+    }
+    discovered
+}
+
+/// The text of one description, or `None` with the reason reported.
+fn read_description(
+    path: &std::path::Path,
+    identity: &FileIdentity,
+    diagnostics: &mut Diagnostics,
+) -> Option<String> {
+    match std::fs::read_to_string(path) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            diagnostics.push(
+                Diagnostic::error(
+                    DiagnosticCode::GdlEval,
+                    format!("cannot read `{}`: {e}", path.display()),
+                    "check the file's permissions",
+                )
+                .at(Location::file(identity.uri.clone())),
+            );
+            None
+        }
+    }
+}
+
+/// Put one design gear in the catalogue and tell the caller whether to go on.
+///
+/// The same rule as for gears with code: the first declaration wins, and a
+/// second is reported rather than stored.
+fn admit_design(
+    root: &SourceRoot,
+    identity: &FileIdentity,
+    decl: &gearbox_gdl::GearDecl,
+    catalogue: &mut Catalogue,
+    scans: &mut crate::scans::CrateScans,
+    diagnostics: &mut Diagnostics,
+    on_event: &mut dyn FnMut(LoadEvent<'_>) -> Continue,
+) -> Continue {
+    let Some(design) = design_gear(root, identity, decl, scans, diagnostics) else {
+        return Continue::Yes;
+    };
+    let id = design.id.clone();
+    if let Some(previous) = catalogue.designs.get(&id) {
+        diagnostics.push(declared_twice(
+            &id,
+            (&previous.gdl_path, &previous.source),
+            identity,
+        ));
+        return Continue::Yes;
+    }
+    catalogue.designs.insert(id.clone(), design);
+    catalogue
+        .designs
+        .get(&id)
+        .map_or(Continue::Yes, |stored| on_event(LoadEvent::Design(stored)))
 }
 
 /// A design gear, built from its declaration alone.

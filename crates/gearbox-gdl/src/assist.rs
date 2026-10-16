@@ -267,7 +267,12 @@ fn refused_only(call: &str, param: &str) -> bool {
     call == "gear"
         && matches!(
             param,
-            "fills" | "runtime_caps" | "colocated_deps" | "lifecycle" | "client" | "cluster_providers"
+            "fills"
+                | "runtime_caps"
+                | "colocated_deps"
+                | "lifecycle"
+                | "client"
+                | "cluster_providers"
         )
 }
 

@@ -597,7 +597,9 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
 
         sink(eval)?.set_gear(GearDecl {
             maturity: Some(maturity),
-            id: id.filter(|_| maturity == Maturity::Design).map(str::to_owned),
+            id: id
+                .filter(|_| maturity == Maturity::Design)
+                .map(str::to_owned),
             name: name.map(str::to_owned),
             description: description.map(str::to_owned),
             category: category.map(str::to_owned),

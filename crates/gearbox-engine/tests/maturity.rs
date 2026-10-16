@@ -115,7 +115,10 @@ fn a_design_gear_is_listed_apart_and_needs_no_crate() {
         catalogue.diagnostics
     );
     let id = GearId::new("approval-service").unwrap();
-    assert!(!catalogue.gears.contains_key(&id), "a design gear is not usable");
+    assert!(
+        !catalogue.gears.contains_key(&id),
+        "a design gear is not usable"
+    );
     let design = catalogue.designs.get(&id).expect("listed as a design");
     assert_eq!(design.display_name, "Approval Service");
     assert_eq!(design.category.as_deref(), Some("core-functionality"));
@@ -152,7 +155,11 @@ fn a_design_gear_arrives_in_the_first_pass_and_is_never_pending() {
         Continue::Yes
     });
     assert!(design_before_boundary, "a design is complete when declared");
-    assert_eq!(declared, ["thing/gear.gdl"], "only the gear with code is pending");
+    assert_eq!(
+        declared,
+        ["thing/gear.gdl"],
+        "only the gear with code is pending"
+    );
     assert!(scan.pending.is_empty());
 }
 
@@ -173,7 +180,11 @@ fn a_design_id_beside_a_gear_with_code_is_reported() {
         .map(|d| d.message.as_str())
         .collect();
     assert_eq!(messages.len(), 1, "{:?}", catalogue.diagnostics);
-    assert!(messages[0].contains("also described at design maturity"), "{}", messages[0]);
+    assert!(
+        messages[0].contains("also described at design maturity"),
+        "{}",
+        messages[0]
+    );
 }
 
 fn product(gear: &str) -> gearbox_ir::ProductIntent {
@@ -208,8 +219,14 @@ fn selecting_a_design_gear_says_it_has_no_code_yet() {
     let resolution =
         gearbox_engine::resolve::resolve(&catalogue, &intent, &ProfileId::new("dev").unwrap());
     let codes: Vec<DiagnosticCode> = resolution.diagnostics.iter().map(|d| d.code).collect();
-    assert!(codes.contains(&DiagnosticCode::TopologyDesignGear), "{codes:?}");
-    assert!(!codes.contains(&DiagnosticCode::TopologyUnknownGear), "{codes:?}");
+    assert!(
+        codes.contains(&DiagnosticCode::TopologyDesignGear),
+        "{codes:?}"
+    );
+    assert!(
+        !codes.contains(&DiagnosticCode::TopologyUnknownGear),
+        "{codes:?}"
+    );
     let design = resolution
         .diagnostics
         .iter()
@@ -222,8 +239,14 @@ fn selecting_a_design_gear_says_it_has_no_code_yet() {
     // Validate checks selections without resolving, and says the same.
     let report = gearbox_engine::validate::validate(&[root], Some(&intent));
     let codes: Vec<DiagnosticCode> = report.diagnostics.iter().map(|d| d.code).collect();
-    assert!(codes.contains(&DiagnosticCode::TopologyDesignGear), "{codes:?}");
-    assert!(!codes.contains(&DiagnosticCode::TopologyUnknownGear), "{codes:?}");
+    assert!(
+        codes.contains(&DiagnosticCode::TopologyDesignGear),
+        "{codes:?}"
+    );
+    assert!(
+        !codes.contains(&DiagnosticCode::TopologyUnknownGear),
+        "{codes:?}"
+    );
 }
 
 fn product_of(gears: &[&str]) -> gearbox_ir::ProductIntent {
@@ -260,7 +283,11 @@ fn each_level_of_a_gear_with_code_reaches_its_descriptor() {
         .gear("pre", "preview", &[])
         .gear("dep", "deprecated", &[]);
     let catalogue = load_catalogue(&[tree.root()]).catalogue;
-    assert!(catalogue.diagnostics.as_slice().is_empty(), "{:?}", catalogue.diagnostics);
+    assert!(
+        catalogue.diagnostics.as_slice().is_empty(),
+        "{:?}",
+        catalogue.diagnostics
+    );
     let level = |id: &str| catalogue.gears[&GearId::new(id).unwrap()].maturity;
     assert_eq!(level("exp"), gearbox_ir::Maturity::Experimental);
     assert_eq!(level("pre"), gearbox_ir::Maturity::Preview);
@@ -273,7 +300,8 @@ fn a_product_is_told_what_it_links_below_stable_including_what_it_did_not_choose
     let tree = Tree::new("closure");
     // `old` is deprecated and co-locates `fresh`, which is experimental; the
     // product names `old` and the stable `thing`, never `fresh`.
-    tree.gear("fresh", "experimental", &[]).gear("old", "deprecated", &["fresh"]);
+    tree.gear("fresh", "experimental", &[])
+        .gear("old", "deprecated", &["fresh"]);
     let catalogue = load_catalogue(&[tree.root()]).catalogue;
     let intent = product_of(&["old", "thing"]);
 
@@ -292,7 +320,11 @@ fn a_product_is_told_what_it_links_below_stable_including_what_it_did_not_choose
         })
         .map(|d| (d.code, d.severity, d.message.as_str()))
         .collect();
-    assert_eq!(maturity.len(), 2, "one per gear below stable, none for `thing`: {maturity:?}");
+    assert_eq!(
+        maturity.len(),
+        2,
+        "one per gear below stable, none for `thing`: {maturity:?}"
+    );
     let (_, severity, message) = maturity
         .iter()
         .find(|(c, ..)| *c == DiagnosticCode::TopologyExperimentalGear)
@@ -306,7 +338,10 @@ fn a_product_is_told_what_it_links_below_stable_including_what_it_did_not_choose
     assert_eq!(*severity, gearbox_ir::Severity::Warning);
     // Not blocking: the levels warn, and the product still resolves.
     assert!(
-        !resolution.diagnostics.iter().any(|d| d.is_error()),
+        !resolution
+            .diagnostics
+            .iter()
+            .any(gearbox_ir::Diagnostic::is_error),
         "{:?}",
         resolution.diagnostics
     );
