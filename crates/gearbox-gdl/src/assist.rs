@@ -262,10 +262,10 @@ pub fn parameters(docs: &DocModule, call: &str, already: &[String]) -> Vec<Sugge
 /// They exist in the signature so the error can say which attribute owns the
 /// fact (GBX0210), or what a renamed keyword became -- not to be written.
 /// Offering them in completion invites exactly the mistake they catch. `id`
-/// is not here: a `maturity = "design"` gear writes it.
+/// is not here: an `implementation = "design"` gear writes it.
 fn refused_only(call: &str, param: &str) -> bool {
-    call == "gear"
-        && matches!(
+    match call {
+        "gear" => matches!(
             param,
             "fills"
                 | "runtime_caps"
@@ -273,7 +273,11 @@ fn refused_only(call: &str, param: &str) -> bool {
                 | "lifecycle"
                 | "client"
                 | "cluster_providers"
-        )
+        ),
+        "provide" => matches!(param, "version" | "transports" | "kind"),
+        "consume" => matches!(param, "from_" | "version" | "kind"),
+        _ => false,
+    }
 }
 
 /// The documentation for one name, as the interpreter carries it.

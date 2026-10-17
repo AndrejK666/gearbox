@@ -5,8 +5,11 @@
  *
  * Ordered by promise, so `<` reads as "less settled than" -- except
  * `Deprecated`, which is last because it is the end of the line, not because
- * it promises most. A gear with no code is not here: it is `maturity =
- * "design"`, kept in [`Catalogue::designs`].
+ * it promises most. A gear with no code is not here: it is `implementation =
+ * "design"`, has no maturity, and is kept in [`Catalogue::designs`].
+ *
+ * One of two axes. This one is what a gear promises its users; how much of
+ * it is written is [`Implementation`].
  *
  * No `Default`. The description must say, and a missing value is refused at
  * evaluation: `Stable` as a default makes forgetting the field a promise.

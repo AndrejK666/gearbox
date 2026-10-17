@@ -100,6 +100,34 @@ gdl_record! {
 }
 
 gdl_record! {
+    /// `npm(...)`, `nuget(...)`, `go(...)` -- a package in an ecosystem Gearbox
+    /// locates but does not project.
+    ///
+    /// One record for all of them: past its name and path, nothing about a
+    /// non-Cargo package is read. `cargo(...)` stays separate because a build
+    /// needs its `lib`, features and link set.
+    PackageRecord as "gdl_package" {
+        #[allocative(skip)]
+        pub ecosystem: gearbox_ir::Ecosystem,
+        pub name: String,
+        pub path: String,
+        /// Where the constructor was written.
+        #[allocative(skip)]
+        pub declared_at: Option<gearbox_ir::Location>,
+    }
+}
+
+gdl_record! {
+    /// `scenario("...", priority = "p1", done = True)` -- one thing a gear lets
+    /// its users do, and whether it is written.
+    ScenarioRecord as "gdl_scenario" {
+        pub text: String,
+        pub priority: Option<String>,
+        pub done: bool,
+    }
+}
+
+gdl_record! {
     /// `docs(prd = ..., design = ..., adr = [...], openapi = ...)`
     ///
     /// Every field is an override, not a requirement. The platform keeps these at
@@ -403,6 +431,11 @@ gdl_record! {
         pub branch: Option<String>,
         /// Registry only: what a gear id is prefixed with to name its package.
         pub prefix: Option<String>,
+        /// Git only: the directory inside the repository, from `git(path = ...)`.
+        ///
+        /// A gear's `source` uses it to say where the gear sits; a product's
+        /// source is a whole repository and refuses it.
+        pub subdir: Option<String>,
     }
 }
 

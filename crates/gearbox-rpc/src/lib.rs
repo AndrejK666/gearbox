@@ -37,6 +37,10 @@ mod preview_tests;
 mod serve_tests;
 
 #[cfg(test)]
+#[path = "scaffold_tests.rs"]
+mod scaffold_tests;
+
+#[cfg(test)]
 #[path = "write_gate_tests.rs"]
 mod write_gate_tests;
 
@@ -2149,21 +2153,30 @@ fn scaffold_gear_files(
 #
 # The gear's id is not written here: it comes from `#[toolkit::gear(name = ...)]`
 # in the crate. This file names the package the catalogue joins that id against.
+#
+# Every field: {reference}
+# The commented lines below are fields this gear may need. Uncomment one to use it.
 
 gear(
+    gdl_version = "{version}",
     name = {name},
     # New code makes no promise yet. Raise it -- preview, then stable -- when
     # the gear has earned it; there is no default because `stable` would be one.
     maturity = "experimental",
+    # How much is written; "done" once every scenario below is.
+    implementation = "in-progress",
     package = cargo(
         crate_name = {crate_quoted},
         lib = {lib_quoted},
         path = ".",
     ),
-{shape})
+{shape}{common})
 "#,
         comment = params.name.replace(['\n', '\r'], " "),
+        reference = GDL_REFERENCE,
+        version = gearbox_gdl::version::CURRENT,
         shape = gdl_shape(params.kind, params.plugin.as_ref()),
+        common = gdl_shape_common(params.kind),
     );
 
     let dependencies = toolkit.map_or_else(String::new, |toolkit| {
@@ -2291,6 +2304,49 @@ fn plugin_shape(plugin: &crate::protocol::PluginScaffold) -> String {
 /// string on a line of its own, evaluated as GDL.
 fn comment_safe(value: &str) -> String {
     value.replace(['\n', '\r'], " ")
+}
+
+/// Where a person reading a scaffolded `gear.gdl` finds every field.
+const GDL_REFERENCE: &str = "https://github.com/constructorfabric/gearbox/blob/main/docs/gdl.md";
+
+/// The fields every kind of gear may add later, commented out.
+///
+/// Written into the file rather than left to the reference: a person opening
+/// the description sees what can go in it, and uncommenting a line is the
+/// whole edit. A plugin is not offered `sdk`: the host's SDK is the host's.
+fn gdl_shape_common(kind: crate::protocol::GearKind) -> String {
+    const SDK: &str = r#"
+    # This gear's SDKs, in any language. At most one `cargo(...)`.
+    #
+    # sdk = [
+    #     cargo(crate_name = "cf-my-gear-sdk", lib = "my_gear_sdk", path = "../my-gear-sdk"),
+    #     npm(name = "@cf/my-gear-sdk", path = "../my-gear-sdk-ts"),
+    # ],
+"#;
+    const REST: &str = r#"
+    # The repository and directory this gear is in. A reader with only this file
+    # -- in Studio, in a registry -- follows it to the code and the documents.
+    # Paths in this file are looked for on disk first.
+    #
+    # source = git(url = "https://github.com/<org>/<repo>", path = "gears/<this-gear>"),
+
+    # Documents not at `docs/` beside the gear, and tests: paths or URLs.
+    #
+    # docs = docs(prd = "docs/PRD.md", design = "docs/DESIGN.md", openapi = "https://..."),
+    # tests = ["tests"],
+
+    # What a user can do with this gear, and what is written already.
+    #
+    # scenarios = [
+    #     scenario("What a user can do, in one sentence.", priority = "p1", done = False),
+    # ],
+"#;
+    match kind {
+        crate::protocol::GearKind::Plugin => REST.to_owned(),
+        crate::protocol::GearKind::Minimal | crate::protocol::GearKind::Service => {
+            format!("{SDK}{REST}")
+        }
+    }
 }
 
 fn gdl_shape_commented(kind: crate::protocol::GearKind) -> &'static str {

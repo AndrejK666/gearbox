@@ -345,6 +345,24 @@ product(
 }
 
 #[test]
+fn a_product_source_is_a_whole_repository() {
+    let src = r#"
+product(
+    id = "demo", version = "0.1.0",
+    sources = [source(id = "s", at = git(url = "https://example.com/x.git", tag = "v1", path = "gears"))],
+    profiles = [embedded(id = "dev")],
+    default_profile = "dev",
+    gears = [],
+)
+"#;
+    let (_, _, messages) = eval(src);
+    assert!(
+        messages.contains("a product's source is a whole repository"),
+        "{messages}"
+    );
+}
+
+#[test]
 fn a_branch_is_accepted_but_recorded_as_not_immutable() {
     let src = r#"
 product(
@@ -798,4 +816,20 @@ fn a_checkout_can_take_its_crates_from_a_registry() {
         !codes.is_empty() && messages.contains("crates"),
         "{codes:?} {messages}"
     );
+}
+
+#[test]
+fn a_product_declares_its_gdl_version_too() {
+    let src = r#"
+product(
+    gdl_version = "1.0",
+    id = "demo", version = "0.1.0",
+    sources = [source(id = "s", at = path("."))],
+    profiles = [embedded(id = "dev")],
+    default_profile = "dev",
+    gears = [],
+)
+"#;
+    let (intent, codes, messages) = eval(src);
+    assert!(intent.is_some(), "{codes:?} {messages}");
 }

@@ -672,3 +672,89 @@ partial | full`) was considered and not taken; `design` plus `sdk` covers the on
 * `crates/gearbox-gdl/src/globals.rs` -- `maturity`, the design-gear refusals, the `fills` hint.
 * `crates/gearbox-engine/src/catalogue.rs::design_gear`; `resolve/closure.rs::at_design`.
 * `crates/gearbox-engine/tests/design.rs`; `crates/gearbox-gdl/tests/eval_declared.rs`.
+
+## Amendment 2026-10-17: a description is readable alone, in any language, with two axes of status
+
+The review of `gears-rust#4793` asked for one thing in several forms: a `gear.gdl` must be a
+complete record of its gear. Studio, a registry or a different repository can have the
+description and nothing else. From the description, a reader must find the code, the SDKs, the
+documents, the tests and the status. This amendment adds what that needs. It does not change the
+decision above: Gearbox still projects the facts that Rust owns, and a description still does not
+restate them.
+
+### Locators are declared, and they are not restatements
+
+A locator tells where something is. Rust does not state where a gear's SDK, documents or tests
+are, so a locator is not a copy of a Rust fact. This is the same argument as for `sdk` and
+`cluster_plugins` before.
+
+* `source = git(url, path)` tells the repository and the directory of the gear. A pin is
+  optional, because `source` is an address and not a lock.
+* Gearbox finds each path in a description on disk first, relative to the description. If the
+  path is not on disk, Gearbox makes a link to the same path in `source`. If neither finds it,
+  the result is GBX0109, as before.
+* `docs(...)` accepts a URL. `tests = [...]` tells where the tests are.
+* When the description is in a git checkout, `source` must agree with it: a remote is the
+  repository or a fork of it (same host and name), and the description is at the path. A
+  difference is GBX0121, a warning. A fork matches, because `source` names the canonical
+  repository and a contributor works in a fork.
+
+`source = path(...)` is refused. Paths are already relative to the description, and a checkout
+in a different directory is different on each computer. Studio maps a repository to a local
+checkout; the description does not.
+
+### An SDK can be in any language
+
+`npm(...)`, `nuget(...)` and `go(...)` tell where an SDK in another language is, in the same form
+as `cargo(...)`: a name and a path. `sdk` accepts one package or a list, with one `cargo(...)` at
+most, because the projector reads that crate. Gearbox does not read the other packages; it
+records them. `package` stays `cargo(...)`, because Gearbox projects only Rust code. A new
+ecosystem is one constructor and one value of `Ecosystem`. There is no `language` field: the
+constructor tells the language.
+
+### The second axis is taken: `implementation`
+
+The 2026-10-02 amendment considered a second axis and did not take it. The review showed the
+reason to take it. `maturity = "design"` put two different facts on one scale: what a gear
+promises, and how much of it is written. `GEARS.md` already records the second fact for each
+scenario, as `[ ]` and `[x]`.
+
+* `maturity` is what a gear promises: `experimental`, `preview`, `stable`, `deprecated`. It
+  stays required on a gear with code, with no default.
+* `implementation` is how much is written: `design`, `in-progress`, `done`. It is optional,
+  because an absent value makes no statement.
+* `implementation = "design"` replaces `maturity = "design"`, with the same rules. A design gear
+  has no `maturity`, because a gear with no code promises nothing. `maturity = "design"` fails
+  with a message that tells what to write.
+* `scenarios = [scenario(text, priority, done)]` records the lines of `GEARS.md`. A gear that is
+  `done` with a scenario that is not done is GBX0122, a warning.
+
+### A file declares its GDL version
+
+`gdl_version = "MAJOR.MINOR"`, absent means `1.0`. A minor version only adds. Gearbox evaluates a
+file for a newer minor version, and if it fails, the help text says that the file is newer. A
+different major version is GBX0123, before evaluation. Gearbox reads the version from the tokens,
+because Starlark finds unknown names before any call runs.
+
+### Empty fields are not written
+
+The review asked for each field to be visible, also when it is empty. Gearbox does not require
+`None` for each field. A full list of `None` makes each file and each diff longer. Each new minor
+version would make each file incomplete. And `None` and `[]` mean different things for
+`cargo_features`. The fields are visible in three other places:
+
+* the scaffold writes the fields that a gear can need later as comments;
+* each parameter has a sentence that completion and hover show, and a test fails for a parameter
+  without one;
+* `docs/gdl.md` has a full template.
+
+### Traceability
+
+* `crates/gearbox-gdl/src/globals.rs` -- `npm`, `nuget`, `go`, `git`, `scenario`, `stage`, the
+  `# Arguments` sections.
+* `crates/gearbox-gdl/src/version.rs`; `crates/gearbox-engine/src/origin.rs`;
+  `crates/gearbox-engine/src/docs.rs` (`locate`, `tests`).
+* `crates/gearbox-ir/src/catalogue.rs` -- `GitOrigin`, `Located`, `DocUrls`, `Implementation`,
+  `Scenario`; `crates/gearbox-ir/src/contract.rs` -- `Ecosystem`, `PackageRef`.
+* `crates/gearbox-engine/tests/source.rs`, `tests/maturity.rs`, `tests/gdl_examples.rs`;
+  `crates/gearbox-gdl/tests/eval_declared.rs`; `crates/gearbox-rpc/src/scaffold_tests.rs`.

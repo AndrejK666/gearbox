@@ -348,7 +348,7 @@ There is no `gear.toml` to migrate away from. When this was written, `find . -na
 no code; they carried a name, a description, a category and three role flags, and were folded into
 `gear.gdl` (ADR-0002, Amendment 2026-10-02): the three descriptive fields moved as they were, the
 flags follow from what a description declares, and a gear with only documents is described at
-`maturity = "design"`.
+`implementation = "design"` (Amendment 2026-10-17).
 
 ---
 

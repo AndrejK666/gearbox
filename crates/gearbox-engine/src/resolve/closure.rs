@@ -207,7 +207,7 @@ pub(crate) fn at_design(
                  build yet"
             ),
             format!(
-                "`{}` in source `{}` says `maturity = \"design\"`; leave the gear out of the \
+                "`{}` in source `{}` says `implementation = \"design\"`; leave the gear out of the \
                  product until it has code{}",
                 design.gdl_path,
                 design.source,

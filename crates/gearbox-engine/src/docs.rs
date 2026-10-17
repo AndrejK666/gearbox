@@ -10,12 +10,23 @@
 //! points nowhere is a typo (GBX0109). A file merely *not found* by convention is
 //! not reported at all -- a gear may genuinely have no PRD, and warning about
 //! that would put noise on 40 gears to catch nothing.
+//!
+//! A declared value may also be a URL, kept as written. And a declared path not
+//! on disk is not a typo when the gear names its `source = git(...)`: it is the
+//! same path in that repository, kept as a link. Disk always wins.
 
 use std::path::{Path, PathBuf};
 
 use gearbox_gdl::GearDecl;
 use gearbox_gdl::engine::FileIdentity;
-use gearbox_ir::{Diagnostic, DiagnosticCode, Diagnostics, GearDocs, Location, RelPath};
+use gearbox_ir::{
+    Diagnostic, DiagnosticCode, Diagnostics, DocUrls, GearDocs, GitOrigin, Located, Location,
+    RelPath,
+};
+
+/// What GBX0109 suggests, wherever a declared path points at nothing.
+const MISSING_HINT: &str = "the path is relative to the description's own directory; if the file \
+                            is in another repository, declare the gear's `source = git(...)`";
 
 /// The `OpenAPI` locations that actually occur in the platform.
 ///
@@ -39,6 +50,7 @@ pub fn project(
     gdl_dir: &Path,
     identity: &FileIdentity,
     decl: &GearDecl,
+    origin: Option<&GitOrigin>,
     diagnostics: &mut Diagnostics,
 ) -> Option<GearDocs> {
     let uri = identity.uri.as_str();
@@ -56,35 +68,43 @@ pub fn project(
         bases.push(parent.to_path_buf());
     }
 
+    let find = Finder {
+        root,
+        gdl_dir,
+        bases: &bases,
+        origin,
+        at: &at,
+    };
+    let (prd, prd_url) = find.one(
+        declared.and_then(|d| d.prd.as_deref()),
+        "prd",
+        &["docs/PRD.md"],
+        diagnostics,
+    );
+    let (design, design_url) = find.one(
+        declared.and_then(|d| d.design.as_deref()),
+        "design",
+        &["docs/DESIGN.md"],
+        diagnostics,
+    );
+    let (openapi, openapi_url) = find.one(
+        declared.and_then(|d| d.openapi.as_deref()),
+        "openapi",
+        OPENAPI_CANDIDATES,
+        diagnostics,
+    );
+    let (adr, adr_urls) = find.adr(declared, diagnostics);
     let docs = GearDocs {
-        prd: resolve_one(
-            root,
-            gdl_dir,
-            &bases,
-            declared.and_then(|d| d.prd.as_deref()),
-            &["docs/PRD.md"],
-            &at,
-            diagnostics,
-        ),
-        design: resolve_one(
-            root,
-            gdl_dir,
-            &bases,
-            declared.and_then(|d| d.design.as_deref()),
-            &["docs/DESIGN.md"],
-            &at,
-            diagnostics,
-        ),
-        adr: resolve_adr(root, gdl_dir, &bases, declared, &at, diagnostics),
-        openapi: resolve_one(
-            root,
-            gdl_dir,
-            &bases,
-            declared.and_then(|d| d.openapi.as_deref()),
-            OPENAPI_CANDIDATES,
-            &at,
-            diagnostics,
-        ),
+        prd,
+        design,
+        adr,
+        openapi,
+        urls: DocUrls {
+            prd: prd_url,
+            design: design_url,
+            adr: adr_urls,
+            openapi: openapi_url,
+        },
     };
 
     (!docs.is_empty()).then_some(docs)
@@ -112,87 +132,181 @@ fn is_own_family(parent: &Path, gdl_dir: &Path) -> bool {
         .any(|p| p.is_dir() && p != gdl_dir && p.join(crate::catalogue::GEAR_FILE).is_file())
 }
 
-/// A declared path if given, else the first candidate that exists.
-fn resolve_one(
+/// Where a declared locator is.
+enum Found {
+    /// A URL as written, or the same path in the gear's git source.
+    Url(String),
+    /// On disk. `None` when it is outside the source root: it exists, so it is
+    /// not the typo GBX0109 reports, but a lock cannot carry it.
+    Local(Option<RelPath>),
+    /// Neither: the caller reports GBX0109.
+    Missing,
+}
+
+/// Find a declared locator: a URL as written, else on disk relative to
+/// `gdl_dir` (when `accepts` it), else the same path in `origin`.
+fn locate(
     root: &Path,
     gdl_dir: &Path,
-    bases: &[PathBuf],
-    declared: Option<&str>,
-    candidates: &[&str],
-    at: &Location,
-    diagnostics: &mut Diagnostics,
-) -> Option<RelPath> {
-    if let Some(declared) = declared {
-        let absolute = gdl_dir.join(declared);
-        if absolute.is_file() {
-            return relative_to(root, &absolute);
-        }
+    declared: &str,
+    origin: Option<&GitOrigin>,
+    accepts: fn(&Path) -> bool,
+) -> Found {
+    if declared.starts_with("https://") || declared.starts_with("http://") {
+        return Found::Url(declared.to_owned());
+    }
+    let absolute = gdl_dir.join(declared);
+    if accepts(&absolute) {
+        return Found::Local(relative_to(root, &absolute));
+    }
+    origin
+        .and_then(|origin| origin.web_url(declared))
+        .map_or(Found::Missing, Found::Url)
+}
+
+/// What the document searches share for one description.
+struct Finder<'a> {
+    root: &'a Path,
+    gdl_dir: &'a Path,
+    bases: &'a [PathBuf],
+    origin: Option<&'a GitOrigin>,
+    at: &'a Location,
+}
+
+impl Finder<'_> {
+    fn missing(&self, written: &str, diagnostics: &mut Diagnostics) {
         diagnostics.push(
             Diagnostic::error(
                 DiagnosticCode::GdlMissingDocPath,
-                format!("`docs(... = \"{declared}\")` points at no file"),
-                "the path is relative to the description's own directory; drop the field to \
-                 let the `docs/` convention find it",
+                format!("{written} points at no file"),
+                MISSING_HINT,
             )
-            .at(at.clone()),
+            .at(self.at.clone()),
         );
-        return None;
     }
 
-    bases
-        .iter()
-        .flat_map(|base| candidates.iter().map(move |c| base.join(c)))
-        .find(|p| p.is_file())
-        .and_then(|p| relative_to(root, &p))
+    /// A declared path or URL if given, else the first candidate on disk.
+    fn one(
+        &self,
+        declared: Option<&str>,
+        field: &str,
+        candidates: &[&str],
+        diagnostics: &mut Diagnostics,
+    ) -> (Option<RelPath>, Option<String>) {
+        if let Some(declared) = declared {
+            return match locate(
+                self.root,
+                self.gdl_dir,
+                declared,
+                self.origin,
+                Path::is_file,
+            ) {
+                Found::Url(url) => (None, Some(url)),
+                Found::Local(path) => (path, None),
+                Found::Missing => {
+                    self.missing(&format!("`docs({field} = \"{declared}\")`"), diagnostics);
+                    (None, None)
+                }
+            };
+        }
+        let found = self
+            .bases
+            .iter()
+            .flat_map(|base| candidates.iter().map(move |c| base.join(c)))
+            .find(|p| p.is_file())
+            .and_then(|p| relative_to(self.root, &p));
+        (found, None)
+    }
+
+    /// Declared ADRs, else every `*.md` in the first `docs/ADR/` found.
+    fn adr(
+        &self,
+        declared: Option<&gearbox_gdl::records::DocsRecord>,
+        diagnostics: &mut Diagnostics,
+    ) -> (Vec<RelPath>, Vec<String>) {
+        if let Some(paths) = declared.map(|d| &d.adr).filter(|a| !a.is_empty()) {
+            let (mut local, mut urls) = (Vec::new(), Vec::new());
+            for declared in paths {
+                match locate(
+                    self.root,
+                    self.gdl_dir,
+                    declared,
+                    self.origin,
+                    Path::is_file,
+                ) {
+                    Found::Url(url) => urls.push(url),
+                    Found::Local(path) => local.extend(path),
+                    Found::Missing => {
+                        self.missing(&format!("`docs(adr = [\"{declared}\"])`"), diagnostics);
+                    }
+                }
+            }
+            return (local, urls);
+        }
+
+        let Some(dir) = self
+            .bases
+            .iter()
+            .map(|b| b.join("docs/ADR"))
+            .find(|p| p.is_dir())
+        else {
+            return (Vec::new(), Vec::new());
+        };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return (Vec::new(), Vec::new());
+        };
+        let mut found: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "md"))
+            .collect();
+        // Sorted so the catalogue is byte-identical across runs.
+        found.sort();
+        let local = found
+            .iter()
+            .filter_map(|p| relative_to(self.root, p))
+            .collect();
+        (local, Vec::new())
+    }
 }
 
-/// Declared ADR paths, else every `*.md` in the first `docs/ADR/` found.
-fn resolve_adr(
+/// Where the gear's declared tests are, each on disk or as a link.
+///
+/// The same search as a declared document: a URL as written, else on disk
+/// relative to the description, else the same path in the gear's git source.
+/// A directory counts: tests are usually a `tests/` tree, not one file.
+pub fn tests(
     root: &Path,
     gdl_dir: &Path,
-    bases: &[PathBuf],
-    declared: Option<&gearbox_gdl::records::DocsRecord>,
-    at: &Location,
+    identity: &FileIdentity,
+    decl: &GearDecl,
+    origin: Option<&GitOrigin>,
     diagnostics: &mut Diagnostics,
-) -> Vec<RelPath> {
-    if let Some(paths) = declared.map(|d| &d.adr).filter(|a| !a.is_empty()) {
-        let mut out = Vec::new();
-        for declared in paths {
-            let absolute = gdl_dir.join(declared);
-            if absolute.is_file() {
-                out.extend(relative_to(root, &absolute));
-            } else {
-                diagnostics.push(
-                    Diagnostic::error(
-                        DiagnosticCode::GdlMissingDocPath,
-                        format!("`docs(adr = [\"{declared}\"])` points at no file"),
-                        "the path is relative to the description's own directory",
-                    )
-                    .at(at.clone()),
-                );
-            }
+) -> Vec<Located> {
+    let at = Location::or_file(decl.declared_at.as_ref(), &identity.uri);
+    let mut out = Vec::new();
+    for declared in &decl.tests {
+        match locate(root, gdl_dir, declared, origin, Path::exists) {
+            Found::Url(url) => out.push(Located {
+                path: None,
+                url: Some(url),
+            }),
+            Found::Local(Some(path)) => out.push(Located {
+                path: Some(path),
+                url: None,
+            }),
+            Found::Local(None) => {}
+            Found::Missing => diagnostics.push(
+                Diagnostic::error(
+                    DiagnosticCode::GdlMissingDocPath,
+                    format!("`tests = [\"{declared}\"]` points at nothing"),
+                    MISSING_HINT,
+                )
+                .at(at.clone()),
+            ),
         }
-        return out;
     }
-
-    let Some(dir) = bases
-        .iter()
-        .map(|b| b.join("docs/ADR"))
-        .find(|p| p.is_dir())
-    else {
-        return Vec::new();
-    };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    let mut found: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "md"))
-        .collect();
-    // Sorted so the catalogue is byte-identical across runs.
-    found.sort();
-    found.iter().filter_map(|p| relative_to(root, p)).collect()
+    out
 }
 
 /// Make an absolute path relative to the source root, forward-slashed.

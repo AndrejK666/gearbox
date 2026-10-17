@@ -394,6 +394,62 @@ impl CargoRef {
     }
 }
 
+/// The package manager a package belongs to.
+///
+/// Gearbox projects only `Cargo`. The others are located, not read: a gear's
+/// SDK in another language is a fact a reader needs, and nothing in the Rust
+/// crate records it. Adding an ecosystem is a variant here and a constructor in
+/// GDL.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum Ecosystem {
+    Cargo,
+    Npm,
+    Nuget,
+    Go,
+}
+
+impl Ecosystem {
+    /// The GDL constructor that declares a package of this ecosystem.
+    #[must_use]
+    pub const fn constructor(self) -> &'static str {
+        match self {
+            Self::Cargo => "cargo",
+            Self::Npm => "npm",
+            Self::Nuget => "nuget",
+            Self::Go => "go",
+        }
+    }
+}
+
+/// A package in any ecosystem, as far as a reader needs it: what it is called
+/// and where it lives.
+///
+/// The Cargo detail a build needs stays on [`CargoRef`]; this is the uniform
+/// view, one per SDK, whatever its language.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+pub struct PackageRef {
+    pub ecosystem: Ecosystem,
+
+    /// The name the ecosystem knows it by: a crate name, an npm package, a
+    /// `nuget` id, a Go module path.
+    pub name: String,
+
+    /// Where it lives, relative to its source root. Resolved like
+    /// [`CargoRef::path`].
+    pub path: RelPath,
+}
+
+impl From<&CargoRef> for PackageRef {
+    fn from(cargo: &CargoRef) -> Self {
+        Self {
+            ecosystem: Ecosystem::Cargo,
+            name: cargo.crate_name.clone(),
+            path: cargo.path.clone(),
+        }
+    }
+}
+
 /// A contract, as the product model sees it.
 ///
 /// Rust remains the source of truth for what the contract *is* -- its methods,

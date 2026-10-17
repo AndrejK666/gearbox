@@ -21,8 +21,8 @@ use gearbox_ir::requirement::ClusterPrimitive;
 use gearbox_ir::{
     CapabilityId, CargoRef, ContractDescriptor, ContractId, ContractVersion, DeclaredRole,
     Diagnostic, DiagnosticCode, Diagnostics, EndpointDecl, GearDescriptor, GearId, LifecycleDecl,
-    Location, ProviderDescriptor, RelPath, Requirement, RequirementId, RequirementKind, RuntimeCap,
-    Transport, Visibility,
+    Location, PackageRef, ProviderDescriptor, RelPath, Requirement, RequirementId, RequirementKind,
+    RuntimeCap, Transport, Visibility,
 };
 use gearbox_project::{ProjectedContract, ProjectedGear};
 
@@ -82,6 +82,10 @@ pub struct Projections<'a> {
     pub plugin: &'a crate::plugin::PluginProjection,
     pub config: Option<gearbox_ir::ConfigSchema>,
     pub docs: Option<gearbox_ir::GearDocs>,
+    /// `source = git(...)`, checked against the checkout; see `origin.rs`.
+    pub origin: Option<gearbox_ir::GitOrigin>,
+    /// `tests = [...]`, found like a declared document; see `docs.rs`.
+    pub tests: Vec<gearbox_ir::Located>,
     pub gts_types: Vec<gearbox_ir::GtsTypeDecl>,
     /// The names in the gear crate's `[features]` table.
     pub available_features: std::collections::BTreeSet<String>,
@@ -107,6 +111,8 @@ pub fn merge(
         plugin,
         config,
         docs,
+        origin,
+        tests,
         gts_types,
         available_features,
         cargo_features,
@@ -168,11 +174,12 @@ pub fn merge(
     };
     // `gear()` refuses a description without a maturity, and a design one
     // never reaches projection; defensive, like the package above.
-    let Some(gearbox_gdl::Maturity::Code(maturity)) = decl.maturity else {
-        return None;
-    };
+    let maturity = decl.maturity?;
+    let scenarios = scenarios(decl);
+    report_open_scenarios(uri, &id_hint(decl), decl, &scenarios, diagnostics);
     let gdl_dir = identity.gdl_path.parent();
     let package = cargo_ref(package_record, &gdl_dir, "package", uri, diagnostics);
+    let sdks = sdk_refs(decl, &gdl_dir, uri, diagnostics);
 
     // Projected: the closed set of seven, parsed through the IR's own parser so
     // the spellings cannot drift from the macro's.
@@ -335,9 +342,14 @@ pub fn merge(
         category,
         visibility,
         maturity,
+        implementation: decl.implementation,
+        scenarios,
         source: identity.source.clone(),
         gdl_path: identity.gdl_path.clone(),
         package,
+        sdks,
+        origin,
+        tests,
         runtime_caps,
         colocated_deps,
         // Projected.
@@ -509,6 +521,103 @@ pub(crate) fn cargo_ref(
             record.link.clone()
         },
     }
+}
+
+/// The declared scenarios, as the catalogue keeps them.
+pub(crate) fn scenarios(decl: &GearDecl) -> Vec<gearbox_ir::Scenario> {
+    decl.scenarios
+        .iter()
+        .map(|s| gearbox_ir::Scenario {
+            text: s.text.clone(),
+            priority: s.priority.clone(),
+            done: s.done,
+        })
+        .collect()
+}
+
+/// GBX0122: `implementation = "done"` while a declared scenario is not.
+///
+/// A warning, because either may be the stale one: the gear may be done and
+/// the list not updated, or the status raised too early.
+fn report_open_scenarios(
+    uri: &str,
+    gear: &str,
+    decl: &GearDecl,
+    scenarios: &[gearbox_ir::Scenario],
+    diagnostics: &mut Diagnostics,
+) {
+    if decl.implementation != Some(gearbox_ir::Implementation::Done) {
+        return;
+    }
+    let open: Vec<&str> = scenarios
+        .iter()
+        .filter(|s| !s.done)
+        .map(|s| s.text.as_str())
+        .collect();
+    if open.is_empty() {
+        return;
+    }
+    diagnostics.push(
+        Diagnostic::new(
+            DiagnosticCode::GdlOpenScenarios,
+            format!(
+                "{gear} says `implementation = \"done\"`, but {} of its scenarios {} not: {}",
+                open.len(),
+                if open.len() == 1 { "is" } else { "are" },
+                open.iter()
+                    .map(|t| format!("\"{t}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )
+        .at(Location::or_file(decl.declared_at.as_ref(), uri))
+        .with_help(
+            "mark the written scenarios `done = True`, or say `implementation = \"in-progress\"`",
+        ),
+    );
+}
+
+/// How a diagnostic names a gear before its id is projected.
+fn id_hint(decl: &GearDecl) -> String {
+    decl.name
+        .as_deref()
+        .map_or_else(|| "this gear".to_owned(), |name| format!("`{name}`"))
+}
+
+/// Every SDK a description declares, as catalogue references: the Rust SDK
+/// first, then the others in the order declared.
+///
+/// A non-Cargo path is resolved exactly like a crate's, and a bad one is
+/// reported the same way: it is the same kind of locator.
+pub(crate) fn sdk_refs(
+    decl: &gearbox_gdl::GearDecl,
+    gdl_dir: &RelPath,
+    uri: &str,
+    diagnostics: &mut Diagnostics,
+) -> Vec<PackageRef> {
+    let mut sdks: Vec<PackageRef> = decl
+        .sdk
+        .iter()
+        .map(|record| PackageRef::from(&cargo_ref(record, gdl_dir, "sdk", uri, diagnostics)))
+        .collect();
+    for record in &decl.other_sdks {
+        let path = gdl_dir.resolve(&record.path).unwrap_or_else(|e| {
+            diagnostics.push(bad_crate_path(
+                uri,
+                "sdk",
+                &record.path,
+                &e,
+                record.declared_at.as_ref(),
+            ));
+            gdl_dir.clone()
+        });
+        sdks.push(PackageRef {
+            ecosystem: record.ecosystem,
+            name: record.name.clone(),
+            path,
+        });
+    }
+    sdks
 }
 
 /// Build the contract id from the projected identity.

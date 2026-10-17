@@ -8,15 +8,20 @@ import type { EndpointDecl } from "./EndpointDecl";
 import type { ExtensionPointDecl } from "./ExtensionPointDecl";
 import type { GearDocs } from "./GearDocs";
 import type { GearId } from "./GearId";
+import type { GitOrigin } from "./GitOrigin";
 import type { GtsTypeDecl } from "./GtsTypeDecl";
+import type { Implementation } from "./Implementation";
 import type { LifecycleDecl } from "./LifecycleDecl";
+import type { Located } from "./Located";
 import type { Location } from "./Location";
 import type { Maturity } from "./Maturity";
+import type { PackageRef } from "./PackageRef";
 import type { PluginImpl } from "./PluginImpl";
 import type { ProviderDescriptor } from "./ProviderDescriptor";
 import type { RelPath } from "./RelPath";
 import type { Requirement } from "./Requirement";
 import type { RuntimeCap } from "./RuntimeCap";
+import type { Scenario } from "./Scenario";
 import type { SourceId } from "./SourceId";
 import type { Visibility } from "./Visibility";
 
@@ -38,13 +43,39 @@ display_name: string, description?: string | null, category?: string | null, vis
  */
 maturity: Maturity, 
 /**
+ * How much of the gear is written, when the description says. Never
+ * `Design`: a gear with no code is a [`DesignGear`].
+ */
+implementation?: Implementation | null, 
+/**
+ * What the gear lets its users do, in the order declared.
+ */
+scenarios?: Array<Scenario>, 
+/**
  * Which declared source this gear was read from.
  */
 source: SourceId, 
 /**
  * Where its description lives, relative to that source's root.
  */
-gdl_path: RelPath, package: CargoRef, runtime_caps?: Array<RuntimeCap>, 
+gdl_path: RelPath, package: CargoRef, 
+/**
+ * This gear's SDKs, in every language it has one: the Rust SDK first, then
+ * the others in the order declared.
+ *
+ * Located, not projected: nothing in the gear's crate says where its SDKs
+ * are. At most one is Cargo; that one is also what the projector reads for
+ * the traits the gear's extension points name.
+ */
+sdks?: Array<PackageRef>, 
+/**
+ * Where this gear lives in a git repository, when it says.
+ */
+origin?: GitOrigin | null, 
+/**
+ * Where this gear's tests are, as declared.
+ */
+tests?: Array<Located>, runtime_caps?: Array<RuntimeCap>, 
 /**
  * Gears that must be in the same binary as this one.
  *

@@ -1091,6 +1091,11 @@ mod tests {
             maturity: gearbox_ir::Maturity::Stable,
             source: SourceId::new("gears-rust").unwrap(),
             gdl_path: RelPath::new(format!("gears/{id}/gear.gdl")).unwrap(),
+            sdks: Vec::new(),
+            implementation: None,
+            scenarios: Vec::new(),
+            origin: None,
+            tests: Vec::new(),
             package: CargoRef::new(
                 format!("cf-gears-{id}"),
                 id.replace('-', "_"),

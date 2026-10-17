@@ -15,7 +15,7 @@ remedy at the point it is raised
 (`cpt-gearbox-nfr-actionable-diagnostics`), which is per-occurrence and
 so is not listed here.
 
-Codes: **106**.
+Codes: **109**.
 
 ## `GBX01xx` — Parsing and evaluating GDL
 
@@ -29,7 +29,7 @@ Codes: **106**.
 | [GBX0106](#gbx0106) | error | unknown GDL argument |
 | [GBX0107](#gbx0107) | warning | GDL construct accepted but not resolved |
 | [GBX0108](#gbx0108) | warning | gear category is not one the platform uses |
-| [GBX0109](#gbx0109) | error | declared documentation path does not exist |
+| [GBX0109](#gbx0109) | error | declared documentation or test path does not exist |
 | [GBX0110](#gbx0110) | error | duplicate profile-scoped declaration |
 | [GBX0111](#gbx0111) | error | unknown deployment profile |
 | [GBX0112](#gbx0112) | error | config_schema names no usable struct |
@@ -41,6 +41,9 @@ Codes: **106**.
 | [GBX0118](#gbx0118) | error | a role's directory name is not kebab-case |
 | [GBX0119](#gbx0119) | error | a role names a value the gear's config enum does not accept |
 | [GBX0120](#gbx0120) | warning | a required config field has no value and no default |
+| [GBX0121](#gbx0121) | warning | a gear's declared git source disagrees with its checkout |
+| [GBX0122](#gbx0122) | warning | a gear is declared done with scenarios still open |
+| [GBX0123](#gbx0123) | error | unreadable or unsupported gdl_version |
 
 ### GBX0101
 
@@ -108,9 +111,10 @@ bucket of one.
 
 ### GBX0109
 
-**declared documentation path does not exist**
+**declared documentation or test path does not exist**
 
-A declared documentation or specification path does not exist.
+A declared documentation, specification or test path does not exist,
+and the gear names no `source = git(...)` to find it in.
 
 An error, unlike the absence of a file found by convention: a gear may
 genuinely have no PRD, but a path written by hand and pointing nowhere is
@@ -292,6 +296,38 @@ counted it would fire on every product in the corpus. The keys a gear's
 A warning rather than an error: a value may still arrive from a profile,
 or from an operator editing the generated file, and this cannot see
 either. What it can say is that nothing in the description supplies it.
+
+### GBX0121
+
+**a gear's declared git source disagrees with its checkout**
+
+A gear's `source = git(...)` disagrees with the checkout its
+description was read from: no remote has that url, or the gear is not
+at that `path` in it.
+
+A warning: what is on disk is used either way. But a reader holding
+the description alone follows `source`, and would land in the wrong
+repository or directory.
+
+### GBX0122
+
+**a gear is declared done with scenarios still open**
+
+A gear says `implementation = "done"` while a scenario it declares is
+not `done`.
+
+A warning: either the list or the status is stale, and only the author
+knows which.
+
+### GBX0123
+
+**unreadable or unsupported gdl_version**
+
+A file's `gdl_version` is not `MAJOR.MINOR`, or names a major version
+this Gearbox does not read.
+
+Reported before evaluation: a different major may have removed or
+renamed what this reader knows, so its errors would be the wrong ones.
 
 ## `GBX02xx` — Cross-checking a description against Rust
 
@@ -727,7 +763,7 @@ corruption, and only the gear can say which it is
 
 A product selects a gear that is described but has no code yet.
 
-`maturity = "design"` in its `gear.gdl`: the catalogue knows the gear's
+`implementation = "design"` in its `gear.gdl`: the catalogue knows the gear's
 id, purpose and documents, and there is no crate to link. Distinct from
 GBX0301 because "not in the catalogue" sends the reader looking for a
 typo or a closed source root, and neither is the problem.

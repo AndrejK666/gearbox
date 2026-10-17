@@ -57,6 +57,14 @@
   border-color: var(--theia-editorWarning-foreground);
 }
 .gbx-deprecated-row .gbx-row-name { text-decoration: line-through; }
+/* The second axis: how much is written. Quiet, like maturity at preview. */
+.gbx-badge.gbx-implementation {
+  background: transparent;
+  color: var(--theia-descriptionForeground);
+  border-color: var(--theia-descriptionForeground);
+}
+.gbx-web-link { margin-right: 0.6em; }
+.gbx-scenario[data-done="true"] { color: var(--theia-descriptionForeground); }
 .gbx-badge.gbx-design {
   background: transparent;
   color: var(--theia-descriptionForeground);

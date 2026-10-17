@@ -219,7 +219,7 @@ pub fn load_catalogue_staged(
         diagnostics.extend(outcome.diagnostics);
         let Some(decl) = outcome.value else { continue };
 
-        if decl.maturity == Some(gearbox_gdl::Maturity::Design) {
+        if decl.is_design() {
             let admitted = admit_design(
                 root,
                 &identity,
@@ -487,6 +487,50 @@ fn admit_design(
         .map_or(Continue::Yes, |stored| on_event(LoadEvent::Design(stored)))
 }
 
+/// What a description locates beside its gear, rather than in its crate.
+struct Beside {
+    origin: Option<gearbox_ir::GitOrigin>,
+    docs: Option<gearbox_ir::GearDocs>,
+    tests: Vec<gearbox_ir::Located>,
+}
+
+/// The gear's git source, documents and tests.
+///
+/// Pure filesystem lookup, no parsing, so it costs a few stats. The source
+/// comes first because the other two fall back to it for what is not on disk.
+fn beside(
+    root: &SourceRoot,
+    identity: &FileIdentity,
+    decl: &gearbox_gdl::GearDecl,
+    diagnostics: &mut Diagnostics,
+) -> Beside {
+    // `.` cannot fail to resolve, so the description's own directory is the one
+    // path here with no error to report.
+    let gdl_dir = root.root.join(identity.gdl_path.parent().as_str());
+    let origin = crate::origin::project(&root.root, identity, decl, diagnostics);
+    let docs = crate::docs::project(
+        &root.root,
+        &gdl_dir,
+        identity,
+        decl,
+        origin.as_ref(),
+        diagnostics,
+    );
+    let tests = crate::docs::tests(
+        &root.root,
+        &gdl_dir,
+        identity,
+        decl,
+        origin.as_ref(),
+        diagnostics,
+    );
+    Beside {
+        origin,
+        docs,
+        tests,
+    }
+}
+
 /// A design gear, built from its declaration alone.
 ///
 /// No crate is looked for and nothing is projected. The SDK, when declared,
@@ -505,13 +549,8 @@ fn design_gear(
     crate::manifest_check::check(root, identity, decl, scans, diagnostics);
     let uri = identity.uri.as_str();
     let gdl_dir = identity.gdl_path.parent();
-    let docs = crate::docs::project(
-        &root.root,
-        &root.root.join(gdl_dir.as_str()),
-        identity,
-        decl,
-        diagnostics,
-    );
+    // A design gear refuses `tests`, so that list is empty.
+    let Beside { origin, docs, .. } = beside(root, identity, decl, diagnostics);
     Some(DesignGear {
         display_name: decl.name.clone().unwrap_or_else(|| id.to_string()),
         id,
@@ -519,10 +558,9 @@ fn design_gear(
         category: decl.category.clone(),
         source: root.id.clone(),
         gdl_path: identity.gdl_path.clone(),
-        sdk: decl
-            .sdk
-            .as_ref()
-            .map(|r| crate::merge::cargo_ref(r, &gdl_dir, "sdk", uri, diagnostics)),
+        sdks: crate::merge::sdk_refs(decl, &gdl_dir, uri, diagnostics),
+        origin,
+        scenarios: crate::merge::scenarios(decl),
         docs,
         declared_at: decl.declared_at.clone(),
     })
@@ -744,11 +782,11 @@ fn project_and_merge(
     );
     let config = crate::config::project(identity, decl, own_files, diagnostics);
 
-    // Documents: pure filesystem lookup, no parsing, so it costs a few stats.
-    // `.` cannot fail to resolve, so the description's own directory is the one
-    // path here with no error to report.
-    let gdl_dir = root.root.join(identity.gdl_path.parent().as_str());
-    let docs = crate::docs::project(&root.root, &gdl_dir, identity, decl, diagnostics);
+    let Beside {
+        origin,
+        docs,
+        tests,
+    } = beside(root, identity, decl, diagnostics);
 
     crate::merge::merge(
         identity,
@@ -760,6 +798,8 @@ fn project_and_merge(
             plugin: &plugin,
             config,
             docs,
+            origin,
+            tests,
             gts_types,
             // The manifest is already in the scan cache: `manifest_check` read
             // the same directory a few lines above, so this costs a map lookup.

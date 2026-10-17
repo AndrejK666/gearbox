@@ -70,6 +70,9 @@ starlark_syntax = "=0.14.2"
 # keeps that schema out of the framework. serde_json is already in the tree, so
 # this adds a feature rather than a dependency.
 allocative = { version = "0.3.6", features = ["serde_json"] }
+# `Either` is what starlark unpacks a "this or that" argument into. Already in
+# the tree through starlark, so this names it rather than adding it.
+either = "1"
 
 # Data
 serde = { version = "1", features = ["derive"] }

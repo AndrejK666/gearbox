@@ -159,49 +159,6 @@ fn strings(list: Option<UnpackList<String>>) -> Vec<String> {
 
 #[starlark_module]
 fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
-    /// `path("...")` -- a local directory, relative to the description.
-    ///
-    /// Positional, like the other single-argument constructors (`provider`,
-    /// `use_gear`, `application`): `path(at = "...")` would name the obvious.
-    fn path(#[starlark(require = pos)] at: &str) -> anyhow::Result<SourceAtRecord> {
-        Ok(SourceAtRecord {
-            kind: "path".to_owned(),
-            at: Some(at.to_owned()),
-            url: None,
-            tag: None,
-            rev: None,
-            branch: None,
-            prefix: None,
-        })
-    }
-
-    /// `git(url = ..., tag = ... | rev = ... | branch = ...)`
-    ///
-    ///
-    /// A branch does not pin an immutable point in history, so a lock built from
-    /// one is repeatable but not reproducible. Accepted, and recorded as such.
-    fn git(
-        #[starlark(require = named)] url: &str,
-        #[starlark(require = named)] tag: Option<&str>,
-        #[starlark(require = named)] rev: Option<&str>,
-        #[starlark(require = named)] branch: Option<&str>,
-    ) -> anyhow::Result<SourceAtRecord> {
-        if tag.is_none() && rev.is_none() && branch.is_none() {
-            return Err(anyhow::anyhow!(
-                "git(url = \"{url}\") pins nothing; give one of `tag`, `rev` or `branch`"
-            ));
-        }
-        Ok(SourceAtRecord {
-            kind: "git".to_owned(),
-            at: None,
-            url: Some(url.to_owned()),
-            tag: tag.map(str::to_owned),
-            rev: rev.map(str::to_owned),
-            branch: branch.map(str::to_owned),
-            prefix: None,
-        })
-    }
-
     /// `registry("crates.io", prefix = "cf-gears-")`
     ///
     /// **The source is the registry, not one package.** A product naming six
@@ -215,6 +172,9 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     /// follow the house naming. A wrong guess is not silent either way: the
     /// fetched crate's own `gear.gdl` declares its `crate_name`, and GBX0209
     /// checks that against the real `Cargo.toml`.
+    ///
+    /// # Arguments
+    /// * `prefix`: What a gear id is prefixed with to name its package, e.g. `cf-gears-`.
     fn registry(
         #[starlark(require = pos)] url: &str,
         #[starlark(require = named)] prefix: Option<&str>,
@@ -227,6 +187,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
             rev: None,
             branch: None,
             prefix: prefix.map(str::to_owned),
+            subdir: None,
         })
     }
 
@@ -234,12 +195,35 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     ///
     /// `crates` says the gears in a checkout are also published: descriptions
     /// come from `at`, crates from the registry, at the versions `at` declares.
+    ///
+    /// # Arguments
+    /// * `id`: The source's id, kebab-case. `use_gear(source = ...)` names it.
+    /// * `at`: Where it is: `path(...)`, `git(...)` with a pin, or `registry(...)`.
+    /// * `crates`: For a `path(...)` source: the registry its crates are published to, as
+    ///   `registry(...)`.
     fn source<'v>(
         #[starlark(require = named)] id: &str,
         #[starlark(require = named)] at: &'v SourceAtRecord,
         #[starlark(require = named)] crates: Option<&'v SourceAtRecord>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<SourceRecord> {
+        if at.kind == "git" {
+            let url = at.url.as_deref().unwrap_or_default();
+            // `git()` leaves the pin optional because a gear's `source` is an
+            // address, not a lock. A product's source is what a lock is built
+            // from, so it has to pin something.
+            if at.tag.is_none() && at.rev.is_none() && at.branch.is_none() {
+                return Err(anyhow::anyhow!(
+                    "git(url = \"{url}\") pins nothing; give one of `tag`, `rev` or `branch`"
+                ));
+            }
+            if let Some(subdir) = &at.subdir {
+                return Err(anyhow::anyhow!(
+                    "source(id = \"{id}\", at = git(..., path = \"{subdir}\")): a product's \
+                     source is a whole repository; `path` on `git(...)` places a gear inside one"
+                ));
+            }
+        }
         Ok(SourceRecord {
             id: id.to_owned(),
             at: at.clone(),
@@ -249,6 +233,9 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     }
 
     /// `embedded(id = ...)` -- one process; every binding is local by construction.
+    ///
+    /// # Arguments
+    /// * `id`: The profile's id, kebab-case.
     fn embedded<'v>(
         #[starlark(require = named)] id: &str,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -267,6 +254,14 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     }
 
     /// `self_hosted(id = ..., host = ..., worker_discovery = ..., target_dir = ..., cargo_profile = ...)`
+    ///
+    /// # Arguments
+    /// * `id`: The profile's id, kebab-case.
+    /// * `host`: The application that hosts the workers.
+    /// * `worker_discovery`: `"static"` or `"directory"`.
+    /// * `target_dir`: The Cargo target directory the host starts workers from, relative to this
+    ///   file.
+    /// * `cargo_profile`: The Cargo profile: `dev`, `release` or a custom one.
     fn self_hosted<'v>(
         #[starlark(require = named)] id: &str,
         #[starlark(require = named)] host: &str,
@@ -289,6 +284,12 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     }
 
     /// `kubernetes(id = ..., discovery = ..., namespace = ..., image_registry = ...)`
+    ///
+    /// # Arguments
+    /// * `id`: The profile's id, kebab-case.
+    /// * `discovery`: `"static"` or `"directory"`.
+    /// * `namespace`: The namespace the chart deploys to.
+    /// * `image_registry`: The registry images are pulled from.
     fn kubernetes<'v>(
         #[starlark(require = named)] id: &str,
         #[starlark(require = named)] discovery: &str,
@@ -313,6 +314,10 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     ///
     /// Names an implementing gear. Which extension point it implements comes from the
     /// catalogue, so there is no `interface` here to get wrong.
+    ///
+    /// # Arguments
+    /// * `config`: The plugin's configuration, as a map.
+    /// * `profiles`: The profiles it applies to. Empty means all.
     fn plugin<'v>(
         #[starlark(require = pos)] gear: &str,
         #[starlark(require = named)] config: Option<Value<'v>>,
@@ -328,6 +333,16 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     }
 
     /// `use_gear("name", source = ..., features = [...], config = {...}, plugins = [...])`
+    ///
+    /// # Arguments
+    /// * `source`: The id of the `source(...)` the gear comes from.
+    /// * `version`: The package version. For a registry source only.
+    /// * `package`: The package name, when it is not the registry's prefix plus the gear id. For a
+    ///   registry source only.
+    /// * `features`: The gear's Cargo features to turn on.
+    /// * `config`: The gear's configuration, as a map. Keys and types are checked against the
+    ///   gear's `config_schema`.
+    /// * `plugins`: The plugins for the gear's extension points, as `plugin(...)`.
     fn use_gear<'v>(
         #[starlark(require = pos)] gear: &str,
         #[starlark(require = named)] source: &str,
@@ -353,6 +368,14 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     }
 
     /// `bind(consumer = ..., contract = ..., mode = ..., transport = ..., ...)`
+    ///
+    /// # Arguments
+    /// * `consumer`: The consuming gear's id.
+    /// * `contract`: The contract, e.g. `api-contracts/PaymentApi@v1`.
+    /// * `mode`: How to bind, as a `binding_mode.*` member.
+    /// * `transport`: The transport, as a `transport.*` member.
+    /// * `endpoint`: A fixed address, used instead of what discovery finds.
+    /// * `profiles`: The profiles it applies to. Empty means all.
     fn bind<'v>(
         #[starlark(require = named)] consumer: &str,
         #[starlark(require = named)] contract: &str,
@@ -386,6 +409,10 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     ///
     /// References a provider the catalogue already knows -- whether it exists is
     /// checked against the projected catalogue (GBX0505), not here.
+    ///
+    /// # Arguments
+    /// * `secret_ref`: Where the credential comes from. It reaches the generated configuration,
+    ///   never the lock.
     fn provider<'v>(
         #[starlark(require = pos)] name: &str,
         #[starlark(require = named)] secret_ref: Option<&str>,
@@ -405,6 +432,14 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     /// `cache` is mandatory: it is the anchor the SDK's compare-and-swap defaults
     /// for leader election and lock are layered over, so a scope without one has
     /// nothing to fall back to.
+    ///
+    /// # Arguments
+    /// * `name`: The profile name, as `impl ClusterProfile { const NAME }` spells it.
+    /// * `cache`: The cache provider, as `provider(...)`. Required.
+    /// * `leader_election`: The leader election provider. The default is the SDK's compare-and-swap
+    ///   over the cache.
+    /// * `lock`: The lock provider. The default is the SDK's compare-and-swap over the cache.
+    /// * `profiles`: The profiles it applies to. Empty means all.
     fn cluster_profile<'v>(
         #[starlark(require = named)] name: &str,
         #[starlark(require = named)] cache: &'v ProviderBindingRecord,
@@ -424,6 +459,12 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     }
 
     /// `application("name", anchor = ..., replicas = ..., profiles = [...])`
+    ///
+    /// # Arguments
+    /// * `anchor`: The gear the application is built around.
+    /// * `role`: One of the anchor gear's `role(...)` names. The default is its default shape.
+    /// * `replicas`: How many instances run, 1 or more. The default is 1.
+    /// * `profiles`: The profiles it applies to. Empty means all.
     fn application<'v>(
         #[starlark(require = pos)] name: &str,
         #[starlark(require = named)] anchor: &str,
@@ -448,7 +489,28 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     }
 
     /// `product(...)` -- the single top-level declaration of a `product.gdl`.
+    ///
+    /// # Arguments
+    /// * `gdl_version`: The GDL this file is written in, `"MAJOR.MINOR"`. The default is `"1.0"`.
+    /// * `id`: The product's id, kebab-case.
+    /// * `name`: The display name. The default is the id.
+    /// * `version`: The product's version.
+    /// * `sources`: Where gears come from, as `source(...)`.
+    /// * `templates`: The template overlay, as `path(...)`. The default is `templates/` beside this
+    ///   file.
+    /// * `layout`: The directory generated applications go under. The default is `apps`.
+    /// * `profiles`: The deployment profiles: `embedded(...)`, `self_hosted(...)`,
+    ///   `kubernetes(...)`. At least one.
+    /// * `default_profile`: The id of the profile used when none is chosen.
+    /// * `gears`: The gears in the product, as `use_gear(...)`.
+    /// * `bindings`: How consumers reach providers, as `bind(...)`.
+    /// * `cluster_profiles`: The cluster backends, as `cluster_profile(...)`.
+    /// * `applications`: The applications, as `application(...)`.
+    /// * `preferences`: What resolution prefers, as `prefer.*()`.
     fn product<'v>(
+        // `"MAJOR.MINOR"`; read before evaluation by `version.rs`, accepted
+        // here so that writing it is not an unknown argument.
+        #[starlark(require = named)] gdl_version: Option<&str>,
         #[starlark(require = named)] id: &str,
         #[starlark(require = named)] name: Option<&str>,
         #[starlark(require = named)] version: &str,
@@ -464,6 +526,8 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] preferences: Option<UnpackList<&'v PreferenceRecord>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
+        // Checked before evaluation; see `version.rs`.
+        let _ = gdl_version;
         // Refused here rather than lowered and reported later: `layout` names a
         // directory this build is about to write into, and one path segment is
         // the whole contract. A value with a separator in it would put the
@@ -538,6 +602,7 @@ fn prefer_namespace(builder: &mut GlobalsBuilder) {
 /// The product mirror of `globals::gear_additions`, and factored out for the
 /// same reason: [`product_vocabulary`] applies it to an empty builder.
 fn product_additions(builder: &mut GlobalsBuilder) {
+    crate::globals::locator_vocabulary(builder);
     gdl_product_vocabulary(builder);
     for (name, namespace) in vocabulary::ALL_NAMESPACES {
         builder.set(name, *namespace);

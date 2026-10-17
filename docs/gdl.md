@@ -11,7 +11,7 @@ Two file kinds, two vocabularies. `gear()` is not callable in a product file; `p
 
 Zero or two top-level declarations is **GBX0105**. Profile-specific behaviour is a `profiles = [...]` list on the declaration, not a branch.
 
-Arguments are keyword-only except for eight positional ones: `feature` and `fail` in a `gear.gdl`, and `path`, `registry`, `plugin`, `use_gear`, `application`, `provider` in a `product.gdl`. An unknown **named** argument is **GBX0106**; a stray positional one is **GBX0102**, because it never reaches the argument name at all. Records returned by constructors (`cargo(...)`, `provide(...)`, …) are opaque: pass them on, do not inspect them.
+Arguments are keyword-only, with these exceptions. In a `gear.gdl`, the first argument of `extension_point`, `feature`, `scenario`, `path` and `fail` is positional. In a `product.gdl`, the first argument of `path`, `registry`, `plugin`, `use_gear`, `application` and `provider` is positional. An unknown **named** argument is **GBX0106**. A stray positional argument is **GBX0102**, because it does not get to an argument name. Records returned by constructors (`cargo(...)`, `provide(...)`, …) are opaque: pass them on, do not inspect them.
 
 ---
 
@@ -90,9 +90,45 @@ prefer.existing_infrastructure() | prefer.fewer_applications() | prefer.isolate(
 
 ---
 
+## Versions
+
+A file can declare the version of GDL that it uses. Write it in the top-level call:
+
+```python
+gear(gdl_version = "1.0", ...)
+product(gdl_version = "1.0", ...)
+```
+
+The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.0.
+
+- A minor version only adds: optional fields, constructors and values. A file for an older minor version reads with no change.
+- A major version can remove a field, rename a field or change what a field means.
+
+Gearbox reads the version before it evaluates the file. Starlark finds unknown names before any call runs, so `gear()` cannot read the version itself.
+
+| The file declares | Result |
+|---|---|
+| a different major version | **GBX0123**. Gearbox does not evaluate the file. |
+| the same major version, the same or an older minor version | Gearbox evaluates the file. |
+| the same major version, a newer minor version | Gearbox evaluates the file. If the evaluation fails, the help text tells you to update Gearbox. |
+| a value that is not `MAJOR.MINOR`, for example `"1"` or `"v1.0"` | **GBX0123**. |
+
+---
+
 ## `gear.gdl`
 
 Constructors first; then the one `gear(...)` call.
+
+A `gear.gdl` can be the only file that a reader has: in Studio, in a registry, or in a different repository. Thus it tells where everything is:
+
+- the code: `package = cargo(...)`, and `source = git(...)` for the repository;
+- the SDKs, in all languages: `sdk = [...]`;
+- the documents and the tests: `docs(...)` and `tests = [...]`;
+- the status: `maturity` and `implementation`.
+
+Gearbox projects the other facts from Rust. Do not write them here (**GBX0210**).
+
+To see all the fields, use the [full template](#full-template). In an editor, completion shows the fields that you did not write yet, and hover shows what each field does.
 
 Notation: `name` is required; `name = X` has a default; `name?` may be omitted.
 
@@ -104,13 +140,48 @@ cargo(crate_name, lib, path = ".", features = [], default_features = True, link 
 
 `lib` is the Cargo library ident and is never derived (`cf-api-contracts` → `cf_api_contracts`). `path` is relative to the description. `link` is extra `use … as _` idents; empty means just `lib`. `attr` narrows the `#[toolkit::gear]` scan to one file, written relative to the crate root (`src/gear.rs`, not `gear.rs`); omit to scan `src/` and require exactly one.
 
+### `npm(...)`, `nuget(...)`, `go(...)` → package in another language
+
+```
+npm(name, path = ".")
+nuget(id, path = ".")
+go(module, path = ".")
+```
+
+These constructors tell where an SDK in another language is. Each one has the name that its ecosystem uses and a path relative to the description. Gearbox does not read these packages. It records them in the catalogue, and Studio shows them.
+
+A gear's `sdk` accepts one package or a list of packages, in any language:
+
+```python
+sdk = [
+    cargo(crate_name = "cf-pricing-sdk", lib = "pricing_sdk", path = "../pricing-sdk"),
+    npm(name = "@cf/pricing-sdk", path = "../pricing-sdk-ts"),
+    nuget(id = "Cf.Pricing.Sdk", path = "../pricing-sdk-dotnet"),
+    go(module = "github.com/cf/pricing-sdk-go"),
+]
+```
+
+Rules:
+
+- A list can have one `cargo(...)` at most. The projector reads that crate for the traits of the extension points. Two `cargo(...)` packages are an error.
+- `package` is always `cargo(...)`. Gearbox reads the code of a gear only from Rust. If `package` has a package in another language, the error tells you to put it in `sdk`.
+- There is no `language` field. The language comes from the constructor.
+- To add an ecosystem, add one constructor and one value of `Ecosystem`.
 ### `docs(...)` → docs
 
 ```
 docs(prd?, design?, adr = [], openapi?)
 ```
 
-Paths relative to the description. Only needed when documents are not at the usual `docs/` beside the gear or one level up. A written path that does not exist is **GBX0109**; a merely absent conventional file is not.
+Write `docs(...)` only when the documents are not at the usual `docs/` beside the gear or one level up. Each value is a path relative to the description, or a URL (`https://...`).
+
+Gearbox finds a written value in this order:
+
+1. A URL. Gearbox keeps the URL as it is.
+2. A file on disk, relative to the description. A file on disk always wins.
+3. The same path in the gear's `source = git(...)`. Gearbox makes a link to it.
+
+If Gearbox cannot find the value, the result is **GBX0109**. A file that the `docs/` convention does not find is not an error.
 
 ### `config(...)` → config
 
@@ -236,6 +307,57 @@ Both are checked, not trusted:
 
 Why declared: see ADR-0002, Amendment 2026-09-24.
 
+### `git(...)` and `path(...)` → where something is
+
+```
+git(url, path?, tag?, rev?, branch?)
+path("relative/dir")
+```
+
+`git(...)` tells a repository. `url` is `https://...` or `git@host:org/repo`. `path` is a directory in the repository, from its root, with `/` and without `..`. `tag`, `rev` and `branch` tell the version. Both file kinds use these constructors. Each file has its own rules, see `source` below and [Sources](#sources).
+
+### `source = git(...)` on a gear
+
+```python
+source = git(url = "https://github.com/constructorfabric/gears-rust", path = "gears/bss/pricing/pricing"),
+```
+
+`source` tells the repository and the directory of the gear. A reader that has only the description uses it to find the code and the documents. `source` is optional. A pin (`tag`, `rev`, `branch`) is optional too, because `source` is an address and not a lock.
+
+Gearbox finds each path in the description in this order:
+
+1. **On disk**, relative to the description. This is the usual case: the description is in a checkout of its repository.
+2. **In the git source.** If the path is not on disk, Gearbox makes a link to the same path in `source`.
+
+If neither finds the path, the error names the two places.
+
+Only `git(...)` is a source. `source = path(...)` is an error: paths are already relative to the description, and a checkout in a different directory is different on each computer.
+
+When the description is in a git checkout, Gearbox compares `source` with the checkout:
+
+- One remote of the checkout must be the repository of `url`, or a fork of it. A fork has the same host and repository name and a different owner: a checkout of `me/gears-rust` agrees with `url = "https://github.com/constructorfabric/gears-rust"`. Gearbox compares `https://host/org/repo`, `git@host:org/repo.git` and `ssh://...` as the same repository.
+- The directory of the description must be `path`.
+
+A difference is **GBX0121**, a warning. The help text gives the correct `path`. A tree without `.git` is not checked.
+
+### `tests = [...]` on a gear
+
+```python
+tests = ["tests", "https://ci.example.com/pricing"],
+```
+
+Each value is a path relative to the description, or a URL. Gearbox finds a value in the same order as `docs(...)`. A path can be a file or a directory. A value that Gearbox cannot find is **GBX0109**.
+
+### `scenario(...)` → scenario
+
+```
+scenario(text, priority?, done = False)
+```
+
+One thing that a user can do with the gear, and whether it is written. This is the same data as a line in `GEARS.md`: `- [x] p1 - enqueue and execute jobs` is `scenario("enqueue and execute jobs", priority = "p1", done = True)`.
+
+`text` is positional and must not be empty. `priority` is `"p1"` (first) to `"p5"`. `done` is `False` until the scenario is written.
+
 ### `fail(message)`
 
 Positional. States that this description is invalid. Not a branch.
@@ -244,10 +366,15 @@ Positional. States that this description is invalid. Not a branch.
 
 ```
 gear(
-  maturity,                         # required, no default -- see below
-  package,                          # cargo, required unless maturity = "design"
+  gdl_version?,                     # "MAJOR.MINOR"; omit → "1.0"
+  maturity,                         # required, no default; refused at implementation = "design"
+  implementation?,                  # "design" | "in-progress" | "done"
+  package,                          # cargo, required unless implementation = "design"
   name?, description?, category?, visibility?,
-  sdk?,                             # cargo, where this gear's own SDK crate lives
+  sdk?,                             # one package or a list, any language; one cargo at most
+  source?,                          # git(url, path), where this gear lives
+  scenarios = [],                   # scenario(...)
+  tests = [],                       # paths or URLs
   extension_points = [],            # extension_point(...), points plugins fill
   implements?,                      # spec segment of the point this plugin implements
   docs?,                            # docs(...)
@@ -284,59 +411,123 @@ These fields are accepted only to be refused by name (**GBX0210**). They live in
 
 `lifecycle(...)` exists as a constructor (`entry?`, `stop_timeout?`, `await_ready = False`) so a restatement can be named. Passing it to `gear()` is still **GBX0210**.
 
-### `maturity`: how much a gear promises
+### `maturity` and `implementation`: two axes of status
 
-Required on every `gear(...)`, with **no default**. A default of `stable` would turn a forgotten
-field into a promise nobody made, and any lower default into an accusation, so the author says
-which. Missing or misspelt, the description does not evaluate.
+A gear has two statuses. They are independent.
 
-| `maturity` | Means | In the catalogue | In a product |
-|---|---|---|---|
-| `"design"` | documents (perhaps an SDK), no crate yet | `Catalogue.designs` | **GBX0321**, error |
-| `"experimental"` | code exists; API and behaviour may change freely | `gears` | **GBX0322**, warning |
-| `"preview"` | usable, not declared stable | `gears` | **GBX0323**, info |
-| `"stable"` | supported for ordinary production use | `gears` | nothing |
-| `"deprecated"` | still available, not for new products | `gears` | **GBX0324**, warning |
+| Field | Tells | Values |
+|---|---|---|
+| `maturity` | what the gear promises to its users | `experimental`, `preview`, `stable`, `deprecated` |
+| `implementation` | how much of the gear is written | `design`, `in-progress`, `done` |
 
-A product is told about every gear it links below `stable`, including the ones it did not choose:
-a co-located dependency or a plugin is in the same binary, and the message says what pulled it in.
-`validate` reports the selections only, since it does not resolve. None of the four blocks a lock
-or generation; `design` does, because there is nothing to link.
+A `stable` gear can be `in-progress`: it is safe to use, and more work is planned. An `experimental` gear can be `done`.
 
-A newly scaffolded gear is `"experimental"`. There is no second axis for "how much code exists":
-a gear with only an SDK is `"design"` with `sdk = cargo(...)`.
+`maturity` is required on a gear with code. It has **no default**. A default of `stable` makes a forgotten field into a promise that nobody made. A lower default makes it into an accusation. Thus the author writes the value. If the value is missing or wrong, the description does not evaluate.
 
-### `maturity = "design"`: a gear with no code yet
+| `maturity` | Means | In a product |
+|---|---|---|
+| `"experimental"` | code exists; the API and the behaviour can change | **GBX0322**, warning |
+| `"preview"` | usable, not declared stable | **GBX0323**, info |
+| `"stable"` | supported for usual production use | nothing |
+| `"deprecated"` | still available, not for new products | **GBX0324**, warning |
 
-A gear can be described before its crate exists: what it is for, where its documents are, and
-the id it will have. It is listed in the catalogue apart from the gears that can be used
-(`Catalogue.designs`), nothing is projected, and a product that names it is **GBX0321** -- not
-GBX0301, because the gear is neither a typo nor in a closed source root.
+A product gets a message for each gear below `stable` that it links, also for the gears that it did not select. A co-located dependency or a plugin is in the same binary, and the message tells what pulled it in. `validate` reports only the selections, because it does not resolve. No level stops a lock or generation.
+
+`implementation` is optional. If it is not written, the description makes no statement about it.
+
+| `implementation` | Means | In the catalogue |
+|---|---|---|
+| `"design"` | documents, possibly an SDK; no crate yet | `Catalogue.designs`; a product that selects it is **GBX0321**, error |
+| `"in-progress"` | code exists, and work continues | `gears` |
+| `"done"` | all that the gear sets out to do is written | `gears` |
+
+Scenarios give the detail of `implementation`. If a gear is `"done"` and a scenario is not `done`, the result is **GBX0122**, a warning. One of the two is out of date, and only the author knows which.
+
+A new gear from the scaffold is `maturity = "experimental"`, `implementation = "in-progress"`.
+
+`maturity = "design"` is an error. Write `implementation = "design"` and no `maturity`.
+
+### `implementation = "design"`: a gear with no code yet
+
+You can describe a gear before its crate exists: what it is for, where its documents are, and its id. The catalogue lists it apart from the gears that a product can use (`Catalogue.designs`). Gearbox does not project it. A product that names it is **GBX0321**, not GBX0301, because the gear is not a typo and not in a closed source root.
 
 ```python
 gear(
-    maturity = "design",
+    implementation = "design",
     id = "approval-service",
     name = "Approval Service",
     description = "Multi-step approvals for tenant operations.",
     category = "core-functionality",
     sdk = cargo(crate_name = "cf-approval-sdk", lib = "approval_sdk", path = "approval-sdk"),  # when one exists
+    scenarios = [scenario("approve a tenant operation in several steps", priority = "p1")],
 )
 ```
 
 The rules:
 
-- `id` is required, and must be a gear id. It is the one place an id is declared: a stable
-  gear's id is projected, and restating it stays **GBX0210**.
-- `name`, `description`, `category`, `sdk` and `docs` are the whole vocabulary. Everything else
-  describes code -- `package`, `implements`, `extension_points`, `provides`, `serves`,
-  `visibility` and the rest -- and is refused at evaluation.
-- Documents are found by the same convention as for any gear, beside the description.
-- A design id that also has a gear with code is **GBX0105**, the same code as a gear declared
-  twice: the design description has been outgrown and should be deleted.
+- `id` is required, and must be a gear id. This is the only place where you write an id. A gear with code gets its id from Rust, and an id written there is **GBX0210**.
+- `maturity` is an error. A gear with no code promises nothing.
+- A design gear can write `name`, `description`, `category`, `sdk`, `source`, `docs` and `scenarios`. All other fields tell about code, for example `package`, `tests`, `implements`, `extension_points`, `provides`, `serves` and `visibility`. They are errors.
+- Gearbox finds the documents with the same convention as for a gear with code.
+- If a gear with code has the same id as a design, the result is **GBX0105**, the same code as for a gear declared two times. Delete the design description.
 
 This is what replaced the platform's `gear.toml` for the gears that had only documents
 (ADR-0002, Amendment 2026-10-02).
+
+### Full template
+
+This template shows all the fields of a `gear.gdl`. A field that the gear does not use stays as a comment. To use a field, remove the `#` at the start of its lines. Do not write an empty field as `None`: the file stays short, and this template, completion and hover show what you can add.
+
+```python
+# Every field: https://github.com/constructorfabric/gearbox/blob/main/docs/gdl.md
+
+gear(
+    gdl_version = "1.0",
+
+    # What it is.
+    name = "Pricing",
+    # description = "What this gear does, in one sentence.",
+    # category = "bss",
+    # visibility = "public",
+
+    # Status: two axes.
+    maturity = "experimental",            # experimental | preview | stable | deprecated
+    implementation = "in-progress",       # design | in-progress | done
+
+    # Where it is.
+    package = cargo(crate_name = "cf-bss-pricing", lib = "bss_pricing", path = "."),
+    # source = git(url = "https://github.com/<org>/<repo>", path = "gears/bss/pricing/pricing"),
+    # sdk = [
+    #     cargo(crate_name = "cf-bss-pricing-sdk", lib = "bss_pricing_sdk", path = "../pricing-sdk"),
+    #     npm(name = "@cf/bss-pricing-sdk", path = "../pricing-sdk-ts"),
+    # ],
+    # docs = docs(prd = "docs/PRD.md", design = "docs/DESIGN.md", openapi = "https://..."),
+    # tests = ["tests"],
+
+    # What a user can do with it.
+    # scenarios = [
+    #     scenario("calculate a price for a subscription", priority = "p1", done = True),
+    # ],
+
+    # Plugins: a host declares points; a plugin implements one.
+    # extension_points = [extension_point("cf.bss.pricing.plugin.v1~", trait = "PricingPluginClient")],
+    # implements = "cf.bss.rate_provider_source.plugin.v1~",
+
+    # Contracts, cluster, endpoints, roles.
+    # provides = [provide(contract = "PricingApi", rust = "bss_pricing_sdk::PricingApi", sdk = ...)],
+    # consumes = [consume(contract = "TenantApi", rust = "...", sdk = ...)],
+    # requires = [cluster.cache(profile = "event-broker")],
+    # serves = [endpoint(name = "rest", via = "rest_host")],
+    # cluster_plugins = [cluster_plugin(package = cargo(...))],
+    # roles = [role(name = "worker")],
+
+    # What an integrator sees.
+    # config_schema = config(exposes = ["bind_addr"]),
+    # cargo_features = [feature("otel")],
+)
+```
+
+A design gear uses `implementation = "design"`, an `id`, and no `maturity` and no `package`. See [`implementation = "design"`](#implementation--design-a-gear-with-no-code-yet).
 
 ---
 
@@ -350,10 +541,12 @@ Positional constructors in a product file: `path`, `registry`, `plugin`, `use_ge
 
 ```
 path("relative/dir") -> source-at
-git(url, tag?, rev?, branch?) -> source-at          # at least one of tag / rev / branch
+git(url, tag?, rev?, branch?) -> source-at          # a product source needs one of tag / rev / branch
 registry("crates.io", prefix?) -> source-at         # the registry, not one package
 source(id, at, crates?) -> source                   # id is kebab-case
 ```
+
+A product source is a full repository, and Gearbox builds a lock from it. Thus `source(at = git(...))` must have a pin, and it must not have `path`. A gear's `source = git(...)` has different rules, see [`source = git(...)` on a gear](#source--git-on-a-gear).
 
 `crates = registry("crates.io")` on a `path(...)` source says its gears are also published. Descriptions still come from the checkout (a published crate carries no `gear.gdl`), and the generated build names each crate by its exact version instead of a path. Generation checks every crate against the commit its release was cut from (`.cargo_vcs_info.json`):
 
@@ -498,7 +691,10 @@ This table is the authoring subset, curated and hand-written, because the stage 
 | GBX0110 | two profile-scoped declarations collide | evaluating the file |
 | GBX0210 | restates a fact Rust already owns | evaluating the file |
 | GBX0108 | `category` is not one the platform uses (warning) | building the catalogue |
-| GBX0109 | a `docs(...)` path does not exist | building the catalogue |
+| GBX0123 | `gdl_version` is not `MAJOR.MINOR`, or has a different major version | evaluating the file |
+| GBX0109 | a `docs(...)` or `tests` path does not exist, and no `source = git(...)` | building the catalogue |
+| GBX0121 | `source = git(...)` is different from the checkout (warning) | building the catalogue |
+| GBX0122 | `implementation = "done"` with a scenario that is not done (warning) | building the catalogue |
 | GBX0112 | `config_schema` names no usable struct | building the catalogue |
 | GBX0212 | `exposes` names a field the struct does not declare | building the catalogue |
 | GBX0213 | `cargo_features` names a feature the crate does not declare | building the catalogue |
@@ -535,11 +731,21 @@ PAYMENT_SDK = cargo(
 )
 
 gear(
+    gdl_version = "1.0",
     name = "Payments Audit",
     maturity = "experimental",
+    implementation = "in-progress",
     category = "example",
     visibility = "public",
     package = cargo(crate_name = "cf-gears-payments-audit", lib = "payments_audit", path = "."),
+    sdk = [AUDIT_SDK, npm(name = "@cf/payments-audit-sdk", path = "../payments-audit-sdk-ts")],
+    source = git(url = "https://github.com/constructorfabric/gears-rust",
+                 path = "examples/payments-audit/payments-audit"),
+    tests = ["tests"],
+    scenarios = [
+        scenario("record every payment for audit", priority = "p1", done = True),
+        scenario("export the audit trail", priority = "p2"),
+    ],
     provides = [
         provide(
             contract = "PaymentsAuditApi",

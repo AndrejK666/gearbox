@@ -18,11 +18,17 @@ export const GEAR_FUNCTIONS: readonly string[] = [
   "fail",
   "feature",
   "gear",
+  "git",
+  "go",
   "grpc",
   "lifecycle",
+  "npm",
+  "nuget",
+  "path",
   "provide",
   "rest",
   "role",
+  "scenario",
 ];
 
 /** The callable vocabulary of a `product.gdl`. */

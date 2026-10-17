@@ -44,6 +44,11 @@ pub fn descriptor(id: &str) -> GearDescriptor {
         visibility: Visibility::default(),
         source: source(),
         gdl_path: RelPath::new(format!("{id}/gear.gdl")).unwrap(),
+        sdks: Vec::new(),
+        implementation: None,
+        scenarios: Vec::new(),
+        origin: None,
+        tests: Vec::new(),
         package: CargoRef {
             crate_name: format!("cf-{id}"),
             lib_ident: id.replace('-', "_"),

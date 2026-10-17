@@ -64,7 +64,7 @@ test.describe("product session and Add Gear", () => {
     await revealCatalogue(studio.page);
     await resetCatalogueView(studio.page);
 
-    // approval-service is described at `maturity = "design"` in the corpus: it
+    // approval-service is described at `implementation = "design"` in the corpus: it
     // has documents and no crate.
     const row = studio.page.locator(".gbx-design-row", { hasText: "approval-service" });
     await expect(row).toBeVisible({ timeout: 60_000 });

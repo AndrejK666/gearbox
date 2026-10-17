@@ -22,7 +22,7 @@ use gearbox_ir::{DiagnosticCode, GearId, ProfileId, RelPath, SourceId};
 
 const DESIGN: &str = r#"
 gear(
-    maturity = "design",
+    implementation = "design",
     id = "approval-service",
     name = "Approval Service",
     description = "Multi-step approvals for tenant operations.",
@@ -169,7 +169,7 @@ fn a_design_id_beside_a_gear_with_code_is_reported() {
     std::fs::create_dir_all(tree.0.join("old-thing")).unwrap();
     std::fs::write(
         tree.0.join("old-thing/gear.gdl"),
-        "gear(maturity = \"design\", id = \"thing\", name = \"Thing\")\n",
+        "gear(implementation = \"design\", id = \"thing\", name = \"Thing\")\n",
     )
     .unwrap();
     let catalogue = load_catalogue(&[tree.root()]).catalogue;
@@ -361,4 +361,103 @@ fn a_preview_gear_is_information_not_a_warning() {
         .collect();
     assert_eq!(preview.len(), 1, "{:?}", report.diagnostics);
     assert_eq!(preview[0].severity, gearbox_ir::Severity::Info);
+}
+
+#[test]
+fn sdks_in_any_language_reach_the_catalogue_resolved_against_the_source_root() {
+    let tree = Tree::new("sdks");
+    std::fs::write(
+        tree.0.join("thing/gear.gdl"),
+        r#"gear(maturity = "stable", name = "Thing",
+                package = cargo(crate_name = "thing", lib = "thing", path = "."),
+                sdk = [npm(name = "@cf/thing", path = "../sdk-ts"), go(module = "example.com/thing")])"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tree.0.join("approval-service/gear.gdl"),
+        r#"gear(implementation = "design", id = "approval-service",
+                sdk = nuget(id = "Cf.Approval", path = "dotnet"))"#,
+    )
+    .unwrap();
+    let catalogue = load_catalogue(&[tree.root()]).catalogue;
+    assert!(
+        catalogue.diagnostics.as_slice().is_empty(),
+        "{:?}",
+        catalogue.diagnostics
+    );
+
+    let spelled = |sdks: &[gearbox_ir::PackageRef]| -> Vec<String> {
+        sdks.iter()
+            .map(|p| format!("{:?} {} {}", p.ecosystem, p.name, p.path.as_str()))
+            .collect()
+    };
+    let thing = &catalogue.gears[&GearId::new("thing").unwrap()];
+    assert_eq!(
+        spelled(&thing.sdks),
+        ["Npm @cf/thing sdk-ts", "Go example.com/thing thing"]
+    );
+    let design = &catalogue.designs[&GearId::new("approval-service").unwrap()];
+    assert_eq!(
+        spelled(&design.sdks),
+        ["Nuget Cf.Approval approval-service/dotnet"]
+    );
+}
+
+#[test]
+fn implementation_and_scenarios_reach_the_catalogue() {
+    let tree = Tree::new("implementation");
+    std::fs::write(
+        tree.0.join("thing/gear.gdl"),
+        r#"gear(maturity = "stable", implementation = "in-progress", name = "Thing",
+                package = cargo(crate_name = "thing", lib = "thing", path = "."),
+                scenarios = [scenario("do it", priority = "p1", done = True), scenario("do more")])"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tree.0.join("approval-service/gear.gdl"),
+        r#"gear(implementation = "design", id = "approval-service",
+                scenarios = [scenario("approve", priority = "p1")])"#,
+    )
+    .unwrap();
+    let catalogue = load_catalogue(&[tree.root()]).catalogue;
+    assert!(
+        catalogue.diagnostics.as_slice().is_empty(),
+        "{:?}",
+        catalogue.diagnostics
+    );
+    let thing = &catalogue.gears[&GearId::new("thing").unwrap()];
+    assert_eq!(
+        thing.implementation,
+        Some(gearbox_ir::Implementation::InProgress)
+    );
+    assert_eq!(thing.scenarios.len(), 2);
+    assert!(thing.scenarios[0].done && !thing.scenarios[1].done);
+    let design = &catalogue.designs[&GearId::new("approval-service").unwrap()];
+    assert_eq!(design.scenarios[0].priority.as_deref(), Some("p1"));
+}
+
+#[test]
+fn a_gear_declared_done_with_open_scenarios_is_warned_about() {
+    let tree = Tree::new("open-scenarios");
+    std::fs::write(
+        tree.0.join("thing/gear.gdl"),
+        r#"gear(maturity = "stable", implementation = "done", name = "Thing",
+                package = cargo(crate_name = "thing", lib = "thing", path = "."),
+                scenarios = [scenario("do it", done = True), scenario("do more")])"#,
+    )
+    .unwrap();
+    let catalogue = load_catalogue(&[tree.root()]).catalogue;
+    let diagnostics = catalogue.diagnostics.as_slice();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, DiagnosticCode::GdlOpenScenarios);
+    assert_eq!(diagnostics[0].severity, gearbox_ir::Severity::Warning);
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("1 of its scenarios is not: \"do more\""),
+        "{}",
+        diagnostics[0].message
+    );
+    // A warning: the gear is still in the catalogue.
+    assert!(catalogue.gears.contains_key(&GearId::new("thing").unwrap()));
 }

@@ -832,6 +832,7 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "anyhow",
+ "either",
  "gearbox-ir",
  "serde",
  "serde_json",

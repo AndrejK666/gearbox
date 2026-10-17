@@ -372,12 +372,13 @@ diagnostic_codes! {
     /// bucket of one.
     GdlUnknownCategory = "GBX0108", Gdl, Warning, false, "gear category is not one the platform uses";
 
-    /// A declared documentation or specification path does not exist.
+    /// A declared documentation, specification or test path does not exist,
+    /// and the gear names no `source = git(...)` to find it in.
     ///
     /// An error, unlike the absence of a file found by convention: a gear may
     /// genuinely have no PRD, but a path written by hand and pointing nowhere is
     /// a typo.
-    GdlMissingDocPath = "GBX0109", Gdl, Error, false, "declared documentation path does not exist";
+    GdlMissingDocPath = "GBX0109", Gdl, Error, false, "declared documentation or test path does not exist";
 
     /// Two declarations scoped to the same profile collide.
     GdlDuplicateProfileScoped = "GBX0110", Gdl, Error, false, "duplicate profile-scoped declaration";
@@ -520,6 +521,29 @@ diagnostic_codes! {
     /// or from an operator editing the generated file, and this cannot see
     /// either. What it can say is that nothing in the description supplies it.
     GdlRequiredConfigUnset = "GBX0120", Gdl, Warning, false, "a required config field has no value and no default";
+
+    /// A gear's `source = git(...)` disagrees with the checkout its
+    /// description was read from: no remote has that url, or the gear is not
+    /// at that `path` in it.
+    ///
+    /// A warning: what is on disk is used either way. But a reader holding
+    /// the description alone follows `source`, and would land in the wrong
+    /// repository or directory.
+    GdlSourceMismatch = "GBX0121", Gdl, Warning, false, "a gear's declared git source disagrees with its checkout";
+
+    /// A gear says `implementation = "done"` while a scenario it declares is
+    /// not `done`.
+    ///
+    /// A warning: either the list or the status is stale, and only the author
+    /// knows which.
+    GdlOpenScenarios = "GBX0122", Gdl, Warning, false, "a gear is declared done with scenarios still open";
+
+    /// A file's `gdl_version` is not `MAJOR.MINOR`, or names a major version
+    /// this Gearbox does not read.
+    ///
+    /// Reported before evaluation: a different major may have removed or
+    /// renamed what this reader knows, so its errors would be the wrong ones.
+    GdlVersionUnsupported = "GBX0123", Gdl, Error, false, "unreadable or unsupported gdl_version";
 
     // ---------------------------------------------------------------- GBX02xx
     // GBX0201-GBX0205 are deliberately absent. They compared a `gear.gdl`
@@ -844,7 +868,7 @@ diagnostic_codes! {
 
     /// A product selects a gear that is described but has no code yet.
     ///
-    /// `maturity = "design"` in its `gear.gdl`: the catalogue knows the gear's
+    /// `implementation = "design"` in its `gear.gdl`: the catalogue knows the gear's
     /// id, purpose and documents, and there is no crate to link. Distinct from
     /// GBX0301 because "not in the catalogue" sends the reader looking for a
     /// typo or a closed source root, and neither is the problem.
