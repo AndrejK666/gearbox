@@ -22,26 +22,17 @@ use gearbox_ir::{
     ApplicationKind, Catalogue, DiagnosticCode, GearId, ProductIntent, ProfileId, SourceId,
 };
 
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn gears_rust() -> Option<PathBuf> {
-    // Walks up instead of counting `..`, and the difference is not cosmetic.
-    // `CARGO_MANIFEST_DIR/../../../gears-rust` is the sibling of the *repository*
-    // root, so from a git worktree -- `.claude/worktrees/<name>/crates/...` -- it
-    // resolved to nothing. Every real-tree test then skipped, printed a reason
-    // nobody reads, and the suite went green having touched none of the corpus.
-    // An agent working in a worktree got that silently.
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            return candidate.canonicalize().ok();
-        }
-        dir = dir.parent()?;
-    }
+    corpus_support::root()
 }
 
 fn catalogue() -> Option<Catalogue> {
     let root = gears_rust()?;
-    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root).ok()?;
+    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root)
+        .unwrap_or_else(|error| panic!("the discovered corpus must be readable: {error}"));
     Some(load_catalogue(&[source]).catalogue)
 }
 
@@ -361,6 +352,53 @@ fn kubernetes_fills_the_chart_fields_and_binds_every_interface() {
 mod support;
 
 #[test]
+fn a_rest_host_pin_names_the_host_instead_of_creating_a_worker() {
+    let cat = support::catalogue_of(vec![
+        support::gear_with_caps(
+            "gateway",
+            &[
+                gearbox_ir::RuntimeCap::RestHost,
+                gearbox_ir::RuntimeCap::Rest,
+            ],
+            &[],
+        ),
+        support::gear_with_caps("events", &[gearbox_ir::RuntimeCap::Rest], &[]),
+        support::gear_with_caps("settings", &[gearbox_ir::RuntimeCap::Rest], &[]),
+    ]);
+    let mut intent = support::kubernetes(
+        &["gateway", "events", "settings"],
+        gearbox_ir::Discovery::Static,
+    );
+    support::pin(&mut intent, "demo-gateway", "gateway", 1);
+    support::pin(&mut intent, "demo-worker", "settings", 1);
+    let result = resolve(&cat, &intent, &pid("prod"));
+    assert_eq!(result.partition.applications.len(), 2);
+    let host = result
+        .partition
+        .applications
+        .iter()
+        .find(|app| app.name.as_str() == "demo-gateway")
+        .unwrap();
+    assert_eq!(host.kind, ApplicationKind::Host);
+    assert!(host.gears.contains(&gid("gateway")));
+    assert!(host.gears.contains(&gid("events")));
+    let worker = result
+        .partition
+        .applications
+        .iter()
+        .find(|app| app.name.as_str() == "demo-worker")
+        .unwrap();
+    assert_eq!(worker.kind, ApplicationKind::Worker);
+    assert!(worker.gears.contains(&gid("settings")));
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagnosticCode::TopologyRestHostInWorker)
+    );
+}
+
+#[test]
 fn two_pins_on_one_anchor_are_a_duplicate() {
     // An application is the co-location closure of its anchor, and there is one
     // per anchor: the worker anchors are a set and a pin is looked up rather
@@ -426,6 +464,36 @@ fn two_pins_differing_by_role_are_not_a_duplicate() {
             .any(|d| d.code == DiagnosticCode::GdlDuplicateProfileScoped),
         "{:?}",
         r.diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn an_application_cannot_include_a_gear_outside_the_product() {
+    let cat = support::catalogue_of(vec![
+        support::gear_with_caps("host", &[], &[]),
+        support::gear_with_caps("moved", &[], &[]),
+        support::gear_with_caps("unselected", &[], &[]),
+    ]);
+    let mut intent = support::self_hosted(
+        &["host", "moved"],
+        gearbox_ir::Discovery::Static,
+        Some("target"),
+    );
+    support::pin(&mut intent, "worker", "moved", 1);
+    intent.application_pins[0].include.insert(gid("unselected"));
+    let result = resolve(&cat, &intent, &pid("local"));
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagnosticCode::GdlEval && d.message.contains("unselected"))
+    );
+    assert!(
+        !result
+            .partition
+            .applications
+            .iter()
+            .any(|app| app.gears.contains(&gid("unselected")))
     );
 }
 

@@ -142,8 +142,8 @@ fn a_path_gear_pulls_its_path_dependency_into_the_patch() {
         gear.join("Cargo.toml"),
         format!(
             "[package]\nname = \"greeter\"\nversion = \"0.1.0\"\n[dependencies]\n\
-             toolkit = {{ package = \"cf-gears-toolkit\", path = \"{}\" }}\n",
-            toolkit.display()
+             toolkit = {{ package = \"cf-gears-toolkit\", path = {} }}\n",
+            toml::Value::String(toolkit.to_string_lossy().into_owned())
         ),
     )
     .unwrap();

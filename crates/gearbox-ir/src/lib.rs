@@ -7,6 +7,8 @@
 
 pub mod catalogue;
 pub mod contract;
+pub mod database;
+pub use database::{PostgresDatabase, SqliteDatabase};
 pub mod diagnostics;
 pub mod explain;
 pub mod fileset;
@@ -14,6 +16,7 @@ pub mod ids;
 pub mod intent;
 pub mod requirement;
 pub mod resolved;
+pub mod ui;
 
 pub use catalogue::{
     CargoFeature, Catalogue, ConfigFieldDecl, ConfigFieldType, ConfigSchema, DeclaredRole,

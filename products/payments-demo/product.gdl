@@ -14,17 +14,24 @@ product(
     sources = [source(id = "gears-rust", at = path("../../../gears-rust"))],
 
     profiles = [
-        embedded(id = "dev"),
+        embedded(id = "dev", database = postgres(
+            host = "127.0.0.1", user = "postgres", password = "${GEARS_PG_PASSWORD}",
+            params = {"sslmode": "disable"},
+        )),
         self_hosted(
             id = "local",
             host = "gateway",
             worker_discovery = "directory",
+            database = postgres(host = "127.0.0.1", user = "postgres",
+                password = "${GEARS_PG_PASSWORD}", params = {"sslmode": "disable"}),
             target_dir = "../../../gears-rust/target",
         ),
         kubernetes(
             id = "prod",
             discovery = "static",
             namespace = "payments",
+            database = postgres(host = "postgres.example.com", user = "payments",
+                password = "${GEARS_PG_PASSWORD}", existing_secret = "payments-db"),
             image_registry = "registry.example.com/payments",
         ),
     ],

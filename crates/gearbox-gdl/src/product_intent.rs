@@ -115,6 +115,29 @@ pub fn build(
 
     let sources = build_sources(uri, decl, diagnostics);
 
+    let ui = decl.ui.as_ref().and_then(|ui| {
+        let modules: Result<std::collections::BTreeSet<_>, _> = ui
+            .modules
+            .iter()
+            .map(|id| GearId::new(id.clone()))
+            .collect();
+        match modules {
+            Ok(modules) => Some(gearbox_ir::ui::ProductUi {
+                shell: ui.shell.clone(),
+                sdk: ui.sdk.clone(),
+                source: ui.source.clone(),
+                modules,
+            }),
+            Err(error) => {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::GdlEval,
+                    format!("invalid UI module id: {error}"),
+                    "use gear ids in ui_product(modules = [...])",
+                ));
+                None
+            }
+        }
+    });
     Some(ProductIntent {
         id: decl.id.clone(),
         display_name: decl.display_name.clone(),
@@ -130,6 +153,7 @@ pub fn build(
         sources,
         profiles,
         default_profile,
+        ui,
     })
 }
 
@@ -594,6 +618,19 @@ fn build_application_pins(
             declared_at: record.declared_at.clone(),
             name,
             anchor,
+            include: record
+                .include
+                .iter()
+                .filter_map(|id| {
+                    gear_id(
+                        record.declared_at.as_ref(),
+                        uri,
+                        id,
+                        "application.include",
+                        diagnostics,
+                    )
+                })
+                .collect(),
             // Not checked here: whether the anchor declares this role is a
             // question for the catalogue, which this layer does not have.
             role: record.role.clone(),
@@ -803,6 +840,8 @@ fn deployment_profile(
     match record.kind.as_str() {
         "embedded" => Some(DeploymentProfileDecl::Embedded {
             id: id.clone(),
+            database: record.database.as_ref().map(|db| db.settings.clone()),
+            sqlite_databases: record.sqlite_databases.clone(),
             declared_at: record.declared_at.clone(),
         }),
         "self-hosted" => {
@@ -833,6 +872,8 @@ fn deployment_profile(
             };
             Some(DeploymentProfileDecl::SelfHosted {
                 id: id.clone(),
+                database: record.database.as_ref().map(|db| db.settings.clone()),
+                sqlite_databases: record.sqlite_databases.clone(),
                 host,
                 discovery: discovery(
                     uri,
@@ -848,6 +889,8 @@ fn deployment_profile(
         }
         "kubernetes" => Some(DeploymentProfileDecl::Kubernetes {
             id: id.clone(),
+            database: record.database.as_ref().map(|db| db.settings.clone()),
+            sqlite_databases: record.sqlite_databases.clone(),
             discovery: discovery(
                 uri,
                 id,

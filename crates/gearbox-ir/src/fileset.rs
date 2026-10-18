@@ -89,6 +89,8 @@ pub enum FileKind {
     Shell,
     /// Anything with no better answer -- `.dockerignore`, a `.gitignore`.
     Text,
+    /// Opaque bytes, with no text preview or comment syntax.
+    Binary,
 }
 
 impl FileKind {
@@ -103,6 +105,7 @@ impl FileKind {
             Self::Dockerfile => "dockerfile",
             Self::Shell => "shell",
             Self::Text => "text",
+            Self::Binary => "binary",
         }
     }
 
@@ -116,7 +119,7 @@ impl FileKind {
         match self {
             Self::Rust => Some("//"),
             Self::Toml | Self::Yaml | Self::Dockerfile | Self::Shell | Self::Text => Some("#"),
-            Self::Json => None,
+            Self::Json | Self::Binary => None,
         }
     }
 }

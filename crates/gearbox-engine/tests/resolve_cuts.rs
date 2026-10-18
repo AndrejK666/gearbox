@@ -20,26 +20,17 @@ use gearbox_ir::{
     Catalogue, CutBlocker, DiagnosticCode, GearId, ProductIntent, ProfileId, SourceId,
 };
 
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn gears_rust() -> Option<PathBuf> {
-    // Walks up instead of counting `..`, and the difference is not cosmetic.
-    // `CARGO_MANIFEST_DIR/../../../gears-rust` is the sibling of the *repository*
-    // root, so from a git worktree -- `.claude/worktrees/<name>/crates/...` -- it
-    // resolved to nothing. Every real-tree test then skipped, printed a reason
-    // nobody reads, and the suite went green having touched none of the corpus.
-    // An agent working in a worktree got that silently.
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            return candidate.canonicalize().ok();
-        }
-        dir = dir.parent()?;
-    }
+    corpus_support::root()
 }
 
 fn catalogue() -> Option<Catalogue> {
     let root = gears_rust()?;
-    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root).ok()?;
+    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root)
+        .unwrap_or_else(|error| panic!("the discovered corpus must be readable: {error}"));
     Some(load_catalogue(&[source]).catalogue)
 }
 

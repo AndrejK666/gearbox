@@ -136,9 +136,9 @@ pub fn load_catalogue(roots: &[SourceRoot]) -> CatalogueScan {
 /// time. See ADR `cpt-gearbox-adr-staged-catalogue-loading` for the measured
 /// costs; the second pass is roughly ten times the first on a real tree.
 ///
-/// Synchronous, with a callback. Threads belong to whoever wants them -- the RPC
-/// server currently runs it on its request thread and forwards each event as a
-/// notification -- and the engine keeps no dependency on parallelism.
+/// Synchronous, with callbacks on the calling thread. Source text is read in
+/// bounded parallel batches inside the scanner; AST projection and event delivery
+/// remain ordered. The engine adds no parallelism dependency.
 #[must_use]
 pub fn load_catalogue_staged(
     roots: &[SourceRoot],

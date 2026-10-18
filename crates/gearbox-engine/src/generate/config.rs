@@ -33,6 +33,8 @@ const CLUSTER_GEAR: &str = "cluster";
 #[derive(Serialize)]
 struct AppConfig {
     server: ServerSection,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    database: Option<DatabaseSection>,
     /// How a worker serves its own REST surface. Absent for a host.
     ///
     /// Its **absence is a decision the runtime acts on**: without this section
@@ -52,6 +54,8 @@ struct OopHttpSection {
     /// The runtime defaults this to `false` and refuses to start when the
     /// advertised host is loopback without it.
     allow_loopback_advertise: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    internal_auth: Option<Value>,
 }
 
 #[derive(Serialize)]
@@ -61,6 +65,8 @@ struct ServerSection {
 
 #[derive(Serialize)]
 struct GearSection {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    database: Option<GearDatabaseSection>,
     /// Present only for a gear the host spawns out of process.
     #[serde(skip_serializing_if = "Option::is_none")]
     runtime: Option<RuntimeSection>,
@@ -89,6 +95,96 @@ struct ExecutionSection {
     working_directory: Option<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     environment: BTreeMap<String, String>,
+}
+
+#[derive(Serialize)]
+struct DatabaseSection {
+    servers: BTreeMap<&'static str, PostgresServerSection>,
+}
+#[derive(Serialize)]
+struct PostgresServerSection {
+    engine: &'static str,
+    host: String,
+    port: u16,
+    user: String,
+    password: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    params: BTreeMap<String, String>,
+}
+#[derive(Serialize)]
+#[serde(untagged)]
+enum GearDatabaseSection {
+    Postgres {
+        server: &'static str,
+        dbname: String,
+    },
+    Sqlite {
+        engine: &'static str,
+        file: String,
+    },
+}
+
+fn write_database(
+    input: &GenerateInput<'_>,
+    application: &ResolvedApplication,
+    gears: &mut BTreeMap<String, GearSection>,
+) -> Result<Option<DatabaseSection>, GenerateError> {
+    let mut used = false;
+    for id in &application.gears {
+        if !input
+            .lock
+            .gears
+            .get(id)
+            .is_some_and(|gear| gear.runtime_caps.contains(&gearbox_ir::RuntimeCap::Db))
+        {
+            continue;
+        }
+        if let Some(sqlite) = input.lock.sqlite_databases.get(id) {
+            sqlite.validate().map_err(GenerateError::Database)?;
+            if let Some(gear) = gears.get_mut(id.as_str()) {
+                gear.database = Some(GearDatabaseSection::Sqlite {
+                    engine: "sqlite",
+                    file: sqlite.file.clone(),
+                });
+            }
+            continue;
+        }
+        let db = input.lock.database.as_ref().ok_or_else(|| {
+            GenerateError::Database(format!(
+                "gear `{id}` needs a database; re-resolve with database = postgres(...)"
+            ))
+        })?;
+        db.validate().map_err(GenerateError::Database)?;
+        let name = db.database_names.get(id).ok_or_else(|| {
+            GenerateError::Database(format!(
+                "lock has no database name for gear `{id}`; re-resolve the product"
+            ))
+        })?;
+        if let Some(gear) = gears.get_mut(id.as_str()) {
+            gear.database = Some(GearDatabaseSection::Postgres {
+                server: "pg",
+                dbname: name.clone(),
+            });
+        }
+        used = true;
+    }
+    Ok(if used {
+        input.lock.database.as_ref().map(|db| DatabaseSection {
+            servers: BTreeMap::from([(
+                "pg",
+                PostgresServerSection {
+                    engine: "postgres",
+                    host: db.host.clone(),
+                    port: db.port,
+                    user: db.user.clone(),
+                    password: db.password.clone(),
+                    params: db.params.clone(),
+                },
+            )]),
+        })
+    } else {
+        None
+    })
 }
 
 /// The runtime configuration for one process.
@@ -125,6 +221,7 @@ pub fn app_config(
             (
                 id.to_string(),
                 GearSection {
+                    database: None,
                     runtime: None,
                     config,
                 },
@@ -132,10 +229,28 @@ pub fn app_config(
         })
         .collect();
 
+    let database = write_database(input, application, &mut gears)?;
     write_endpoints(application, &mut gears)?;
     write_consumer_wiring(input, application, &mut gears);
     write_cluster(input, &mut gears);
     write_spawns(input, application, &mut gears);
+
+    // One platform-plane provider for the embedded host and its workers. The
+    // product supplies secret values through AppConfig's APP__ environment
+    // overrides; no credential value is needed during generation.
+    let internal_auth = input
+        .lock
+        .gears
+        .iter()
+        .find(|(id, _)| id.as_str() == "api-gateway")
+        .and_then(|(_, host)| host.config.get("internal_auth"))
+        .filter(|value| !value.is_null())
+        .cloned();
+    if let (Some(auth), Some(grpc)) = (&internal_auth, gears.get_mut("grpc-hub")) {
+        grpc.config
+            .entry("internal_auth")
+            .or_insert_with(|| auth.clone());
+    }
 
     let home_dir = if input.lock.kubernetes.is_some() {
         // `readOnlyRootFilesystem` makes `~` unwritable; the chart mounts an
@@ -150,10 +265,12 @@ pub fn app_config(
     };
     let config = AppConfig {
         server: ServerSection { home_dir },
+        database,
         oop_http: application.serve.as_ref().map(|serve| OopHttpSection {
             listen_addr: serve.listen_addr.clone(),
             advertise_uri: serve.advertise_uri.clone(),
             allow_loopback_advertise: serve.allow_loopback_advertise,
+            internal_auth: internal_auth.clone(),
         }),
         gears,
     };
@@ -235,10 +352,16 @@ fn write_consumer_wiring(
             .entry("consumer_wiring".to_owned())
             .or_insert_with(|| Value::Object(Map::new()));
         if let Some(map) = wiring.as_object_mut() {
-            map.insert(
-                binding.provider.to_string(),
-                Value::String(endpoint.clone()),
-            );
+            // Toolkit reads ConsumerWiring as an object with an endpoint plus
+            // optional flattened client policies. Keep configured policies
+            // when adding the resolved static endpoint.
+            let provider = binding.provider.to_string();
+            let mut options = map
+                .remove(&provider)
+                .and_then(|value| value.as_object().cloned())
+                .unwrap_or_default();
+            options.insert("endpoint".to_owned(), Value::String(endpoint.clone()));
+            map.insert(provider, Value::Object(options));
         }
     }
 }
@@ -339,6 +462,7 @@ fn write_spawns(
         let section = gears
             .entry(spawn.gear.to_string())
             .or_insert_with(|| GearSection {
+                database: None,
                 runtime: None,
                 config: Map::new(),
             });

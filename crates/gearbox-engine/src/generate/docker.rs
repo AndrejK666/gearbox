@@ -1,4 +1,4 @@
-//! Per-process Dockerfiles, a context-root `.dockerignore`, and `build.sh`.
+//! Per-process Dockerfiles with adjacent ignore files, and `build.sh`.
 //!
 //! Emitted only for a Kubernetes profile. A `self_hosted` tree really does
 //! run on one machine; putting a Dockerfile next to it would describe a
@@ -13,9 +13,9 @@
 //! because leaving it as an operator guess is how images fail with a
 //! missing crate an hour later.
 //!
-//! `.dockerignore` cannot live at the context root: [`generate`](super::generate)
-//! may not write outside `out_root`. The file is generated next to the
-//! Dockerfiles and `build.sh` points `BuildKit` at it with `--ignorefile`.
+//! An ignore file cannot live at the context root: [`generate`](super::generate)
+//! may not write outside `out_root`. Docker reads `Dockerfile.dockerignore`
+//! beside each Dockerfile, without a non-standard build flag.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -44,11 +44,21 @@ pub fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, GenerateError>
     let context = build_context(input)?;
     let out_rel = rel_from(&context, input.out_root)?;
 
+    let ignore = dockerignore(input, &context)?;
     let mut files = Vec::new();
     for application in &input.lock.applications {
         files.push(dockerfile(input, application, &out_rel)?);
+        files.push(FileEntry::text(
+            paths::rel(&[
+                "docker",
+                application.name.as_str(),
+                "Dockerfile.dockerignore",
+            ])?,
+            ignore.clone(),
+            FileKind::Text,
+            Ownership::Generated,
+        ));
     }
-    files.push(dockerignore(input, &context)?);
     files.push(build_script(input, &context)?);
     Ok(files)
 }
@@ -69,6 +79,7 @@ fn dockerfile(
             application => application.name.as_str(),
             out_rel => out_rel,
             uid => NONROOT_UID,
+            home_dir => super::K8S_HOME_DIR,
             ports => expose_ports(application),
         },
     )?;
@@ -81,29 +92,39 @@ fn dockerfile(
     ))
 }
 
-fn dockerignore(input: &GenerateInput<'_>, context: &Path) -> Result<FileEntry, GenerateError> {
+fn dockerignore(input: &GenerateInput<'_>, context: &Path) -> Result<String, GenerateError> {
     let mut secret_dirs = Vec::new();
+    let mut source_dirs = Vec::new();
     for root in input.source_roots.values() {
         secret_dirs.push(format!("{}/", rel_from(context, &root.join("config"))?));
+        let rel = rel_from(context, root)?;
+        source_dirs.push(if rel == "." {
+            "**".to_owned()
+        } else {
+            format!("{rel}/**")
+        });
     }
+    source_dirs.sort();
+    source_dirs.dedup();
     secret_dirs.sort();
     secret_dirs.dedup();
+    let rel = rel_from(context, input.out_root)?;
+    let output_dir = if rel == "." {
+        "**".to_owned()
+    } else {
+        format!("{rel}/**")
+    };
 
-    let body = templates::render(
+    templates::render(
         "docker/dockerignore",
         input.templates.get("docker/dockerignore")?,
         context! {
             header => header("#").trim_end(),
+            source_dirs => source_dirs,
+            output_dir => output_dir,
             secret_dirs => secret_dirs,
         },
-    )?;
-
-    Ok(FileEntry::text(
-        paths::rel(&["docker", ".dockerignore"])?,
-        body,
-        FileKind::Text,
-        Ownership::Generated,
-    ))
+    )
 }
 
 /// Companion script so the operator does not have to reconstruct the
@@ -128,7 +149,7 @@ fn build_script(input: &GenerateInput<'_>, context: &Path) -> Result<FileEntry, 
          #\n\
          # Docker reads .dockerignore from the context root by default. Ours\n\
          # cannot live there -- generate() may not write outside out_root --\n\
-         # so BuildKit's --ignorefile points at the generated copy.\n\
+         # so each Dockerfile has an adjacent Dockerfile.dockerignore.\n\
          #\n\
          # Usage: ./build.sh [application ...]\n\
          #   with no arguments, every application is built.\n",
@@ -143,7 +164,6 @@ fn build_script(input: &GenerateInput<'_>, context: &Path) -> Result<FileEntry, 
     body.push_str("  name=$1\n");
     body.push_str("  image=$2\n");
     body.push_str("  docker build \\\n");
-    body.push_str("    --ignorefile \"$SCRIPT_DIR/.dockerignore\" \\\n");
     body.push_str("    -f \"$SCRIPT_DIR/$name/Dockerfile\" \\\n");
     body.push_str("    -t \"$image\" \\\n");
     body.push_str("    \"$CONTEXT\"\n");
@@ -251,7 +271,7 @@ fn sh_single(value: &str) -> String {
 /// generated `docker/` directory, not prefixed raw onto `SCRIPT_DIR` --
 /// `$SCRIPT_DIR//abs` is how an absolute `to_context` used to break the script.
 fn context_cd(to_context: &str) -> String {
-    if Path::new(to_context).is_absolute() {
+    if to_context.starts_with('/') || Path::new(to_context).is_absolute() {
         sh_single(to_context)
     } else {
         format!("\"$SCRIPT_DIR/\"{}", sh_single(to_context))

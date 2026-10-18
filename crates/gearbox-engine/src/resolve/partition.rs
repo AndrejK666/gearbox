@@ -18,8 +18,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use gearbox_ir::{
     ApplicationId, ApplicationKind, ApplicationRole, Catalogue, DeploymentProfileDecl, Diagnostic,
-    DiagnosticCode, Diagnostics, Entrypoint, GearId, ImageRef, Location, ResolvedApplication,
-    ResolvedEndpoint, RuntimeCap, SpawnSpec, WorkerServe,
+    DiagnosticCode, Diagnostics, Entrypoint, GearId, ImageRef, InclusionReason, Location,
+    ResolvedApplication, ResolvedEndpoint, RuntimeCap, SpawnSpec, WorkerServe,
 };
 
 use super::closure::Closure;
@@ -89,6 +89,23 @@ pub fn partition(
     } = *input;
     report_undeployable_roles(catalogue, closure, uri, diagnostics);
     report_unknown_roles(catalogue, scoped, uri, diagnostics);
+    for pin in &scoped.application_pins {
+        for included in &pin.include {
+            if !closure.contains(included) {
+                diagnostics.push(
+                    Diagnostic::error(
+                        DiagnosticCode::GdlEval,
+                        format!(
+                            "application `{}` includes `{included}`, which is not in this product",
+                            pin.name
+                        ),
+                        "select the gear with use_gear before including it in an application",
+                    )
+                    .at(Location::or_file(pin.declared_at.as_ref(), uri)),
+                );
+            }
+        }
+    }
     let mut used_names: BTreeSet<String> = BTreeSet::new();
     let mut applications = Vec::new();
 
@@ -447,6 +464,12 @@ fn split(
         selected,
         isolates,
     } = *input;
+    // A pin on the REST host names the host application; moving that gear to
+    // a worker would leave the remaining REST gears with no composed router.
+    let host_pin = scoped
+        .application_pins
+        .iter()
+        .find(|pin| pin.role.is_none() && has_cap(catalogue, &pin.anchor, RuntimeCap::RestHost));
     // Candidates to move out: the provider of every severable edge, plus
     // anything the description pinned to its own process.
     let mut worker_anchors: BTreeSet<GearId> = cuts
@@ -457,14 +480,42 @@ fn split(
         .chain(isolates.iter().cloned())
         .filter(|g| closure.contains(g))
         .collect();
+    if let Some(pin) = host_pin {
+        worker_anchors.remove(&pin.anchor);
+    }
 
-    // The host keeps every selected gear that is not moving out, and everything
-    // those reach. A worker anchor still reached from the host is in both.
-    let host_seeds: Vec<GearId> = selected
+    // Explicit worker contributions are placed with that worker rather than
+    // seeded in the default host as well. A host dependency (or explicit host
+    // include) can still reach them, preserving legitimate overlapping closures.
+    let worker_includes: BTreeSet<&GearId> = scoped
+        .application_pins
+        .iter()
+        .filter(|pin| worker_anchors.contains(&pin.anchor))
+        .flat_map(|pin| pin.include.iter())
+        .collect();
+    // The host keeps every other selected gear and everything those reach.
+    let mut host_seeds: Vec<GearId> = selected
         .iter()
         .filter(|g| !worker_anchors.contains(*g))
+        .filter(|g| !worker_includes.contains(*g))
+        // Plugins follow their host below; being selected under a worker's
+        // host is not a request for an additional copy in the main process.
+        .filter(|g| {
+            closure
+                .members
+                .get(*g)
+                .is_some_and(|reasons| reasons.contains(&InclusionReason::Selected))
+        })
         .cloned()
         .collect();
+    if let Some(pin) = host_pin {
+        host_seeds.extend(
+            pin.include
+                .iter()
+                .filter(|id| closure.contains(id))
+                .cloned(),
+        );
+    }
     let host_gears = topo_sort(catalogue, closure, &host_seeds);
     worker_anchors.retain(|a| !host_gears.contains(a) || is_forced_out(scoped, isolates, a));
 
@@ -472,6 +523,7 @@ fn split(
     if let Some(anchor) = pick_anchor(catalogue, &host_gears) {
         let name = host_name
             .cloned()
+            .or_else(|| host_pin.map(|pin| pin.name.clone()))
             .or_else(|| derive_name(&anchor, used_names));
         if let Some(name) = name {
             applications.push(build(
@@ -480,15 +532,23 @@ fn split(
                 host_gears,
                 ApplicationKind::Host,
                 name,
-                None,
+                host_pin.map(|pin| pin.replicas),
                 None,
                 used_names,
             ));
         }
     }
     for anchor in &worker_anchors {
-        let gears = topo_sort(catalogue, closure, std::slice::from_ref(anchor));
         let pin = scoped.application_pins.iter().find(|p| p.anchor == *anchor);
+        let seeds: Vec<GearId> = std::iter::once(anchor.clone())
+            .chain(
+                pin.into_iter()
+                    .flat_map(|p| p.include.iter())
+                    .filter(|id| closure.contains(id))
+                    .cloned(),
+            )
+            .collect();
+        let gears = topo_sort(catalogue, closure, &seeds);
         let name = pin
             .map(|p| p.name.clone())
             .or_else(|| derive_name(anchor, used_names));
@@ -765,10 +825,47 @@ fn topo_sort(catalogue: &Catalogue, closure: &Closure, seeds: &[GearId]) -> Vec<
         Emit(GearId),
     }
 
+    let mut plugins: BTreeMap<&GearId, BTreeSet<&GearId>> = BTreeMap::new();
+    for (id, reasons) in &closure.members {
+        for reason in reasons {
+            if let InclusionReason::PluginOf { host, .. } = reason {
+                plugins.entry(host).or_default().insert(id);
+            }
+        }
+    }
+
+    // Plugin attachment determines membership, not initialization precedence:
+    // a plugin may itself depend on its host. First collect the full process
+    // closure, then sort only real dependency edges to avoid introducing cycles.
+    let mut reachable = BTreeSet::new();
+    let mut pending = seeds.to_vec();
+    while let Some(gear) = pending.pop() {
+        if !reachable.insert(gear.clone()) {
+            continue;
+        }
+        if let Some(selected) = plugins.get(&gear) {
+            pending.extend(selected.iter().map(|id| (*id).clone()));
+        }
+        if let Some(descriptor) = catalogue.gears.get(&gear) {
+            pending.extend(
+                descriptor
+                    .colocated_deps
+                    .iter()
+                    .filter(|id| closure.contains(id))
+                    .cloned(),
+            );
+        }
+    }
     let mut ordered: Vec<GearId> = Vec::new();
     let mut done: BTreeSet<GearId> = BTreeSet::new();
-    // Reversed so the seeds are entered in their original order once popped.
-    let mut stack: Vec<Step> = seeds.iter().rev().cloned().map(Step::Enter).collect();
+    // Visit explicit seeds first, then any plugins not reached by dependency edges.
+    let mut stack: Vec<Step> = seeds
+        .iter()
+        .chain(reachable.iter())
+        .cloned()
+        .rev()
+        .map(Step::Enter)
+        .collect();
     let mut open: BTreeSet<GearId> = BTreeSet::new();
     while let Some(step) = stack.pop() {
         match step {

@@ -16,6 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use gearbox_engine::generate::{
     GenerateError, GenerateInput, Generated, TemplateSet, base_root_for, generate,
@@ -27,21 +28,11 @@ use gearbox_ir::{
     RelPath, ResolvedClusterBinding, ResolvedProduct, Selected, SourceId,
 };
 
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn gears_rust() -> Option<PathBuf> {
-    // Walks up instead of counting `..`, and the difference is not cosmetic.
-    // `CARGO_MANIFEST_DIR/../../../gears-rust` is the sibling of the *repository*
-    // root, so from a git worktree -- `.claude/worktrees/<name>/crates/...` -- it
-    // resolved to nothing. Every real-tree test then skipped, printed a reason
-    // nobody reads, and the suite went green having touched none of the corpus.
-    // An agent working in a worktree got that silently.
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            return candidate.canonicalize().ok();
-        }
-        dir = dir.parent()?;
-    }
+    corpus_support::root()
 }
 
 fn product_gdl() -> PathBuf {
@@ -53,12 +44,15 @@ fn product_gdl() -> PathBuf {
 
 /// Resolve the demo product for one profile against the real tree.
 fn resolve(profile: &str) -> Option<(ResolvedProduct, BTreeMap<SourceId, PathBuf>)> {
+    static SCAN: OnceLock<gearbox_engine::CatalogueScan> = OnceLock::new();
     let Some(root) = gears_rust() else {
         eprintln!("skipping: gears-rust not present");
         return None;
     };
     let opened = vec![SourceRoot::open(SourceId::new("gears-rust").unwrap(), &root).unwrap()];
-    let scan = load_catalogue(&opened);
+    // This suite resolves the same immutable checkout for each assertion.
+    // Keep one scan, while still exercising resolution and generation each time.
+    let scan = SCAN.get_or_init(|| load_catalogue(&opened));
 
     let path = product_gdl();
     let product = load_product(&path, None);
@@ -85,7 +79,11 @@ fn resolve(profile: &str) -> Option<(ResolvedProduct, BTreeMap<SourceId, PathBuf
 /// and the path only decides what the relative dependency paths are relative
 /// to.
 fn out_root() -> PathBuf {
-    PathBuf::from("/workspace/.gearbox/payments-demo/dev")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("the repository containing this test")
+        .join(".gearbox/payments-demo/dev")
 }
 
 fn generated(profile: &str) -> Option<(ResolvedProduct, Generated)> {
@@ -888,6 +886,7 @@ fn a_kubernetes_profile_generates_a_dockerfile_per_process() {
         assert_eq!(entry.kind, FileKind::Dockerfile, "{path}");
         assert!(body.contains("USER 65532"), "{path}:\n{body}");
         assert!(body.contains("ca-certificates"), "{path}:\n{body}");
+        assert!(body.contains("protobuf-compiler"), "{path}:\n{body}");
         assert!(
             body.contains(&format!(
                 r#"CMD ["{}", "--config", "/etc/gearbox/{}.yaml"]"#,
@@ -913,30 +912,49 @@ fn a_kubernetes_profile_generates_a_dockerfile_per_process() {
         }
     }
 
-    let ignore = text(&files.files, "docker/.dockerignore");
-    assert!(ignore.contains("**/target/"), "{ignore}");
-    assert!(ignore.contains("**/.git/"), "{ignore}");
-    assert!(
-        ignore.contains("gears-rust/config/"),
-        "the corpus config/ (unignored secrets) must be excluded:\n{ignore}"
-    );
-    assert!(
-        !ignore.contains("**/config/"),
-        "a blanket config/ ignore would drop the generated --config file:\n{ignore}"
-    );
-
     let script = text(&files.files, "docker/build.sh");
     assert!(script.starts_with("#!/bin/sh\n"), "{script}");
     assert!(script.contains("docker build"), "{script}");
     assert!(
-        script.contains("--ignorefile"),
-        "generate() cannot write .dockerignore at the context root:\n{script}"
+        !script.contains("--ignorefile"),
+        "Docker reads the adjacent Dockerfile.dockerignore without an unsupported flag:\n{script}"
     );
     for application in &lock.applications {
         assert!(
             script.contains(application.name.as_str()),
             "build.sh does not name {}:\n{script}",
             application.name
+        );
+    }
+}
+
+#[test]
+fn docker_context_includes_only_product_and_declared_sources() {
+    let Some((lock, files)) = generated("prod") else {
+        return;
+    };
+    for application in &lock.applications {
+        let ignore = text(
+            &files.files,
+            &format!("docker/{}/Dockerfile.dockerignore", application.name),
+        );
+        assert!(ignore.contains("**/target/"), "{ignore}");
+        assert!(ignore.contains("**/.git/"), "{ignore}");
+        assert!(ignore.contains("**/.env"), "{ignore}");
+        assert!(ignore.contains("**/.gearbox/**"), "{ignore}");
+        assert!(
+            ignore.contains('!'),
+            "the context must allow only declared inputs: {ignore}"
+        );
+        let root = gears_rust().expect("the corpus was resolved above");
+        let corpus_name = root.file_name().unwrap().to_string_lossy();
+        assert!(
+            ignore.contains(&format!("{corpus_name}/config/")),
+            "the source root's config/ may contain credentials: {ignore}"
+        );
+        assert!(
+            !ignore.contains("**/config/"),
+            "the generated runtime config must remain in the build context: {ignore}"
         );
     }
 }

@@ -335,6 +335,25 @@ pub fn merge(
         }
     };
 
+    let ui = decl.ui.as_ref().and_then(|ui| {
+        let package = gdl_dir.resolve(&ui.package).map_err(|e| e.to_string());
+        let requires: Result<BTreeSet<_>, _> = ui
+            .requires
+            .iter()
+            .map(|id| GearId::new(id.clone()).map_err(|e| e.to_string()))
+            .collect();
+        match (package, requires) {
+            (Ok(package), Ok(requires)) => Some(gearbox_ir::ui::GearUi { package, requires }),
+            (Err(error), _) | (_, Err(error)) => {
+                diagnostics.push(invalid(
+                    uri,
+                    format!("invalid UI declaration: {error}"),
+                    "use a package path inside the source root and valid backend gear ids",
+                ));
+                None
+            }
+        }
+    });
     let gear = GearDescriptor {
         display_name: decl.name.clone().unwrap_or_else(|| id.to_string()),
         id,
@@ -393,6 +412,7 @@ pub fn merge(
         docs,
         gts_types,
         declared_at: decl.declared_at.clone(),
+        ui,
     };
 
     Some(MergedGear {

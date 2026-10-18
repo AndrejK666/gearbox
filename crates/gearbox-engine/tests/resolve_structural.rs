@@ -19,26 +19,17 @@ use gearbox_ir::{
     Catalogue, DiagnosticCode, Discovery, ProductIntent, ProfileId, RuntimeCap, SourceId,
 };
 
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn gears_rust() -> Option<PathBuf> {
-    // Walks up instead of counting `..`, and the difference is not cosmetic.
-    // `CARGO_MANIFEST_DIR/../../../gears-rust` is the sibling of the *repository*
-    // root, so from a git worktree -- `.claude/worktrees/<name>/crates/...` -- it
-    // resolved to nothing. Every real-tree test then skipped, printed a reason
-    // nobody reads, and the suite went green having touched none of the corpus.
-    // An agent working in a worktree got that silently.
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            return candidate.canonicalize().ok();
-        }
-        dir = dir.parent()?;
-    }
+    corpus_support::root()
 }
 
 fn catalogue() -> Option<Catalogue> {
     let root = gears_rust()?;
-    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root).ok()?;
+    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root)
+        .unwrap_or_else(|error| panic!("the discovered corpus must be readable: {error}"));
     Some(load_catalogue(&[source]).catalogue)
 }
 
@@ -191,8 +182,9 @@ fn a_rest_host_in_a_worker_is_refused() {
     // it serves through its own out-of-process router rather than the composed
     // gateway. Silent success is why this is an error.
     let cat = support::catalogue_of(vec![
-        support::gear_with_caps("host", &[], &[]),
-        support::gear_with_caps("moved", &[RuntimeCap::RestHost], &[]),
+        support::gear_with_caps("host", &[RuntimeCap::RestHost], &[]),
+        support::gear_with_caps("moved", &[RuntimeCap::Rest], &["embedded-host"]),
+        support::gear_with_caps("embedded-host", &[RuntimeCap::RestHost], &[]),
     ]);
     let mut intent = support::self_hosted(&["host", "moved"], Discovery::Static, Some("target"));
     support::pin(&mut intent, "worker", "moved", 1);

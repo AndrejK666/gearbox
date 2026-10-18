@@ -2289,7 +2289,12 @@ fn plugin_shape(plugin: &crate::protocol::PluginScaffold) -> String {
     #
     # config_schema = config(exposes = ["vendor", "priority"]),
 "#,
-        spec = quote_string(&plugin.spec),
+        spec = quote_string(
+            plugin
+                .spec
+                .strip_prefix(gearbox_engine::plugin::PLUGIN_BASE)
+                .unwrap_or(&plugin.spec)
+        ),
         trait_ident = comment_safe(&plugin.trait_ident),
         crate_name = comment_safe(&plugin.crate_name),
         lib = comment_safe(&plugin.lib_ident),

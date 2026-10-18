@@ -39,6 +39,8 @@ pub fn assemble(
     let declaration = intent.profiles.get(&resolution.profile);
 
     let mut product = ResolvedProduct {
+        sqlite_databases: resolution.sqlite_databases.clone(),
+        database: resolution.database.clone(),
         schema_version: LOCK_SCHEMA_VERSION,
         product: ResolvedProductHeader {
             id: intent.id.clone(),
@@ -64,6 +66,7 @@ pub fn assemble(
         cuttable_if_declared: resolution.cuts.blocked.clone(),
         provenance: explain(catalogue, intent, resolution).edges,
         diagnostics: resolution.diagnostics.clone(),
+        ui: resolution.ui.clone(),
     };
 
     gearbox_lock::canonicalize_order(&mut product);

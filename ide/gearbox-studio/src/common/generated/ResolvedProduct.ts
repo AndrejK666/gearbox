@@ -3,6 +3,7 @@ import type { CutCandidate } from "./CutCandidate";
 import type { Diagnostics } from "./Diagnostics";
 import type { GearId } from "./GearId";
 import type { KubernetesSettings } from "./KubernetesSettings";
+import type { PostgresDatabase } from "./PostgresDatabase";
 import type { ProvenanceEdge } from "./ProvenanceEdge";
 import type { ResolvedApplication } from "./ResolvedApplication";
 import type { ResolvedBinding } from "./ResolvedBinding";
@@ -10,8 +11,10 @@ import type { ResolvedClusterBinding } from "./ResolvedClusterBinding";
 import type { ResolvedGear } from "./ResolvedGear";
 import type { ResolvedProductHeader } from "./ResolvedProductHeader";
 import type { ResolvedSource } from "./ResolvedSource";
+import type { ResolvedUi } from "./ResolvedUi";
 import type { SelfHostedSettings } from "./SelfHostedSettings";
 import type { SourceId } from "./SourceId";
+import type { SqliteDatabase } from "./SqliteDatabase";
 
 /**
  * The resolved product. Serialized as `product.lock`.
@@ -19,7 +22,15 @@ import type { SourceId } from "./SourceId";
  * Every collection is in canonical order, fixed by the resolver's final pass, so
  * two runs over the same inputs serialize identically.
  */
-export type ResolvedProduct = { schema_version: number, product: ResolvedProductHeader, kubernetes?: KubernetesSettings | null, 
+export type ResolvedProduct = { 
+/**
+ * Explicit per-gear SQLite choices; these gears are excluded from Postgres.
+ */
+sqlite_databases?: { [key in GearId]: SqliteDatabase }, 
+/**
+ * Complete external database configuration, including resolved per-gear names.
+ */
+database?: PostgresDatabase | null, schema_version: number, product: ResolvedProductHeader, kubernetes?: KubernetesSettings | null, 
 /**
  * Present only for a `self_hosted` profile.
  */
@@ -43,4 +54,4 @@ cuttable_if_declared?: Array<CutCandidate>,
 /**
  * Ordered by source, kind, then target.
  */
-provenance?: Array<ProvenanceEdge>, diagnostics?: Diagnostics, };
+provenance?: Array<ProvenanceEdge>, diagnostics?: Diagnostics, ui?: ResolvedUi | null, };

@@ -19,7 +19,7 @@ use starlark_syntax::lexer::{Lexer, Token};
 use crate::declarative::{dialect, span_to_range};
 
 /// The GDL this reader implements.
-pub const CURRENT: Version = Version { major: 1, minor: 0 };
+pub const CURRENT: Version = Version { major: 1, minor: 2 };
 
 /// A GDL edition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

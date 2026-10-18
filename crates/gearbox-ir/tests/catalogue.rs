@@ -46,6 +46,7 @@ fn source_id() -> SourceId {
 fn gear(id: &str, deps: &[&str], caps: &[RuntimeCap]) -> GearDescriptor {
     let ident = id.replace('-', "_");
     GearDescriptor {
+        ui: None,
         maturity: gearbox_ir::Maturity::Stable,
         one_per_installation: false,
         id: gid(id),

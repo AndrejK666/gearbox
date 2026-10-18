@@ -179,6 +179,13 @@ fn reject_duplicates(product: &ResolvedProduct) -> Result<(), LockError> {
 /// reaches `out_root.join(...)`, and a spawn's `bin_name` becomes a binary the
 /// host starts.
 fn validate(product: &ResolvedProduct) -> Result<(), LockError> {
+    product
+        .validate_database()
+        .map_err(|reason| LockError::InvalidContent {
+            field: "database".to_owned(),
+            reason,
+        })?;
+
     if !gearbox_ir::is_valid_layout(&product.product.layout) {
         return Err(LockError::InvalidContent {
             field: "product.layout".to_owned(),

@@ -27,6 +27,9 @@ static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 /// The gear corpus, when it is checked out beside this repository.
 fn gears_rust() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("GEARBOX_CORPUS_ROOT") {
+        return PathBuf::from(path).canonicalize().ok();
+    }
     let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
     loop {
         let candidate = dir.join("gears-rust");
@@ -61,14 +64,26 @@ fn demo_copy() -> Option<PathBuf> {
     let path = dir.join("product.gdl");
     // The description names its source root as `../../../gears-rust`, so the copy
     // has to sit three levels under the repository's parent, as `products/x/` does.
-    let rewritten = source.replace("../../../gears-rust", "../../../../gears-rust");
+    let rewritten = if std::env::var_os("GEARBOX_CORPUS_ROOT").is_some() {
+        source.replace(
+            "../../../gears-rust",
+            &gearbox_engine::generate::to_slash(&gears_rust()?),
+        )
+    } else {
+        source.replace("../../../gears-rust", "../../../../gears-rust")
+    };
     std::fs::write(&path, rewritten).ok()?;
     Some(path)
 }
 
 fn state() -> Option<State> {
     let root = gears_rust()?;
-    let (roots, failed_roots) = open_roots(&[root]);
+    let (mut roots, failed_roots) = open_roots(&[root]);
+    if std::env::var_os("GEARBOX_CORPUS_ROOT").is_some() {
+        for root in &mut roots {
+            root.id = SourceId::new("gears-rust").unwrap();
+        }
+    }
     Some(State {
         roots,
         registry_plans: BTreeMap::new(),

@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 109, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 110, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -316,7 +316,7 @@ export const DIAGNOSTIC_CATALOGUE: {
     title: "database gear with no database configured",
     severity: "error",
     domain: "topology",
-    docs: "A process contains a database-backed gear but no database is configured.",
+    docs: "A selected gear needs a database but its deployment profile has no usable\nexternal Postgres configuration. This includes gears reached by closure,\ninvalid or colliding database names and missing Kubernetes Secret references.\nConfigure `database = postgres(...)` on the profile; see ADR-0025.\nResolution, lock verification and generation never connect or expand passwords.",
     requiresEvidence: false,
   },
   GBX0307: {
@@ -909,6 +909,14 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "warning",
     domain: "generator",
     docs: "The registry could not be asked at all -- offline, or cargo failed -- so\nevery crate of the source stays a path dependency.",
+    requiresEvidence: false,
+  },
+  GBX0720: {
+    code: "GBX0720",
+    title: "invalid UI composition or package",
+    severity: "error",
+    domain: "generator",
+    docs: "A UI package or composition cannot be built for this product.",
     requiresEvidence: false,
   },
 };

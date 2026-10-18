@@ -40,6 +40,7 @@ const KIND_LANGUAGE: Record<FileKind, string> = {
   dockerfile: "dockerfile",
   shell: "shell",
   text: "plaintext",
+  binary: "plaintext", // Binary plans have preview_available = false.
 };
 
 /** Pixels per tree level. */

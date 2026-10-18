@@ -21,6 +21,9 @@ use std::path::{Path, PathBuf};
 /// version used -- so a stray directory of that name higher up is still not
 /// mistaken for the corpus.
 pub fn corpus_root() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("GEARBOX_CORPUS_ROOT") {
+        return PathBuf::from(path).canonicalize().ok();
+    }
     let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
     loop {
         let candidate = dir.join("gears-rust");

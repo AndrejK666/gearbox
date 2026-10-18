@@ -8,4 +8,4 @@
  * to syntax-highlight a preview would be re-deriving a decision the generator
  * already made.
  */
-export type FileKind = "rust" | "toml" | "yaml" | "json" | "dockerfile" | "shell" | "text";
+export type FileKind = "rust" | "toml" | "yaml" | "json" | "dockerfile" | "shell" | "text" | "binary";

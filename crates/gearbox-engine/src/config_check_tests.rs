@@ -54,6 +54,7 @@ fn catalogue() -> Catalogue {
 
 fn demo_descriptor() -> GearDescriptor {
     GearDescriptor {
+        ui: None,
         maturity: gearbox_ir::Maturity::Stable,
         one_per_installation: false,
         id: GearId::new("demo").unwrap(),
@@ -113,6 +114,7 @@ fn intent(key: &str, value: serde_json::Value) -> ProductIntent {
     };
     selection.config.insert(key.to_owned(), value);
     ProductIntent {
+        ui: None,
         templates: None,
         layout: None,
         id: "fixture".to_owned(),
@@ -123,6 +125,8 @@ fn intent(key: &str, value: serde_json::Value) -> ProductIntent {
         profiles: [(
             dev.clone(),
             gearbox_ir::DeploymentProfileDecl::Embedded {
+                database: None,
+                sqlite_databases: BTreeMap::new(),
                 id: dev.clone(),
                 declared_at: None,
             },

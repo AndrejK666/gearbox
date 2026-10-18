@@ -70,6 +70,25 @@ macro_rules! gdl_record {
 }
 
 gdl_record! {
+    /// `ui_module(package = path(...), requires = [...])`
+    UiModuleRecord as "gdl_ui_module" {
+        pub package: String,
+        pub requires: Vec<String>,
+    }
+}
+
+gdl_record! {
+    /// `ui_product(shell = path(...), sdk = path(...), modules = [...])`
+    UiProductRecord as "gdl_ui_product" {
+        pub shell: String,
+        pub sdk: String,
+        pub modules: Vec<String>,
+        #[allocative(skip)]
+        pub source: Option<gearbox_ir::SourceId>,
+    }
+}
+
+gdl_record! {
     /// `cargo(crate = ..., lib = ..., path = ..., features = [...], link = [...])`
     ///
     /// `lib` is mandatory rather than derived from `crate`: a crate with no
@@ -440,8 +459,19 @@ gdl_record! {
 }
 
 gdl_record! {
+    /// `postgres(...)`: a validated external database connection.
+    PostgresRecord as "gdl_postgres" {
+        #[allocative(skip)]
+        pub settings: gearbox_ir::PostgresDatabase,
+    }
+}
+
+gdl_record! {
     /// `embedded(...)`, `self_hosted(...)` or `kubernetes(...)`.
     ProfileRecord as "gdl_profile" {
+        pub database: Option<PostgresRecord>,
+        #[allocative(skip)]
+        pub sqlite_databases: std::collections::BTreeMap<gearbox_ir::GearId, gearbox_ir::SqliteDatabase>,
         /// `embedded`, `self-hosted` or `kubernetes`.
         pub kind: String,
         pub id: String,
@@ -537,6 +567,7 @@ gdl_record! {
     ApplicationRecord as "gdl_application" {
         pub name: String,
         pub anchor: String,
+        pub include: Vec<String>,
         /// Which of the anchor's declared roles this application runs as.
         ///
         /// The product's half of the join: the gear says which roles exist, the

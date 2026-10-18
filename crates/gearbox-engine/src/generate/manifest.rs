@@ -7,7 +7,7 @@
 //! most likely way for a generated manifest to fail, and it fails at parse time
 //! with a message about workspace inheritance rather than about editions.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use gearbox_ir::{FileEntry, FileKind, GearId, Ownership, ResolvedApplication, ResolvedGear};
@@ -194,6 +194,45 @@ fn dependencies(
             default_features: None,
         },
     );
+
+    // Enable only the database drivers actually selected for this application.
+    let database_features: BTreeSet<_> = application
+        .gears
+        .iter()
+        .filter(|id| {
+            input
+                .lock
+                .gears
+                .get(*id)
+                .is_some_and(|gear| gear.runtime_caps.contains(&gearbox_ir::RuntimeCap::Db))
+        })
+        .map(|id| {
+            if input.lock.sqlite_databases.contains_key(id) {
+                "sqlite".to_owned()
+            } else {
+                "pg".to_owned()
+            }
+        })
+        .collect();
+    if !database_features.is_empty() {
+        let (version, registry, path) = located(
+            input,
+            "cf-gears-toolkit-db",
+            crate_dir,
+            &anchor_root.join("libs/toolkit-db"),
+        );
+        dependencies.insert(
+            "toolkit_db".to_owned(),
+            Dependency {
+                package: Some("cf-gears-toolkit-db".to_owned()),
+                version,
+                registry,
+                path,
+                features: database_features.into_iter().collect(),
+                default_features: None,
+            },
+        );
+    }
 
     for (name, dependency) in runtime_deps() {
         dependencies.insert(name.to_owned(), dependency);

@@ -11,21 +11,17 @@
     reason = "clippy.toml's allow-unwrap-in-tests covers #[test] fns but not the helpers here"
 )]
 
-use std::path::Path;
-
 use gearbox_engine::{Continue, LoadEvent, SourceRoot, load_catalogue, load_catalogue_staged};
 use gearbox_ir::{LoadStage, SourceId};
 
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn root() -> Option<SourceRoot> {
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let root = loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            break candidate.canonicalize().ok()?;
-        }
-        dir = dir.parent()?;
-    };
-    SourceRoot::open(SourceId::new("gears-rust").unwrap(), root).ok()
+    corpus_support::root().map(|root| {
+        SourceRoot::open(SourceId::new("gears-rust").unwrap(), root)
+            .unwrap_or_else(|error| panic!("gears-rust corpus: {error}"))
+    })
 }
 
 macro_rules! require {

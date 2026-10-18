@@ -8,6 +8,7 @@ import type { EndpointDecl } from "./EndpointDecl";
 import type { ExtensionPointDecl } from "./ExtensionPointDecl";
 import type { GearDocs } from "./GearDocs";
 import type { GearId } from "./GearId";
+import type { GearUi } from "./GearUi";
 import type { GitOrigin } from "./GitOrigin";
 import type { GtsTypeDecl } from "./GtsTypeDecl";
 import type { Implementation } from "./Implementation";
@@ -212,4 +213,4 @@ gts_types?: Array<GtsTypeDecl>,
 /**
  * Where `gear(...)` was written in this gear's description.
  */
-declared_at?: Location | null, };
+declared_at?: Location | null, ui?: GearUi | null, };

@@ -64,6 +64,7 @@ pub struct GearDecl {
     /// Located only. They sit beside `sdk` rather than replacing it because
     /// the Rust one is the one the projector reads.
     pub other_sdks: Vec<crate::records::PackageRecord>,
+    pub ui: Option<crate::records::UiModuleRecord>,
     /// The points this gear lets plugins fill, keyed by GTS spec segment.
     pub extension_points: Vec<crate::records::ExtensionPointRecord>,
     /// The spec segment of the point this gear implements, when it is a plugin.
@@ -118,6 +119,7 @@ impl GearDecl {
 /// validating ids and profile references on the way.
 #[derive(Debug, Clone, Default)]
 pub struct ProductDecl {
+    pub ui: Option<crate::records::UiProductRecord>,
     pub id: String,
     pub display_name: String,
     pub version: String,

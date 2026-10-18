@@ -5,6 +5,7 @@ import type { ClusterScopeIntent } from "./ClusterScopeIntent";
 import type { DeploymentProfileDecl } from "./DeploymentProfileDecl";
 import type { GearSelection } from "./GearSelection";
 import type { Preference } from "./Preference";
+import type { ProductUi } from "./ProductUi";
 import type { ProfileId } from "./ProfileId";
 import type { RelPath } from "./RelPath";
 import type { SourceDecl } from "./SourceDecl";
@@ -48,4 +49,4 @@ layout?: string | null, profiles: { [key in ProfileId]: DeploymentProfileDecl },
 /**
  * The gears asked for directly. Their co-location closures bring in more.
  */
-selected_gears: Array<GearSelection>, bindings?: Array<BindingIntent>, cluster_scopes?: Array<ClusterScopeIntent>, application_pins?: Array<ApplicationPin>, preferences?: Array<Preference>, };
+selected_gears: Array<GearSelection>, bindings?: Array<BindingIntent>, cluster_scopes?: Array<ClusterScopeIntent>, application_pins?: Array<ApplicationPin>, preferences?: Array<Preference>, ui?: ProductUi | null, };

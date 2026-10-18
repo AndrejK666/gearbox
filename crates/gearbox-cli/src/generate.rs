@@ -352,6 +352,17 @@ mod tests {
         assert!(!out.exists(), "the refusal came after a write");
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_plain_and_verbatim_output_roots_agree_before_creation() {
+        let dir = scratch("windows-canonical");
+        let plain = dir.join("missing").join("app");
+        let canonical = dir.canonicalize().unwrap().join("missing").join("app");
+        assert_eq!(absolute(plain.clone()).unwrap(), canonical);
+        assert_eq!(absolute(canonical.clone()).unwrap(), canonical);
+        assert!(!plain.exists());
+    }
+
     /// An output root reached through a symlink is the directory it points at,
     /// even before it exists: relative dependency paths are counted from it.
     #[cfg(unix)]

@@ -133,8 +133,24 @@ fn header(gearbox_version: &str) -> String {
 /// # Errors
 /// Returns [`LockError::UnsupportedSchemaVersion`] if `product.schema_version`
 /// is not one this build understands, or [`LockError::Serialize`] if the
-/// product cannot be represented as TOML.
+/// product cannot be represented as TOML, or [`LockError::InvalidContent`] when
+/// database settings contain literal credentials or invalid connection fields.
 pub fn write_canonical(product: &ResolvedProduct) -> Result<String, LockError> {
+    for (id, sqlite) in &product.sqlite_databases {
+        sqlite
+            .validate()
+            .map_err(|reason| LockError::InvalidContent {
+                field: format!("sqlite_databases.{id}"),
+                reason,
+            })?;
+    }
+    if let Some(db) = &product.database {
+        db.validate().map_err(|reason| LockError::InvalidContent {
+            field: "database".to_owned(),
+            reason,
+        })?;
+    }
+
     if product.schema_version != LOCK_SCHEMA_VERSION {
         return Err(LockError::UnsupportedSchemaVersion {
             found: product.schema_version,

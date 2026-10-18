@@ -35,6 +35,7 @@ pub fn source() -> SourceId {
 /// case rather than inherited from a fixture.
 pub fn descriptor(id: &str) -> GearDescriptor {
     GearDescriptor {
+        ui: None,
         maturity: gearbox_ir::Maturity::Stable,
         one_per_installation: false,
         id: gid(id),
@@ -83,6 +84,7 @@ pub fn descriptor(id: &str) -> GearDescriptor {
 pub fn intent(gears: &[&str]) -> ProductIntent {
     let dev = ProfileId::new("dev").unwrap();
     ProductIntent {
+        ui: None,
         templates: None,
         layout: None,
         id: "fixture".to_owned(),
@@ -93,6 +95,8 @@ pub fn intent(gears: &[&str]) -> ProductIntent {
         profiles: [(
             dev.clone(),
             gearbox_ir::DeploymentProfileDecl::Embedded {
+                database: None,
+                sqlite_databases: BTreeMap::new(),
                 id: dev.clone(),
                 declared_at: None,
             },
@@ -328,6 +332,8 @@ pub fn self_hosted_intent(gears: &[&str]) -> ProductIntent {
     intent.profiles.insert(
         local.clone(),
         gearbox_ir::DeploymentProfileDecl::SelfHosted {
+            database: None,
+            sqlite_databases: BTreeMap::new(),
             id: local,
             host: gearbox_ir::ApplicationId::new("gateway").unwrap(),
             discovery: gearbox_ir::Discovery::Static,
@@ -371,6 +377,8 @@ pub fn self_hosted(
     intent.profiles.insert(
         local.clone(),
         gearbox_ir::DeploymentProfileDecl::SelfHosted {
+            database: None,
+            sqlite_databases: BTreeMap::new(),
             id: local,
             host: gearbox_ir::ApplicationId::new("host").unwrap(),
             discovery,
@@ -389,6 +397,8 @@ pub fn kubernetes(gears: &[&str], discovery: gearbox_ir::Discovery) -> ProductIn
     intent.profiles.insert(
         prod.clone(),
         gearbox_ir::DeploymentProfileDecl::Kubernetes {
+            database: None,
+            sqlite_databases: BTreeMap::new(),
             id: prod,
             discovery,
             namespace: None,
@@ -429,6 +439,7 @@ pub fn pin_role(
     intent.application_pins.push(gearbox_ir::ApplicationPin {
         name: gearbox_ir::ApplicationId::new(name).unwrap(),
         anchor: gid(anchor),
+        include: BTreeSet::new(),
         role: role.map(str::to_owned),
         replicas,
         profiles: BTreeSet::new(),

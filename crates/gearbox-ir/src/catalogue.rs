@@ -632,6 +632,8 @@ pub struct GearDescriptor {
     /// Where `gear(...)` was written in this gear's description.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_at: Option<crate::diagnostics::Location>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<crate::ui::GearUi>,
 }
 
 /// How far a gear has got through a staged catalogue load.

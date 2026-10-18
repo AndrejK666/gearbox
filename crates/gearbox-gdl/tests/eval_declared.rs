@@ -24,6 +24,20 @@ fn identity() -> FileIdentity {
     }
 }
 
+#[test]
+fn ui_is_an_optional_package_locator_with_backend_requirements() {
+    let (decl, codes) = eval(&format!(
+        "gear(maturity = \"preview\", {PKG}, ui = ui_module(package = path(\"../ui\"), requires = [\"settings-service\"]))"
+    ));
+    assert!(codes.is_empty(), "{codes:?}");
+    let ui = decl.unwrap().ui.unwrap();
+    assert_eq!(ui.package, "../ui");
+    assert_eq!(ui.requires, ["settings-service"]);
+    assert!(!diagnostics_of(&format!(
+        "gear(maturity = \"preview\", {PKG}, ui = ui_module(package = git(url = \"https://example.com/ui\")))"
+    )).is_empty(), "generation never fetches or executes UI packages");
+}
+
 fn eval(src: &str) -> (Option<GearDecl>, Vec<DiagnosticCode>) {
     let out = GdlEngine::new().eval_gear(&identity(), src);
     let codes = out.diagnostics.iter().map(|d| d.code).collect();
@@ -695,7 +709,7 @@ fn a_newer_minor_is_read_and_says_so_only_if_it_fails() {
     ));
     let help = diagnostics[0].help.as_deref().unwrap_or_default();
     assert!(
-        help.contains("written for GDL 1.7, and this Gearbox reads GDL 1.0"),
+        help.contains("written for GDL 1.7, and this Gearbox reads GDL 1.2"),
         "{diagnostics:?}"
     );
 }
@@ -730,7 +744,7 @@ fn a_version_is_major_and_minor() {
             diagnostics[0]
                 .help
                 .as_deref()
-                .is_some_and(|h| h.contains("gdl_version = \"1.0\"")),
+                .is_some_and(|h| h.contains("gdl_version = \"1.2\"")),
             "{bad}: {diagnostics:?}"
         );
     }

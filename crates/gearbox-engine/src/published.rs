@@ -257,6 +257,20 @@ pub fn for_product(
                 dir: toolkit,
             });
         }
+        // The generated application's direct dependency enables the Postgres
+        // backend. Plan it alongside toolkit so a registry build does not mix
+        // a published toolkit's DB types with a second checkout copy.
+        let toolkit_db = root.join("libs/toolkit-db");
+        if lock.database.is_some()
+            && lock.applications.iter().any(|app| app.needs_db)
+            && toolkit_db.join("Cargo.toml").is_file()
+            && !list.iter().any(|c| c.crate_name == "cf-gears-toolkit-db")
+        {
+            list.push(Candidate {
+                crate_name: "cf-gears-toolkit-db".to_owned(),
+                dir: toolkit_db,
+            });
+        }
     }
     for (registry, candidates) in by_registry {
         let (one, found) = self::plan(registry, &candidates, &cache_dir.join(registry));

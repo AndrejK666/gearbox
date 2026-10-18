@@ -66,6 +66,23 @@ fn a_minimal_product_evaluates() {
 }
 
 #[test]
+fn product_ui_explicitly_selects_modules_and_package_paths() {
+    let (intent, codes, messages) = eval(&product(
+        "ui = ui_product(shell = path(\"../../ui/shell\"), sdk = path(\"../../ui/sdk\"), modules = [\"settings-service\"]),",
+    ));
+    assert!(codes.is_empty(), "{codes:?} {messages}");
+    let ui = intent.unwrap().ui.unwrap();
+    assert_eq!(ui.shell, "../../ui/shell");
+    assert_eq!(
+        ui.modules
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>(),
+        ["settings-service"]
+    );
+}
+
+#[test]
 fn use_gear_on_the_third_line_records_line_two() {
     // 0-based: a call written on the third source line must not claim the start
     // of the file. That is the unit proof behind "the link opens on use_gear".
@@ -832,4 +849,41 @@ product(
 "#;
     let (intent, codes, messages) = eval(src);
     assert!(intent.is_some(), "{codes:?} {messages}");
+}
+
+#[test]
+fn postgres_is_typed_in_every_deployment_profile() {
+    for constructor in [
+        r#"embedded(id = "dev", database = DB)"#,
+        r#"self_hosted(id = "dev", host = "host", worker_discovery = "static", database = DB)"#,
+        r#"kubernetes(id = "dev", discovery = "static", database = DB)"#,
+    ] {
+        let source = format!(r#"product(id = "demo", version = "0.1.0", sources = [source(id = "local", at = path("."))], profiles = [{constructor}], default_profile = "dev", gears = [])"#)
+            .replace("DB", r#"postgres(host = "db.example.com", user = "app", password = "${PG_PASSWORD}")"#);
+        let (intent, _, messages) = eval(&source);
+        let intent = intent.unwrap_or_else(|| panic!("{messages}"));
+        let db = intent.profiles[&ProfileId::new("dev").unwrap()]
+            .database()
+            .unwrap();
+        assert_eq!(db.port, 5432);
+        assert_eq!(db.password_env(), Some("PG_PASSWORD"));
+    }
+}
+
+#[test]
+fn postgres_refuses_literal_defaulted_passwords_and_invalid_connections() {
+    for database in [
+        r#"postgres(host = "db", user = "app", password = "literal")"#,
+        r#"postgres(host = "db", user = "app", password = "${PG_PASSWORD:-literal}")"#,
+        r#"postgres(host = "db", user = "app", password = "${PG_PASSWORD}", port = 0)"#,
+        r#"postgres(host = "db", user = "app", password = "${PG_PASSWORD}", port = 65536)"#,
+        r#"postgres(host = "", user = "app", password = "${PG_PASSWORD}")"#,
+        r#"postgres(host = "db", user = "app", password = "${PG_PASSWORD}", database_names = {"some-gear": "Bad-name"})"#,
+        r#"postgres(host = "db", user = "app", password = "${PG_PASSWORD}", existing_secret = "Bad/Secret")"#,
+    ] {
+        let source = format!(
+            r#"product(id = "demo", version = "0.1.0", sources = [source(id = "local", at = path("."))], profiles = [embedded(id = "dev", database = {database})], default_profile = "dev", gears = [])"#
+        );
+        assert!(eval(&source).0.is_none(), "accepted {database}");
+    }
 }

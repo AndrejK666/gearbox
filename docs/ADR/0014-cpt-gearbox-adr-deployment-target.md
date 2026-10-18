@@ -367,3 +367,14 @@ all are deliberately left alone here.
    (`product_intent.rs:490-527`), unlike plugins, bindings and cluster scopes, so
    duplicate pins are caught only after narrowing
    (`resolve/profile.rs:83-89`).
+
+
+## Amendment 2026-10-18: Windows output path spelling
+
+CLI output roots canonicalize their nearest existing ancestor before generation,
+including when the destination does not exist. Pure path arithmetic also treats
+ordinary and verbatim forms of the same Windows disk or UNC root as equivalent.
+Different drives or UNC shares/servers have no relative path or common Docker
+context. Absolute dependency fallback renders one separator after the drive,
+without a verbatim namespace prefix. None of this performs filesystem I/O inside
+the generator or relaxes RPC write ownership boundaries (issues #3 and #2).

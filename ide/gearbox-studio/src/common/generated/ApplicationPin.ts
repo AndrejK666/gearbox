@@ -7,14 +7,19 @@ import type { ProfileId } from "./ProfileId";
 /**
  * An explicitly requested application.
  *
- * Only needed to name or replicate an application; the resolver derives the partition
- * on its own otherwise.
+ * Names, replicates or adds process-local services to an application; the
+ * resolver derives the partition on its own otherwise.
  */
 export type ApplicationPin = { name: ApplicationId, 
 /**
  * The gear whose co-location closure this application is built from.
  */
 anchor: GearId, 
+/**
+ * Additional gears from the product closure to co-locate in this process.
+ * Their dependencies and selected plugins are included as well.
+ */
+include?: Array<GearId>, 
 /**
  * Which of the anchor's declared roles this application runs as.
  *

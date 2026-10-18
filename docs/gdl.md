@@ -63,6 +63,142 @@ Not refused, but outside the grammar above: arithmetic (`"a" + "b"`, `8000 + 80`
 
 ---
 
+## UI composition (GDL 1.2)
+
+UI composition is optional and available in GDL 1.2. A gear locates its UI
+source package and states the backends it needs:
+
+```python
+gear(
+    # Existing Rust package and other declarations...
+    ui = ui_module(package = path("../ui"), requires = ["settings-service"]),
+)
+```
+
+A product explicitly selects modules and locates its shell and shared SDK:
+
+```python
+ui = ui_product(
+    source = "gears-rust",
+    shell = path("ui/product-shell"),
+    sdk = path("ui/ui-sdk"),
+    modules = ["settings-service"],
+)
+```
+
+With `source`, package paths resolve through the supplied source root, so checkout
+folder names do not enter UI locators. Without `source`, paths are relative to
+the product description. These are directory locators. npm names, versions and exports come from each
+`package.json`. Packages declare `gearsUi.apiVersion = 1` and kind `sdk`, `shell`
+or `module`. Modules export `./plugin` from a file under `src/`; SDK and shell
+export `.`. Shell and modules declare a compatible SDK peer (`^1.0.0` for SDK
+1.x). The current source-package format accepts numeric `major.minor.patch`
+versions and string exports. Runtime module federation is not used.
+
+The resolver rejects missing backend gears. Generation validates package
+metadata and export files without executing JavaScript, then emits the frontend
+workspace, module registry, nginx, Dockerfile and
+Kubernetes UI resources. `product.lock` schema 3 records the UI composition;
+`ui/ui.lock.json` records projected package identities, exports and content
+hashes beside the parent product lock hash. npm's generated `package-lock.json`
+pins third-party dependencies for `npm ci` in the prepared bundle. Product preparation
+supplies `public/runtime-config.json`; generation does not overwrite it. Products
+without UI declarations continue to generate only their existing backend
+artifacts. Resolve older locks again to write schema 3.
+
+Firebase Web SDK configuration belongs in the prepared product's public runtime
+configuration. User mappings, bearer tokens and private assets do not belong in
+GDL or UI source packages.
+
+## External database (GDL 1.1)
+
+Each `embedded`, `self_hosted` and `kubernetes` profile accepts an optional
+`database = postgres(...)`. The connection is deployment intent, independent of
+cluster provider options and of each gear's own `config` bag.
+
+```python
+embedded(
+    id = "dev",
+    database = postgres(
+        host = "127.0.0.1",
+        user = "app",
+        password = "${GEARS_PG_PASSWORD}",
+        port = 5432,
+        params = {"sslmode": "disable"},
+        database_names = {"resource-group": "resource_group"},
+    ),
+)
+```
+
+`host`, `user` and `password` are required. The port defaults to 5432 and must be
+1..65535. Passwords must be a single `${ENV_NAME}` reference (uppercase ASCII,
+digits and underscores, not starting with a digit); literals and `${VAR:-default}`
+are refused. Resolution and generation never expand the reference.
+
+`params` is a string-to-string map of runtime Postgres connection parameters.
+`database_names` overrides database names by selected DB-gear id; entries for
+unselected or non-DB gears are errors. Otherwise the name replaces the gear id's
+hyphens with underscores. Names must be unique, 1..63 lowercase ASCII letters,
+digits or underscores and start with a letter or underscore. Long ids require an
+override; names are never silently truncated or shared.
+
+A selected gear with projected `cap.db` requires the selected profile to configure
+a database (**GBX0306**). This includes gears pulled in by dependency closure.
+The lock records every resolved database name; generation writes
+`database.servers.pg` and `gears.<id>.database = {server: pg, dbname: ...}` only in
+processes that execute the DB gear. A host entry that only spawns a DB worker
+gets no connection for that worker.
+
+For Kubernetes add `existing_secret = "app-db"` to `postgres(...)`. The existing
+Secret must contain a key with the same name as the password environment variable.
+Each DB-using subchart exposes `database.existingSecret` and `database.passwordEnv`
+in its values/schema and injects that key through `secretKeyRef`, independently
+of cluster-provider `existingSecret`/`secretKeys`. Generated files contain only
+references. The operator provisions Postgres, each named database and the Secret;
+Gearbox creates none of them and bundles no database chart.
+
+### Per-gear SQLite platform databases
+
+Every profile also accepts `sqlite_databases`, mapping selected DB-gear ids to
+relative files. This explicitly selects SQLite for those gears; remaining DB
+gears use the profile's Postgres connection. A SQLite-only product needs no
+Postgres declaration.
+
+```python
+kubernetes(
+    id = "demo", discovery = "static", namespace = "gearbox-demo",
+    database = postgres(
+        host = "host.minikube.internal", user = "demo",
+        password = "${GEARS_PG_PASSWORD}", existing_secret = "demo-db",
+    ),
+    sqlite_databases = {"event-broker": "metadata.sqlite3"},
+)
+```
+
+The file lives below `server.home_dir/<gear-id>/`: in this example,
+`/var/lib/gearbox/event-broker/metadata.sqlite3` in Kubernetes. Absolute paths,
+parent traversal, DSNs, environment references and `:memory:` are refused.
+The gear's generated database section contains only `engine: sqlite` and `file`;
+it inherits no Postgres connection fields. SQLite gears are excluded from
+`database_names` and Postgres password injection. Explicitly naming the same
+gear in both mappings is an error. Cargo enables the drivers actually used by
+each application. IR, canonical locks, lock diffs and generated TypeScript
+record the SQLite selection. Empty mappings are omitted, preserving old locks.
+
+A SQLite gear must have exactly one application and one replica. Its Helm
+values default to `Recreate` and `homeVolume.type: persistentVolumeClaim`.
+Set `homeVolume.claimName` to an existing claim before rendering or deployment.
+The generated values schema rejects `emptyDir`, a missing claim, multiple
+replicas and a rolling update strategy for that application. The operator
+provisions and retains the PVC; Gearbox never removes it on regeneration.
+
+This extends GDL 1.0 additively: older descriptions still parse; DB-backed products
+must add a connection before they can resolve successfully. Generated locks use
+schema 2. Schema-1 locks are refused with instructions to run `gearbox resolve`;
+there is no implicit upgrade or change to their recorded hash.
+
+---
+
 ## Namespaces
 
 A missing member is an attribute error, not a string.
@@ -564,12 +700,12 @@ A `registry` source is the registry itself rather than one package, so a product
 ### Deployment profiles
 
 ```
-embedded(id)
-self_hosted(id, host, worker_discovery, target_dir?, cargo_profile?)
-kubernetes(id, discovery, namespace?, image_registry?)
+embedded(id, database?)
+self_hosted(id, host, worker_discovery, target_dir?, cargo_profile?, database?)
+kubernetes(id, discovery, namespace?, image_registry?, database?)
 ```
 
-`id` is kebab-case. Duplicate ids are **GBX0110**. `worker_discovery` / `discovery` is `"static"` or `"directory"`, and nothing else. `host` is an application name, kebab-case. `cargo_profile` is a single path segment: `dev`, `release`, or a custom Cargo profile. `dev` writes under `target/debug`. `target_dir` is the Cargo target directory the host spawns workers out of, **as written** and relative to the description; a `self_hosted` profile without one cannot say where a worker binary is, which is **GBX0310**. On `kubernetes`, `namespace` and `image_registry` prefix what the chart deploys and where it pulls from; both are optional and both end up in the generated values rather than in the lock.
+`id` is kebab-case. Duplicate ids are **GBX0110**. `worker_discovery` / `discovery` is `"static"` or `"directory"`, and nothing else. `host` is an application name, kebab-case. `cargo_profile` is a single path segment: `dev`, `release`, or a custom Cargo profile. `dev` writes under `target/debug`. `target_dir` is the Cargo target directory the host spawns workers out of, **as written** and relative to the description; a `self_hosted` profile without one cannot say where a worker binary is, which is **GBX0310**. On `kubernetes`, `namespace` and `image_registry` prefix what the chart deploys and where it pulls from; both are optional, recorded in the lock and used to derive the generated deployment artifacts.
 
 ### Gears
 
@@ -581,6 +717,10 @@ use_gear("gear-id", source, version?, package?, features = [], config = {}, plug
 Only the gear id is positional: `use_gear("api-gateway", source = "gears-rust")`. `source` names a `source(id = ...)`. `version` and `package` are registry-only; on `path`/`git` they are an error. `config` is a map of JSON-shaped values (string, number, bool, list, map; no `None`, no records; nesting ≤ 32). Keys must be fields the gear actually declares (**GBX0115**) and types must match (**GBX0113**). Both are checked against `config_schema`, so a gear that declares none has no field list to check against. A field Rust declares secret (`secrecy::SecretString`) may hold only `"${UPPER_NAME}"`, naming an environment variable the generator reads; a literal is **GBX0116**, and so is `"${VAR:-default}"`, because the default half is a live value.
 
 `plugin` names an implementing gear. Which extension point it fills comes from the catalogue. The same implementation twice for one host in one profile is **GBX0110**.
+
+Selected plugins follow their host into every application that contains that
+host, including hosts pulled in as dependencies. Attachment determines process
+membership; initialization order still follows the gears' actual dependencies.
 
 ### Bindings
 
@@ -602,13 +742,26 @@ cluster_profile(name, cache, leader_election?, lock?, profiles = [])
 ### Topology and preferences
 
 ```
-application("name", anchor, role?, replicas = 1, profiles = [])
+application("name", anchor, include = [], role?, replicas = 1, profiles = [])
 prefer.existing_infrastructure()
 prefer.fewer_applications()
 prefer.isolate(gear = "api-gateway")
 ```
 
 Only the application name is positional: `application("audit", anchor = "api-contracts-consumer")`. `anchor` is a kebab gear id. `role` names one of the anchor gear's `role(...)` declarations; omit it for the gear's default shape. `replicas` must be ≥ 1.
+
+For a REST host anchor, a pin without `role` names and configures the host
+application itself. It does not create a second worker containing that host.
+
+`include` co-locates additional gears already present in the product closure,
+including their dependencies and selected plugins. For example,
+`application("settings-worker", anchor = "settings-service", include = ["authn-resolver"])`
+gives the worker its own authentication stack for bearer re-validation. This
+does not add a lifecycle dependency to the Settings gear. An unknown or
+unselected included gear is refused before generation.
+An explicitly included worker gear is not also seeded into the default host.
+It can still appear in both processes when a host dependency or host `include`
+requires it there.
 
 ### `product(...)`
 
@@ -785,10 +938,15 @@ product(
     layout = "apps",
     sources = [source(id = "gears-rust", at = path("../../../gears-rust"))],
     profiles = [
-        embedded(id = "dev"),
+        embedded(id = "dev", database = postgres(host = "127.0.0.1", user = "postgres",
+                    password = "${GEARS_PG_PASSWORD}", params = {"sslmode": "disable"})),
         self_hosted(id = "local", host = "gateway", worker_discovery = "directory",
-                    target_dir = "../../../gears-rust/target"),
-        kubernetes(id = "prod", discovery = "static", namespace = "payments"),
+                    target_dir = "../../../gears-rust/target",
+                    database = postgres(host = "127.0.0.1", user = "postgres",
+                        password = "${GEARS_PG_PASSWORD}", params = {"sslmode": "disable"})),
+        kubernetes(id = "prod", discovery = "static", namespace = "payments",
+                    database = postgres(host = "postgres.example.com", user = "payments",
+                        password = "${GEARS_PG_PASSWORD}", existing_secret = "payments-db")),
     ],
     default_profile = "dev",
     gears = [

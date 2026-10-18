@@ -15,10 +15,12 @@ pub mod closure;
 pub mod cluster;
 pub mod cluster_options;
 pub mod cuts;
+pub mod database;
 pub mod partition;
 pub mod product;
 pub mod profile;
 pub mod structural;
+mod ui;
 
 use std::collections::BTreeSet;
 
@@ -48,6 +50,10 @@ fn unknown_profile(intent: &ProductIntent, profile: &ProfileId, uri: &str) -> Di
 
 /// Everything one resolution produced.
 pub struct Resolution {
+    pub ui: Option<gearbox_ir::ui::ResolvedUi>,
+    pub database: Option<gearbox_ir::PostgresDatabase>,
+    pub sqlite_databases:
+        std::collections::BTreeMap<gearbox_ir::GearId, gearbox_ir::SqliteDatabase>,
     /// Which profile this is for.
     pub profile: ProfileId,
     /// The closure of gears, with why each is present.
@@ -123,6 +129,10 @@ pub fn resolve_at(
         &uri,
         &mut diagnostics,
     );
+
+    let database = intent.profiles.get(profile).and_then(|declaration| {
+        database::resolve(catalogue, &closure, declaration, &uri, &mut diagnostics)
+    });
 
     // Step 3 -- which edges could carry a boundary.
     let cuts = cuts::classify(catalogue, &closure, &uri, &mut diagnostics);
@@ -206,6 +216,7 @@ pub fn resolve_at(
         );
         // Step 5 -- what the runtime will refuse, said before a binary exists.
         structural::check(catalogue, &partition, declaration, &uri, &mut diagnostics);
+        database::check_sqlite_placement(&partition, declaration, &uri, &mut diagnostics);
         partition
     } else {
         diagnostics.push(unknown_profile(intent, profile, &uri));
@@ -241,8 +252,16 @@ pub fn resolve_at(
     );
     cluster::report_stateful_replicas(catalogue, &partition, &cluster, &uri, &mut diagnostics);
 
+    let ui = ui::resolve(catalogue, intent, &closure, &uri, &mut diagnostics);
     diagnostics.finish();
     Resolution {
+        ui,
+        database,
+        sqlite_databases: intent
+            .profiles
+            .get(profile)
+            .map(|decl| decl.sqlite_databases().clone())
+            .unwrap_or_default(),
         profile: profile.clone(),
         closure,
         cuts,

@@ -9,7 +9,7 @@ pub enum LockError {
     /// future format; refusing is the safe failure.
     #[error(
         "product.lock schema_version {found} is not supported by this build \
-         (supports {supported}); regenerate it with a matching gearbox version"
+         (supports {supported}); run `gearbox resolve` to regenerate it with this gearbox version"
     )]
     UnsupportedSchemaVersion { found: u32, supported: u32 },
 

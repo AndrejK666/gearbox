@@ -824,6 +824,23 @@ atomically on each resolution.
 - **Rationale**: A diagnostic nobody sees is a diagnostic nobody acts on; stale markers are worse
   than none.
 
+### External database configuration
+
+- `p1` - **ID**: `cpt-gearbox-fr-external-database`
+
+A selected database-backed gear, including one reached by closure, **MUST** have
+a Postgres connection on the selected deployment profile. Otherwise resolution
+reports GBX0306 naming the gear and profile. The lock **MUST** record the server
+and unique database names. Generated AppConfig configures only each process's
+own DB gears. Kubernetes **MUST** inject password references from an existing
+Secret independently of cluster-provider secrets. Credentials **MUST NOT** be
+expanded into generated artifacts. External servers and databases remain
+operator-provisioned; bundled database subcharts remain out of scope.
+
+- **Verification**: GDL validation, resolve/lock/YAML/Helm regression tests,
+  real toolkit-db deserialization and an external-Postgres runtime check.
+- **Architecture**: ADR-0025; exact API and schema-1 migration in `docs/gdl.md`.
+
 ## 6. Non-Functional Requirements
 
 Baselines: [`gears-rust/docs/ARCHITECTURE_MANIFEST.md`](../../gears-rust/docs/ARCHITECTURE_MANIFEST.md).

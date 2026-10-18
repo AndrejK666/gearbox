@@ -72,6 +72,75 @@ pub fn files(input: &GenerateInput<'_>, files: &FileSet) -> Result<Vec<FileEntry
     Ok(out)
 }
 
+#[derive(serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[schemars(deny_unknown_fields)]
+struct DatabaseSecretValues {
+    existing_secret: String,
+    password_env: String,
+}
+
+fn database_secret(
+    application: &ResolvedApplication,
+    input: &GenerateInput<'_>,
+) -> Result<Option<DatabaseSecretValues>, GenerateError> {
+    if !application.gears.iter().any(|id| {
+        input
+            .lock
+            .gears
+            .get(id)
+            .is_some_and(|gear| gear.runtime_caps.contains(&gearbox_ir::RuntimeCap::Db))
+            && !input.lock.sqlite_databases.contains_key(id)
+    }) {
+        return Ok(None);
+    }
+    let db = input
+        .lock
+        .database
+        .as_ref()
+        .ok_or_else(|| GenerateError::Database("missing Postgres settings".to_owned()))?;
+    db.validate().map_err(GenerateError::Database)?;
+    Ok(Some(DatabaseSecretValues {
+        existing_secret: db.existing_secret.clone().ok_or_else(|| {
+            GenerateError::Database("Kubernetes postgres requires existing_secret".to_owned())
+        })?,
+        password_env: db
+            .password_env()
+            .ok_or_else(|| {
+                GenerateError::Database(
+                    "password must reference an environment variable".to_owned(),
+                )
+            })?
+            .to_owned(),
+    }))
+}
+
+fn uses_sqlite(application: &ResolvedApplication, input: &GenerateInput<'_>) -> bool {
+    application
+        .gears
+        .iter()
+        .any(|id| input.lock.sqlite_databases.contains_key(id))
+}
+
+fn directory_endpoint(input: &GenerateInput<'_>) -> Option<String> {
+    let settings = input.lock.kubernetes.as_ref()?;
+    let host = input.lock.applications.iter().find(|app| {
+        app.gears
+            .iter()
+            .any(|id| id.as_str() == "service-discovery")
+    })?;
+    let grpc = host
+        .listens
+        .iter()
+        .find(|endpoint| endpoint.gear.as_str() == "grpc-hub")?;
+    let port: u16 = grpc.address.rsplit(':').next()?.parse().ok()?;
+    Some(format!(
+        "http://{}.{}.svc.cluster.local:{port}",
+        subchart_name(host),
+        settings.namespace.as_deref().unwrap_or("default")
+    ))
+}
+
 fn subchart_name(application: &ResolvedApplication) -> &str {
     application
         .subchart
@@ -172,15 +241,21 @@ fn umbrella_values(
     let mut blocks = BTreeMap::new();
     for application in &input.lock.applications {
         let image = image_values(application, input);
+        let sqlite = uses_sqlite(application, input);
         let config_rel = paths::rel(&["config", &format!("{}.yaml", application.name)])?;
-        let keys = files
+        let mut keys = files
             .get(&config_rel)
             .and_then(FileEntry::as_text)
             .map(secret_vars)
             .unwrap_or_default();
+        let database = database_secret(application, input)?;
+        if let Some(secret) = &database {
+            keys.retain(|key| key != &secret.password_env);
+        }
         blocks.insert(
             subchart_name(application).to_owned(),
             SubchartValues {
+                database,
                 enabled: true,
                 replica_count: application.replicas,
                 image,
@@ -213,12 +288,16 @@ fn umbrella_values(
                     session_affinity: None,
                 },
                 home_volume: HomeVolumeValues {
-                    kind: HomeVolumeKind::EmptyDir,
+                    kind: if sqlite {
+                        HomeVolumeKind::PersistentVolumeClaim
+                    } else {
+                        HomeVolumeKind::EmptyDir
+                    },
                     size_limit: None,
                     claim_name: None,
                 },
                 automount_service_account_token: false,
-                strategy: None,
+                strategy: sqlite.then(|| serde_json::json!({"type": "Recreate"})),
                 termination_grace_period_seconds: None,
                 priority_class_name: None,
                 topology_spread_constraints: None,
@@ -232,6 +311,11 @@ fn umbrella_values(
         );
     }
     let values = UmbrellaValues {
+        demo_ui_image: input
+            .lock
+            .ui
+            .as_ref()
+            .map(|_| format!("gbx-demo-ui:{}", input.lock.product.version)),
         // Emitted empty rather than omitted. `global` is where a house policy
         // puts the labels it requires on everything, and a key absent from the
         // file an operator edits is a key nobody finds. `imageRegistry` stays
@@ -281,10 +365,32 @@ fn values_schema(input: &GenerateInput<'_>) -> Result<FileEntry, GenerateError> 
     let subchart = draft7_subchart_schema()?;
     let mut properties = serde_json::Map::new();
     properties.insert("global".to_owned(), global_schema()?);
+    if input.lock.ui.is_some() {
+        properties.insert(
+            "demoUiImage".to_owned(),
+            serde_json::json!({"type":"string", "minLength":1}),
+        );
+    }
     let mut required = Vec::new();
     for application in &input.lock.applications {
         let name = subchart_name(application);
-        properties.insert(name.to_owned(), subchart.clone());
+        let schema = if uses_sqlite(application, input) {
+            serde_json::json!({"allOf": [subchart, {
+                "type": "object",
+                "required": ["homeVolume", "strategy"],
+                "properties": {
+                    "replicaCount": {"const": 1},
+                    "strategy": {"type": "object", "required": ["type"], "properties": {"type": {"const": "Recreate"}}},
+                    "homeVolume": {
+                        "type": "object", "required": ["type", "claimName"],
+                        "properties": {"type": {"const": "persistentVolumeClaim"}, "claimName": {"type": "string", "minLength": 1}}
+                    }
+                }
+            }]})
+        } else {
+            subchart.clone()
+        };
+        properties.insert(name.to_owned(), schema);
         required.push(serde_json::Value::String(name.to_owned()));
     }
     let schema = serde_json::json!({
@@ -394,6 +500,8 @@ fn inline_refs(value: &mut serde_json::Value, defs: &serde_json::Value) {
 #[serde(rename_all = "camelCase")]
 #[schemars(deny_unknown_fields)]
 struct SubchartValues {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    database: Option<DatabaseSecretValues>,
     enabled: bool,
     replica_count: u32,
     image: ImageValues,
@@ -567,6 +675,8 @@ struct SubchartValues {
 
 #[derive(serde::Serialize)]
 struct UmbrellaValues {
+    #[serde(rename = "demoUiImage", skip_serializing_if = "Option::is_none")]
+    demo_ui_image: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     global: Option<GlobalValues>,
     #[serde(flatten)]
@@ -638,11 +748,6 @@ struct HomeVolumeValues {
     claim_name: Option<String>,
 }
 
-#[allow(
-    dead_code,
-    reason = "`PersistentVolumeClaim` is written by operators in values.yaml, never by us; \
-              it exists so the schema offers the choice and rejects a third spelling"
-)]
 #[derive(serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 enum HomeVolumeKind {
@@ -834,6 +939,9 @@ fn subchart_templates(
         .or_else(|| ports.first().map(|p| p.port))
         .unwrap_or(80);
     let prefix = rest_prefix(input, application)?;
+    let directory = matches!(application.kind, ApplicationKind::Worker)
+        .then(|| directory_endpoint(input))
+        .flatten();
     let liveness_path = probe_path(&prefix, "/healthz");
     helm_safe("liveness probe path", &liveness_path)?;
     let readiness_path = probe_path(&prefix, "/readyz");
@@ -860,11 +968,13 @@ fn subchart_templates(
             name => name,
             application => application.name.as_str(),
             config_filename => config_filename.as_str(),
+            bin_name => application.bin_name.as_str(),
             http_port => http_port,
             liveness_path => liveness_path.as_str(),
             readiness_path => readiness_path.as_str(),
             home_dir => K8S_HOME_DIR,
             container_ports => &ports,
+            directory_endpoint => directory,
         },
     )?;
     let service = templates::render_helm(

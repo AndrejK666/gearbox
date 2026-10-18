@@ -329,6 +329,24 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
         })
     }
 
+    /// Optional UI contribution; npm identity and exports are read from package.json.
+    ///
+    /// # Arguments
+    /// * `package`: The UI package directory, as path(...), relative to this gear description.
+    /// * `requires`: Backend gear ids required by the module.
+    fn ui_module<'v>(
+        #[starlark(require = named)] package: &'v SourceAtRecord,
+        #[starlark(require = named)] requires: Option<UnpackList<String>>,
+    ) -> anyhow::Result<crate::records::UiModuleRecord> {
+        if package.kind != "path" {
+            return Err(anyhow::anyhow!("UI packages require path(...)"));
+        }
+        Ok(crate::records::UiModuleRecord {
+            package: package.at.clone().unwrap_or_default(),
+            requires: requires.map(|r| r.items).unwrap_or_default(),
+        })
+    }
+
     /// `npm(name = ..., path = ...)` -- an npm package, e.g. a TypeScript SDK.
     ///
     /// Located, not read: `name` is the package name, `path` is where it lives,
@@ -338,6 +356,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `name`: The npm package name, e.g. `@cf/payments-sdk`.
     /// * `path`: The package directory, relative to this file. The default is this file's
     ///   directory.
+
     fn npm<'v>(
         #[starlark(require = named)] name: &str,
         #[starlark(require = named, default = ".")] path: &str,
@@ -856,6 +875,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `cluster_plugins`: Where cluster backend plugin crates are, as `cluster_plugin(...)`.
     /// * `roles`: The shapes the gear runs in, as `role(...)`.
     /// * `config_schema`: The configuration to show an integrator, as `config(...)`.
+    /// * `ui`: Optional build-time UI contribution, as `ui_module(...)`.
     /// * `cargo_features`: The Cargo features offered to a product, as `feature(...)`. Absent means
     ///   not curated; `[]` offers none.
     /// * `id`: The gear's id, for `implementation = "design"` only. A gear with code takes it from
@@ -904,6 +924,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] source: Option<&'v SourceAtRecord>,
         // Where the gear's tests are: paths relative to the description, or URLs.
         #[starlark(require = named)] tests: Option<UnpackList<String>>,
+        #[starlark(require = named)] ui: Option<&'v crate::records::UiModuleRecord>,
         #[starlark(require = named)] provides: Option<UnpackList<&'v ProvideRecord>>,
         #[starlark(require = named)] consumes: Option<UnpackList<&'v ConsumeRecord>>,
         #[starlark(require = named)] requires: Option<UnpackList<&'v ClusterRequireRecord>>,
@@ -966,6 +987,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
             // its SDK and documents are: everything else describes code.
             for (present, field) in [
                 (package.is_some(), "package"),
+                (ui.is_some(), "ui"),
                 (visibility.is_some(), "visibility"),
                 (extension_points.is_some(), "extension_points"),
                 (implements.is_some(), "implements"),
@@ -1053,6 +1075,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
             package,
             sdk,
             other_sdks,
+            ui: ui.cloned(),
             extension_points: extension_points
                 .map(|l| l.items.into_iter().cloned().collect())
                 .unwrap_or_default(),

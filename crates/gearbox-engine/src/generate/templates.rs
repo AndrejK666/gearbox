@@ -21,7 +21,7 @@
 //! | `worker_main.rs` | worker `<layout>/<p>/src/main.rs` |
 //! | `registered_gears.rs` | `<layout>/<p>/src/registered_gears.rs` |
 //! | `docker/Dockerfile` | `docker/<p>/Dockerfile` |
-//! | `docker/dockerignore` | `docker/.dockerignore` |
+//! | `docker/dockerignore` | `docker/<p>/Dockerfile.dockerignore` |
 //! | `helm/helpers.tpl` | `helm/<product>/charts/<sub>/templates/_helpers.tpl` |
 //! | `helm/deployment.yaml` | `helm/<product>/charts/<sub>/templates/deployment.yaml` |
 //! | `helm/service.yaml` | `helm/<product>/charts/<sub>/templates/service.yaml` |
@@ -46,11 +46,11 @@
 //! - `worker_main.rs`: those plus `gear_name`, `roles`, `version`
 //! - `registered_gears.rs`: `header`, `idents`
 //! - `docker/Dockerfile`: `header`, `rust_channel`, `crate_name`, `bin_name`,
-//!   `process`, `out_rel`, `uid`, `ports`
-//! - `docker/dockerignore`: `header`, `secret_dirs`
+//!   `application`, `out_rel`, `uid`, `home_dir`, `ports`
+//! - `docker/dockerignore`: `header`, `source_dirs`, `output_dir`, `secret_dirs`
 //! - `helm/helpers.tpl`: `name`, `process`
 //! - `helm/deployment.yaml`: `name`, `process`, `config_filename`, `http_port`,
-//!   `liveness_path`, `readiness_path`, `home_dir`, `container_ports`
+//!   `liveness_path`, `readiness_path`, `home_dir`, `container_ports`, `directory_endpoint`, `bin_name`
 //! - `helm/service.yaml`: `name`, `service_name`, `ports`, `cluster_service`,
 //!   `cluster_port`
 //! - `helm/configmap.yaml`: `name`, `config_filename`
@@ -87,6 +87,8 @@ const HELM_CONTEXT_DOC: &[(&str, &[&str])] = &[
             "readiness_path",
             "home_dir",
             "container_ports",
+            "directory_endpoint",
+            "bin_name",
         ],
     ),
     (

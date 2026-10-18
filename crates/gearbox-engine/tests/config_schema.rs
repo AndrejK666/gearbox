@@ -12,7 +12,7 @@
     reason = "clippy.toml's allow-unwrap-in-tests covers #[test] fns but not the helpers here"
 )]
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use gearbox_engine::{SourceRoot, load_catalogue};
@@ -275,15 +275,11 @@ fn tenant_resolver_carries_its_projected_vendor_field() {
 }
 
 /// The corpus, found by walking up so a git worktree finds it too.
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn gears_rust() -> Option<PathBuf> {
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            return candidate.canonicalize().ok();
-        }
-        dir = dir.parent()?;
-    }
+    corpus_support::root()
 }
 
 #[test]
