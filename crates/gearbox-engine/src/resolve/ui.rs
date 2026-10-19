@@ -55,6 +55,8 @@ pub(super) fn resolve(
         shell: requested.shell.clone(),
         sdk: requested.sdk.clone(),
         source: requested.source.clone(),
+        npm_lock: requested.npm_lock.clone(),
+        entry_points: requested.entry_points.clone(),
         modules,
     })
 }

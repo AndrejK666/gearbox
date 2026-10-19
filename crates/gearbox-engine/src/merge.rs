@@ -8,9 +8,8 @@
 //! and criticality. This module is the only place the two meet, which is why
 //! the split is legible here rather than smeared across the codebase.
 //!
-//! Nothing in here *compares* the halves, because there is nothing to compare:
-//! that was the old cross-check design, and its diagnostics (GBX0201-0205) are
-//! retired.
+//! Explicit GDL `deps` are a checked mirror of the Rust co-location edges.
+//! Rust remains authoritative for linking; a mismatch blocks generation.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -214,6 +213,21 @@ pub fn merge(
                 format!("the gear attribute declares dependency `{dep}`, which is not a valid gear id: {e}"),
                 "fix `deps = [...]` in the gear's source",
             )),
+        }
+    }
+
+    if let Some(declared) = &decl.deps {
+        let expected: BTreeSet<_> = colocated_deps.iter().map(GearId::as_str).collect();
+        let actual: BTreeSet<_> = declared.iter().map(String::as_str).collect();
+        if actual != expected {
+            diagnostics.push(
+                Diagnostic::error(
+                    DiagnosticCode::ValidateDependencyMismatch,
+                    format!("gear `{id}` deps differ: GDL {actual:?}, Rust {expected:?}"),
+                    "make deps in gear.gdl and #[toolkit::gear] agree; dependencies cannot be overridden by GDL",
+                )
+                .at(decl.declared_at.clone().unwrap_or_else(|| Location::file(uri))),
+            );
         }
     }
 

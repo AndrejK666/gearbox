@@ -35,6 +35,8 @@ import { LanguageGrammarDefinitionContribution } from "@theia/monaco/lib/browser
 import { GEARBOX_SERVICE_PATH, GearboxClient, GearboxService } from "../common/protocol";
 import { CatalogueStore } from "./catalogue-store";
 import { GenerateService } from "./generate/generate-service";
+import { ChatResponsePartRenderer } from "@theia/ai-chat-ui/lib/browser/chat-response-part-renderer";
+import { TitledToolRenderer } from "./ai/titled-tool-renderer";
 import { ProductGearTool } from "./ai/product-tools";
 import { GearboxChatAgent } from "./ai/gearbox-chat-agent";
 import { GearboxContextContribution } from "./ai/gearbox-context";
@@ -468,6 +470,7 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   rebind(AIChatContribution).to(ChatInTheBottomPanel).inSingletonScope();
 
   bindToolProvider(ProductGearTool, bind);
+  bind(ChatResponsePartRenderer).to(TitledToolRenderer).inSingletonScope();
 
   // **The agent, without which none of the above was reachable.** `@theia/ai-chat`
   // registers no user-facing agent -- Theia's own live in `@theia/ai-ide`, which

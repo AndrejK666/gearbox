@@ -876,6 +876,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `roles`: The shapes the gear runs in, as `role(...)`.
     /// * `config_schema`: The configuration to show an integrator, as `config(...)`.
     /// * `ui`: Optional build-time UI contribution, as `ui_module(...)`.
+    /// * `deps`: Co-located gear ids; must exactly match `#[toolkit::gear(deps = [...])]`.
     /// * `cargo_features`: The Cargo features offered to a product, as `feature(...)`. Absent means
     ///   not curated; `[]` offers none.
     /// * `id`: The gear's id, for `implementation = "design"` only. A gear with code takes it from
@@ -925,6 +926,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
         // Where the gear's tests are: paths relative to the description, or URLs.
         #[starlark(require = named)] tests: Option<UnpackList<String>>,
         #[starlark(require = named)] ui: Option<&'v crate::records::UiModuleRecord>,
+        #[starlark(require = named)] deps: Option<UnpackList<String>>,
         #[starlark(require = named)] provides: Option<UnpackList<&'v ProvideRecord>>,
         #[starlark(require = named)] consumes: Option<UnpackList<&'v ConsumeRecord>>,
         #[starlark(require = named)] requires: Option<UnpackList<&'v ClusterRequireRecord>>,
@@ -988,6 +990,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
             for (present, field) in [
                 (package.is_some(), "package"),
                 (ui.is_some(), "ui"),
+                (deps.is_some(), "deps"),
                 (visibility.is_some(), "visibility"),
                 (extension_points.is_some(), "extension_points"),
                 (implements.is_some(), "implements"),
@@ -1022,6 +1025,18 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
             };
             gearbox_ir::GearId::new(id)
                 .map_err(|e| anyhow::anyhow!("`{id}` is not a valid gear id: {e}"))?;
+        }
+
+        let deps = deps.map(|list| list.items);
+        if let Some(deps) = &deps {
+            let mut seen = std::collections::BTreeSet::new();
+            for dep in deps {
+                gearbox_ir::GearId::new(dep)
+                    .map_err(|e| anyhow::anyhow!("invalid gear id in deps: `{dep}`: {e}"))?;
+                if !seen.insert(dep) {
+                    return Err(anyhow::anyhow!("duplicate gear id in deps: `{dep}`"));
+                }
+            }
         }
 
         for (present, field, owner) in [
@@ -1076,6 +1091,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
             sdk,
             other_sdks,
             ui: ui.cloned(),
+            deps,
             extension_points: extension_points
                 .map(|l| l.items.into_iter().cloned().collect())
                 .unwrap_or_default(),

@@ -20,6 +20,7 @@ import { AbstractStreamParsingChatAgent, ChatAgentLocation } from "@theia/ai-cha
 import { MarkdownChatResponseContentImpl } from "@theia/ai-chat/lib/common/chat-model";
 import type { MutableChatRequestModel } from "@theia/ai-chat/lib/common/chat-model";
 import { FrontendLanguageModelRegistry } from "@theia/ai-core";
+import { LanguageModelAliasRegistry } from "@theia/ai-core";
 import type { LanguageModelRequirement } from "@theia/ai-core";
 
 import { GearboxService } from "../../common/protocol";
@@ -59,7 +60,7 @@ export class GearboxChatAgent extends AbstractStreamParsingChatAgent {
   readonly languageModelRequirements: LanguageModelRequirement[] = [
     {
       purpose: "chat",
-      identifier: "default/universal",
+      identifier: "gearbox/chat",
     },
   ];
 
@@ -89,6 +90,9 @@ export class GearboxChatAgent extends AbstractStreamParsingChatAgent {
   @inject(FrontendLanguageModelRegistry)
   protected readonly models!: FrontendLanguageModelRegistry;
 
+  @inject(LanguageModelAliasRegistry)
+  protected readonly modelAliases!: LanguageModelAliasRegistry;
+
   // Studio's own backend, asked what it can reach when a request dies in the
   // transport. The chat's provider cannot answer that: it is the thing failing.
   @inject(GearboxService)
@@ -109,6 +113,10 @@ export class GearboxChatAgent extends AbstractStreamParsingChatAgent {
    * only thing left to do is replace one error with another.
    */
   override async invoke(request: MutableChatRequestModel): Promise<void> {
+    await this.modelAliases.ready;
+    if (!this.modelAliases.getAliases().some(alias => alias.id === "gearbox/chat")) {
+      this.modelAliases.addAlias({id:"gearbox/chat",description:"Gearbox chat",defaultModelIds:["gearbox/claude-code",...(this.modelAliases.resolveAlias("default/universal") ?? [])]});
+    }
     const selector = this.getLanguageModelSelector(this.defaultLanguageModelPurpose);
     const identifier = selector?.identifier;
     if (identifier !== undefined) {
@@ -117,7 +125,7 @@ export class GearboxChatAgent extends AbstractStreamParsingChatAgent {
         request.response.response.addContent(
           new MarkdownChatResponseContentImpl(
             `I have no language model to answer with, so nothing I said would be grounded.\n\n` +
-              `Set an Anthropic API key in **${SHOW_SETTINGS.label}**, or start Studio's ` +
+              `Sign in with your installed Claude Code, set an Anthropic API key in **${SHOW_SETTINGS.label}**, or start Studio's ` +
               `backend with \`ANTHROPIC_API_KEY\` in its environment. The key is used only ` +
               `for this chat -- resolving, generating and every diagnostic work without it.`,
           ),

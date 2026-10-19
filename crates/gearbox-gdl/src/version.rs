@@ -65,30 +65,52 @@ pub fn declared(uri: &str, source: &str) -> Result<Option<Version>, Box<Diagnost
     let tokens: Vec<(usize, Token, usize)> = Lexer::new(source, &dialect(), codemap.clone())
         .map_while(Result::ok)
         .collect();
-    let found = tokens
-        .windows(3)
-        .find_map(|w| match (&w[0].1, &w[1].1, &w[2].1) {
-            (Token::Identifier(name), Token::Equal, Token::String(value))
-                if name == "gdl_version" =>
-            {
-                Some((value.clone(), w[2].0, w[2].2))
-            }
-            _ => None,
-        });
+    let location = |start: usize, end: usize| {
+        Location::new(
+            uri.to_owned(),
+            span_to_range(
+                &codemap,
+                Span::new(
+                    Pos::new(u32::try_from(start).unwrap_or(u32::MAX)),
+                    Pos::new(u32::try_from(end).unwrap_or(u32::MAX)),
+                ),
+            ),
+        )
+    };
+    let mut found: Option<(&str, usize, usize)> = None;
+    for window in tokens.windows(3) {
+        if !matches!((&window[0].1, &window[1].1),
+            (Token::Identifier(name), Token::Equal) if name == "gdl_version")
+        {
+            continue;
+        }
+        let Token::String(value) = &window[2].1 else {
+            return Err(Box::new(
+                Diagnostic::error(
+                    DiagnosticCode::GdlVersionUnsupported,
+                    "GDL version must be a literal string",
+                    format!("write a file header: `gdl_version = \"{CURRENT}\"`"),
+                )
+                .at(location(window[2].0, window[2].2)),
+            ));
+        };
+        if found.is_some_and(|(previous, _, _)| previous != value) {
+            return Err(Box::new(
+                Diagnostic::error(
+                    DiagnosticCode::GdlVersionUnsupported,
+                    "Conflicting GDL version declarations",
+                    "keep one file-level gdl_version; remove the legacy argument or make it agree",
+                )
+                .at(location(window[2].0, window[2].2)),
+            ));
+        }
+        found = Some((value, window[2].0, window[2].2));
+    }
     let Some((spelling, start, end)) = found else {
         return Ok(None);
     };
-    let at = Location::new(
-        uri.to_owned(),
-        span_to_range(
-            &codemap,
-            Span::new(
-                Pos::new(u32::try_from(start).unwrap_or(u32::MAX)),
-                Pos::new(u32::try_from(end).unwrap_or(u32::MAX)),
-            ),
-        ),
-    );
-    let Some(version) = Version::parse(&spelling) else {
+    let at = location(start, end);
+    let Some(version) = Version::parse(spelling) else {
         return Err(Box::new(
             Diagnostic::error(
                 DiagnosticCode::GdlVersionUnsupported,

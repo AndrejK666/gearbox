@@ -38,6 +38,28 @@ fn ui_is_an_optional_package_locator_with_backend_requirements() {
     )).is_empty(), "generation never fetches or executes UI packages");
 }
 
+#[test]
+fn explicit_dependencies_preserve_omission_and_reject_invalid_lists() {
+    let (decl, codes) = eval(&format!(
+        "gear(maturity = \"preview\", {PKG}, deps = [\"types-registry\"])"
+    ));
+    assert!(codes.is_empty(), "{codes:?}");
+    assert_eq!(decl.unwrap().deps.unwrap(), ["types-registry"]);
+    let (decl, _) = eval(&format!("gear(maturity = \"preview\", {PKG})"));
+    assert!(decl.unwrap().deps.is_none());
+    for deps in [
+        "[\"types_registry\"]",
+        "[\"types-registry\", \"types-registry\"]",
+    ] {
+        assert!(
+            !diagnostics_of(&format!(
+                "gear(maturity = \"preview\", {PKG}, deps = {deps})"
+            ))
+            .is_empty()
+        );
+    }
+}
+
 fn eval(src: &str) -> (Option<GearDecl>, Vec<DiagnosticCode>) {
     let out = GdlEngine::new().eval_gear(&identity(), src);
     let codes = out.diagnostics.iter().map(|d| d.code).collect();
@@ -747,5 +769,35 @@ fn a_version_is_major_and_minor() {
                 .is_some_and(|h| h.contains("gdl_version = \"1.2\"")),
             "{bad}: {diagnostics:?}"
         );
+    }
+}
+
+#[test]
+fn module_version_header_and_legacy_argument_agree() {
+    for legacy in ["", "gdl_version = \"1.2\", "] {
+        let (value, codes) = eval(&format!(
+            "gdl_version = \"1.2\"\ngear({legacy}maturity = \"preview\", {PKG})"
+        ));
+        assert!(value.is_some(), "{codes:?}");
+        assert!(codes.is_empty(), "{codes:?}");
+    }
+}
+
+#[test]
+fn conflicting_or_nonliteral_module_versions_are_refused() {
+    for header in [
+        "gdl_version = \"1.2\"\ngear(gdl_version = \"1.0\")",
+        "gdl_version = \"1.0\"\ngdl_version = \"1.2\"",
+        "gdl_version = 12",
+        "VERSION = \"1.2\"\ngdl_version = VERSION",
+        "gdl_version = \"2.0\"",
+    ] {
+        let out = GdlEngine::new().eval_gear(&identity(), header);
+        assert!(out.value.is_none());
+        assert_eq!(
+            out.diagnostics.as_slice()[0].code,
+            DiagnosticCode::GdlVersionUnsupported
+        );
+        assert!(out.diagnostics.as_slice()[0].location.is_some());
     }
 }

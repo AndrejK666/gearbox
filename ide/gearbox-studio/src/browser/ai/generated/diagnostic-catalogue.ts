@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 110, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 111, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -264,6 +264,14 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "error",
     domain: "validate",
     docs: "A description offers a Cargo feature its gear's crate does not declare.\n\nThe same check `GBX0212` makes for `exposes`, for the same reason:\n`cargo_features` is a curation of a projected fact, and a curation whose\nnames have drifted from the `[features]` table would offer a build that\ncannot succeed. Cargo fails on an unknown `--features` name, so the\nalternative to reporting it here is a build failure two steps later with\nnothing pointing back at the description.",
+    requiresEvidence: false,
+  },
+  GBX0214: {
+    code: "GBX0214",
+    title: "GDL dependencies differ from Rust",
+    severity: "error",
+    domain: "validate",
+    docs: "Explicit GDL dependencies must match the co-location edges in Rust.",
     requiresEvidence: false,
   },
   GBX0301: {

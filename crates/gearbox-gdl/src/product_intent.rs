@@ -126,6 +126,8 @@ pub fn build(
                 shell: ui.shell.clone(),
                 sdk: ui.sdk.clone(),
                 source: ui.source.clone(),
+                npm_lock: ui.npm_lock.clone(),
+                entry_points: ui.entry_points.iter().cloned().collect(),
                 modules,
             }),
             Err(error) => {

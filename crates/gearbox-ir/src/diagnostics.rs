@@ -661,6 +661,9 @@ diagnostic_codes! {
     /// nothing pointing back at the description.
     ValidateFeatureUnknown = "GBX0213", Validate, Error, false, "offered Cargo feature is not declared by the crate";
 
+    /// Explicit GDL dependencies must match the co-location edges in Rust.
+    ValidateDependencyMismatch = "GBX0214", Validate, Error, false, "GDL dependencies differ from Rust";
+
     // ---------------------------------------------------------------- GBX03xx
     /// A selected or depended-upon gear is not in the catalogue.
     TopologyUnknownGear = "GBX0301", Topology, Error, false, "unknown gear",

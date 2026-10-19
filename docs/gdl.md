@@ -71,15 +71,21 @@ source package and states the backends it needs:
 ```python
 gear(
     # Existing Rust package and other declarations...
-    ui = ui_module(package = path("../ui"), requires = ["settings-service"]),
+    ui = ui_module(package = path("../ui")),
 )
 ```
+
+The owning gear is required automatically. `requires` lists only additional
+backend gears the UI calls; it neither adds them to the product nor declares
+Rust linking dependencies. Product-specific screens belong to the product's
+adapter gear, rather than a reusable backend service's UI.
 
 A product explicitly selects modules and locates its shell and shared SDK:
 
 ```python
 ui = ui_product(
     source = "gears-rust",
+    npm_lock = path("ui-package-lock.json"),
     shell = path("ui/product-shell"),
     sdk = path("ui/ui-sdk"),
     modules = ["settings-service"],
@@ -101,7 +107,9 @@ workspace, module registry, nginx, Dockerfile and
 Kubernetes UI resources. `product.lock` schema 3 records the UI composition;
 `ui/ui.lock.json` records projected package identities, exports and content
 hashes beside the parent product lock hash. npm's generated `package-lock.json`
-pins third-party dependencies for `npm ci` in the prepared bundle. Product preparation
+pins third-party dependencies for `npm ci` in the prepared bundle. Optional
+`npm_lock = path(...)` copies a tracked lock from within the product directory,
+validates its root dependencies and records its content hash in `ui.lock.json`. Product preparation
 supplies `public/runtime-config.json`; generation does not overwrite it. Products
 without UI declarations continue to generate only their existing backend
 artifacts. Resolve older locks again to write schema 3.
@@ -228,14 +236,15 @@ prefer.existing_infrastructure() | prefer.fewer_applications() | prefer.isolate(
 
 ## Versions
 
-A file can declare the version of GDL that it uses. Write it in the top-level call:
+A file can declare the version of GDL that it uses. Write a literal assignment at the top of the file:
 
 ```python
-gear(gdl_version = "1.0", ...)
-product(gdl_version = "1.0", ...)
+gdl_version = "1.2"
+
+gear(...)  # or product(...)
 ```
 
-The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.0.
+The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.2. The legacy `gear(gdl_version=...)` and `product(gdl_version=...)` arguments remain accepted; conflicting declarations are rejected.
 
 - A minor version only adds: optional fields, constructors and values. A file for an older minor version reads with no change.
 - A major version can remove a field, rename a field or change what a field means.
@@ -502,7 +511,8 @@ Positional. States that this description is invalid. Not a branch.
 
 ```
 gear(
-  gdl_version?,                     # "MAJOR.MINOR"; omit → "1.0"
+  gdl_version?,                     # legacy argument; prefer the file header
+  deps?,                            # gear IDs; exact checked mirror of Rust deps
   maturity,                         # required, no default; refused at implementation = "design"
   implementation?,                  # "design" | "in-progress" | "done"
   package,                          # cargo, required unless implementation = "design"
@@ -533,6 +543,14 @@ example, gen-ai, oss, serverless
 ```
 
 Anything else is **GBX0108** (warning, not error).
+
+`deps = ["types-registry", ...]` explicitly documents co-location dependencies.
+It must exactly match `#[toolkit::gear(deps = [types_registry, ...])]`, using gear
+IDs in kebab-case. Ordering is immaterial; duplicate/invalid IDs are rejected.
+Missing or extra dependencies are **GBX0214** and block generation. Rust still
+supplies the actual linking edges. Omission remains supported for legacy
+projection-only descriptions; `deps = []` explicitly asserts no dependencies.
+Contract consumption (`consumes`) remains separate and may cross processes.
 
 These fields are accepted only to be refused by name (**GBX0210**). They live in Rust:
 
@@ -617,11 +635,12 @@ This template shows all the fields of a `gear.gdl`. A field that the gear does n
 ```python
 # Every field: https://github.com/constructorfabric/gearbox/blob/main/docs/gdl.md
 
-gear(
-    gdl_version = "1.0",
+gdl_version = "1.2"
 
+gear(
     # What it is.
     name = "Pricing",
+    deps = [],  # Must match #[toolkit::gear(deps = [...])].
     # description = "What this gear does, in one sentence.",
     # category = "bss",
     # visibility = "public",
@@ -884,7 +903,6 @@ PAYMENT_SDK = cargo(
 )
 
 gear(
-    gdl_version = "1.0",
     name = "Payments Audit",
     maturity = "experimental",
     implementation = "in-progress",
@@ -1006,3 +1024,12 @@ highlighter cannot colour a function the engine does not have.
 The two worked examples above are executed, not just printed:
 `crates/gearbox-engine/tests/gdl_examples.rs` reads them out of this file and evaluates
 them, resolving the product one against the `gears-rust` corpus when a checkout is there.
+
+### UI deployment entry points
+
+`ui_product(...)` accepts an optional `entry_points` dictionary of display names
+and same-origin UI paths, for example `{"Operator": "/#operator", "My Lab": "/#my-lab"}`.
+These paths are carried through the product lock and generated `ui/ui.lock.json`.
+A registered deployment adapter supplies the actual endpoint origin after
+readiness; Studio combines that origin with these declared paths. The paths do
+not grant authorization or select a tenant.

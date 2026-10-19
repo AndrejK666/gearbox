@@ -15,7 +15,7 @@ remedy at the point it is raised
 (`cpt-gearbox-nfr-actionable-diagnostics`), which is per-occurrence and
 so is not listed here.
 
-Codes: **110**.
+Codes: **111**.
 
 ## `GBX01xx` — Parsing and evaluating GDL
 
@@ -340,6 +340,7 @@ renamed what this reader knows, so its errors would be the wrong ones.
 | [GBX0211](#gbx0211) | error | gear attribute could not be located unambiguously |
 | [GBX0212](#gbx0212) | error | exposed config field is not declared by the gear |
 | [GBX0213](#gbx0213) | error | offered Cargo feature is not declared by the crate |
+| [GBX0214](#gbx0214) | error | GDL dependencies differ from Rust |
 
 ### GBX0206
 
@@ -443,6 +444,12 @@ names have drifted from the `[features]` table would offer a build that
 cannot succeed. Cargo fails on an unknown `--features` name, so the
 alternative to reporting it here is a build failure two steps later with
 nothing pointing back at the description.
+
+### GBX0214
+
+**GDL dependencies differ from Rust**
+
+Explicit GDL dependencies must match the co-location edges in Rust.
 
 ## `GBX03xx` — Process topology and structural constraints
 

@@ -65,6 +65,9 @@ pub struct GearDecl {
     /// the Rust one is the one the projector reads.
     pub other_sdks: Vec<crate::records::PackageRecord>,
     pub ui: Option<crate::records::UiModuleRecord>,
+    /// Explicit co-location dependencies, checked against Rust when present.
+    /// Omission preserves compatibility with projection-only descriptions.
+    pub deps: Option<Vec<String>>,
     /// The points this gear lets plugins fill, keyed by GTS spec segment.
     pub extension_points: Vec<crate::records::ExtensionPointRecord>,
     /// The spec segment of the point this gear implements, when it is a plugin.

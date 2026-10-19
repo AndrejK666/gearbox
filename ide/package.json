@@ -7,7 +7,8 @@
   "//engines": "Theia 1.75 asks for Node >= 24 in its own doc/Developing.md, and its ci-cd.yml build matrix tests exactly [24.x, 26.x] -- so this repeats upstream's tested set instead of inventing one. Node 25 is excluded because it is an odd, non-LTS line nobody upstream builds on. The @theia/* packages declare no engines at all, which is how the previous value -- >=20 <21, our own invention, committed in 8c79cef with no reason given -- went unchallenged until a tool refused to install on it. Recorded in .nvmrc too, so the version lives in the tree rather than in a shell.",
   "workspaces": [
     "gearbox-studio",
-    "browser-app"
+    "browser-app",
+    "electron-app"
   ],
   "devDependencies": {
     "@playwright/test": "1.62.1",
@@ -53,7 +54,10 @@
     "wedge": "playwright test --config playwright.wedge.config.ts",
     "plugins": "npm run download:plugins --workspace browser-app",
     "verify": "npm run engine && npm run smoke && npm run build && npm run error-smoke && npm run supervision-smoke && npm run store-smoke && npm run conformance && npm run wedge",
-    "engine": "cargo build --manifest-path ../Cargo.toml -p gearbox-cli"
+    "engine": "cargo build --manifest-path ../Cargo.toml -p gearbox-cli",
+    "build:desktop": "npm run build --workspace gearbox-studio && npm run build --workspace gearbox-studio-desktop",
+    "package:mac": "npm run engine:release && node scripts/prepare-desktop.cjs && npm run build:desktop && npm run package:mac --workspace gearbox-studio-desktop",
+    "engine:release": "cargo build --release --manifest-path ../Cargo.toml -p gearbox-cli --locked"
   },
   "//conformance": "Playwright, and the browser is a separate explicit step: `npx playwright install chromium`. Playwright has no postinstall of its own -- not in @playwright/test, playwright or playwright-core -- so npm's install-script gate does not apply to it, and nothing downloads 100MB behind your back either.",
   "//engine": "The backend spawns ../target/debug/gearbox, so a change to the Rust side is invisible to `npm run build`. Leaving the two out of step cost a debugging session: the client reported a missing source root that the engine had already been taught to send."

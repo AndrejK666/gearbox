@@ -758,3 +758,21 @@ version would make each file incomplete. And `None` and `[]` mean different thin
   `Scenario`; `crates/gearbox-ir/src/contract.rs` -- `Ecosystem`, `PackageRef`.
 * `crates/gearbox-engine/tests/source.rs`, `tests/maturity.rs`, `tests/gdl_examples.rs`;
   `crates/gearbox-gdl/tests/eval_declared.rs`; `crates/gearbox-rpc/src/scaffold_tests.rs`.
+
+
+## Amendment 2026-10-19 — explicit, checked dependency lists
+
+Gear descriptions may mirror Rust co-location edges using `deps = ["gear-id"]`.
+This deliberately relaxes the original no-restatement rule for dependencies only,
+so a reader can understand a gear's dependencies from its GDL. When present, the
+list must equal the dependency set projected from `#[toolkit::gear(deps = [...])]`;
+GBX0214 rejects missing/extra edges. Invalid IDs and duplicate entries are rejected
+during GDL evaluation. Rust still supplies link-time edges and GDL cannot replace
+or cut them. Omission remains supported for existing projection-only descriptions.
+The implemented gears in the source catalogue now state their exact lists,
+including `deps = []`. Contract consumption stays distinct from co-location.
+
+A UI contribution's owning gear is already required by the resolver, so its
+`requires` list names only additional backend services it calls. The lab UI
+belongs to `lab-ui-backend`; OAGW diagnostics belong to OAGW. Settings Service no
+longer declares either product-specific UI contribution.

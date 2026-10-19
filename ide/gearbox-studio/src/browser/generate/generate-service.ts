@@ -124,6 +124,12 @@ export class GenerateService {
     return key === undefined ? undefined : this.outs[key];
   }
 
+  /** The panel and chat must plan against the same product/profile destination. */
+  planFor(path: string, profile?: string): Promise<GeneratePlanResult> {
+    const out = profile === undefined ? undefined : this.outs[`${path}::${profile}`];
+    return this.service.planGenerate(path, profile, out);
+  }
+
   get initializesRepository(): boolean {
     return this.gitInit;
   }
@@ -300,7 +306,7 @@ export class GenerateService {
     this.forKey = key;
     this.update({ status: "planning", plan: undefined, written: undefined, error: undefined });
     try {
-      const plan = await this.service.planGenerate(open.path, profile, this.outFolder);
+      const plan = await this.planFor(open.path, profile);
       if (epoch !== this.epoch) return;
       this.update({ status: "ready", plan, error: undefined });
     } catch (error) {

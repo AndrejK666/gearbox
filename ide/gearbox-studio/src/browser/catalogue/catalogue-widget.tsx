@@ -253,7 +253,7 @@ export class CatalogueWidget extends ReactWidget {
           <span className="gbx-group-count">{rows.length}</span>
         </div>
         {!folded && (
-          <div role="listbox" aria-label={category}>
+          <div className="gbx-group-items" role="listbox" aria-label={category}>
             {/* `selected` read once for the group rather than once per row: it
                 resolves a gear selection by scanning the rows, so asking per row
                 made the render quadratic in the catalogue's size. Fourteen gears

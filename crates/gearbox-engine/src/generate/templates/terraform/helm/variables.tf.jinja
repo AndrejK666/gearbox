@@ -1,0 +1,29 @@
+variable "kubeconfig" {
+  type    = string
+  default = "~/.kube/config"
+}
+
+variable "kube_context" {
+  type        = string
+  description = "Explicit context of the existing target cluster."
+}
+
+variable "namespace" {
+  type    = string
+  default = {{ namespace_json }}
+}
+
+variable "release_name" {
+  type    = string
+  default = {{ product_json }}
+}
+
+variable "chart_directory" {
+  type    = string
+  default = null
+}
+
+variable "values_file" {
+  type    = string
+  default = null
+}

@@ -582,20 +582,55 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `sdk`: The shared UI SDK package directory, as path(...).
     /// * `modules`: Gear ids with UI contributions included in this product.
     /// * `source`: Optional source id; shell and SDK paths are relative to this root.
+    /// * `npm_lock`: Optional path to a tracked npm lock beside the product.
+    /// * `entry_points`: Named UI paths shown as links after deployment.
     fn ui_product<'v>(
         #[starlark(require = named)] shell: &'v SourceAtRecord,
         #[starlark(require = named)] sdk: &'v SourceAtRecord,
         #[starlark(require = named)] modules: UnpackList<String>,
         #[starlark(require = named)] source: Option<String>,
+        #[starlark(require = named)] npm_lock: Option<&'v SourceAtRecord>,
+        #[starlark(require = named)] entry_points: Option<Value<'v>>,
     ) -> anyhow::Result<crate::records::UiProductRecord> {
         if shell.kind != "path" || sdk.kind != "path" {
             return Err(anyhow::anyhow!("UI shell and SDK require path(...)"));
+        }
+        if npm_lock.is_some_and(|lock| lock.kind != "path") {
+            return Err(anyhow::anyhow!("npm_lock requires path(...)"));
+        }
+        let mut entries = Vec::new();
+        if let Some(value) = entry_points {
+            let dict = starlark::values::dict::DictRef::from_value(value).ok_or_else(|| {
+                anyhow::anyhow!("entry_points requires a dictionary of names to UI paths")
+            })?;
+            for (name, route) in dict.iter() {
+                let name = name
+                    .unpack_str()
+                    .ok_or_else(|| anyhow::anyhow!("entry point name must be a string"))?;
+                let route = route
+                    .unpack_str()
+                    .ok_or_else(|| anyhow::anyhow!("entry point path must be a string"))?;
+                if name.trim().is_empty()
+                    || !route.starts_with('/')
+                    || route.starts_with("//")
+                    || route.contains('\\')
+                    || route.contains("..")
+                    || route.chars().any(char::is_control)
+                {
+                    return Err(anyhow::anyhow!(
+                        "entry_points requires nonempty names and same-origin absolute UI paths"
+                    ));
+                }
+                entries.push((name.to_owned(), route.to_owned()));
+            }
         }
         Ok(crate::records::UiProductRecord {
             shell: shell.at.clone().unwrap_or_default(),
             sdk: sdk.at.clone().unwrap_or_default(),
             modules: modules.items,
             source: source.map(gearbox_ir::SourceId::new).transpose()?,
+            npm_lock: npm_lock.and_then(|lock| lock.at.clone()),
+            entry_points: entries,
         })
     }
 

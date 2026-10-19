@@ -5,8 +5,12 @@ import type { SourceId } from "./SourceId";
 /**
  * A product explicitly chooses its shell, SDK and included gear modules.
  */
-export type ProductUi = { 
+export type ProductUi = {
 /**
  * Package directories relative to the selected source, or product description.
  */
-shell: string, sdk: string, modules: Array<GearId>, source?: SourceId | null, };
+shell: string, sdk: string, modules: Array<GearId>, source?: SourceId | null, npm_lock?: string | null,
+/**
+ * Named same-origin UI paths published by deployment adapters.
+ */
+entry_points?: { [key in string]: string }, };

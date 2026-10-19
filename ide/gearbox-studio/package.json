@@ -10,6 +10,8 @@
   ],
   "//dependencies": "Every package this extension imports from, declared. @theia/debug and @theia/test were imported by the two hidden-view overrides and not declared -- it compiled only because npm hoists them into the root node_modules, which is the same shape of bug as an unanchored .gitignore pattern: fine locally, broken in a clean install. Note this comment sits at the top level: a `//` key *inside* `dependencies` is a package name as far as npm is concerned.",
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.303",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@theia/ai-anthropic": "1.75.0",
     "@theia/ai-chat": "1.75.0",
     "@theia/ai-chat-ui": "1.75.0",

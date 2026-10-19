@@ -27,6 +27,11 @@
 //! | `helm/service.yaml` | `helm/<product>/charts/<sub>/templates/service.yaml` |
 //! | `helm/configmap.yaml` | `helm/<product>/charts/<sub>/templates/configmap.yaml` |
 //! | `helm/serviceaccount.yaml` | `helm/<product>/charts/<sub>/templates/serviceaccount.yaml` |
+//! | `ui/index.html` | `ui/index.html` (`product_id`) |
+//! | `terraform/helm/main.tf` | `terraform/main.tf` (`product`) |
+//! | `terraform/helm/variables.tf` | `terraform/variables.tf` (`product_json`, `namespace_json`) |
+//! | `terraform/helm/outputs.tf` | `terraform/outputs.tf` |
+//! | `terraform/helm/README.md` | `terraform/README.md` (`product`) |
 //!
 //! An overlay for a key this build does not render is kept and reported (so
 //! the operator can see it was read) and otherwise unused.
@@ -178,6 +183,19 @@ impl TemplateSet {
     #[must_use]
     pub fn builtin(key: &str) -> Option<&'static str> {
         match key {
+            "ui/index.html" => Some(include_str!("templates/ui/index.html.jinja")),
+            "terraform/helm/main.tf" => {
+                Some(include_str!("templates/terraform/helm/main.tf.jinja"))
+            }
+            "terraform/helm/variables.tf" => {
+                Some(include_str!("templates/terraform/helm/variables.tf.jinja"))
+            }
+            "terraform/helm/outputs.tf" => {
+                Some(include_str!("templates/terraform/helm/outputs.tf.jinja"))
+            }
+            "terraform/helm/README.md" => {
+                Some(include_str!("templates/terraform/helm/README.md.jinja"))
+            }
             "main.rs" => Some(include_str!("templates/main.rs.jinja")),
             "worker_main.rs" => Some(include_str!("templates/worker_main.rs.jinja")),
             "registered_gears.rs" => Some(include_str!("templates/registered_gears.rs.jinja")),

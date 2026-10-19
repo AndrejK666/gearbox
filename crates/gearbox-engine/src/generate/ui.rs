@@ -12,7 +12,26 @@ fn invalid(message: impl Into<String>) -> GenerateError {
 
 fn file(path: &str, bytes: impl Into<Vec<u8>>) -> Result<FileEntry, GenerateError> {
     let bytes = bytes.into();
-    let kind = if std::str::from_utf8(&bytes).is_ok() {
+    let binary_extension = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| {
+            matches!(
+                e.to_ascii_lowercase().as_str(),
+                "woff"
+                    | "woff2"
+                    | "ttf"
+                    | "otf"
+                    | "png"
+                    | "jpg"
+                    | "jpeg"
+                    | "webp"
+                    | "gif"
+                    | "ico"
+                    | "bin"
+            )
+        });
+    let kind = if !binary_extension && std::str::from_utf8(&bytes).is_ok() {
         FileKind::Text
     } else {
         FileKind::Binary
@@ -252,7 +271,41 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
     let root = json!({"name":format!("{}-ui",input.lock.product.id),"version":input.lock.product.version,"private":true,"type":"module",
         "workspaces":["packages/*"],"scripts":{"build":"tsc --noEmit && vite build","dev":"vite --host 127.0.0.1","test":"vitest run"},
         "dependencies":packages[1].manifest["dependencies"],"devDependencies":packages[1].manifest["devDependencies"]});
-    let lock = json!({"schemaVersion":1,"productLockHash":input.lock.product.lock_hash,
+    let npm_lock = if let Some(path) = &ui.npm_lock {
+        let relative = RelPath::new(path).map_err(|e| invalid(e.to_string()))?;
+        let product_dir = input
+            .product_dir
+            .ok_or_else(|| invalid("npm_lock needs the product directory"))?
+            .canonicalize()
+            .map_err(|e| invalid(e.to_string()))?;
+        let actual = product_dir
+            .join(relative.as_str())
+            .canonicalize()
+            .map_err(|e| invalid(format!("npm lock: {e}")))?;
+        if !actual.starts_with(&product_dir) {
+            return Err(invalid("npm lock escapes the product directory"));
+        }
+        let bytes = std::fs::read(actual).map_err(|e| invalid(e.to_string()))?;
+        let npm: Value =
+            serde_json::from_slice(&bytes).map_err(|e| invalid(format!("npm lock JSON: {e}")))?;
+        if npm["lockfileVersion"] != 3
+            || npm["packages"][""]["name"] != root["name"]
+            || npm["packages"][""]["version"] != root["version"]
+            || npm["packages"][""]["dependencies"] != root["dependencies"]
+            || npm["packages"][""]["devDependencies"] != root["devDependencies"]
+        {
+            return Err(invalid(
+                "npm lock does not match the generated root dependencies; update the tracked npm lock",
+            ));
+        }
+        Some((
+            json!({"path":path,"blake3":blake3::hash(&bytes).to_hex().to_string()}),
+            bytes,
+        ))
+    } else {
+        None
+    };
+    let lock = json!({"schemaVersion":1,"productLockHash":input.lock.product.lock_hash,"entryPoints":ui.entry_points,"npmLock":npm_lock.as_ref().map(|(metadata,_)|metadata),
         "packages":packages.iter().map(|p|json!({"name":p.name,"version":p.manifest["version"],"exports":p.manifest["exports"],"blake3":p.hash})).collect::<Vec<_>>()});
     let registry = format!(
         "{}\nexport const modules = [{}];\n",
@@ -268,11 +321,14 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
     let mut out = vec![file("ui/package.json",serde_json::to_vec_pretty(&root).map_err(|e|invalid(e.to_string()))?)?,
         file("ui/ui.lock.json",serde_json::to_vec_pretty(&lock).map_err(|e|invalid(e.to_string()))?)?,
         file("ui/src/module-registry.ts",registry.into_bytes())?,file("ui/src/main.tsx",main.into_bytes())?,
-        file("ui/index.html",String::from_utf8_lossy(br#"<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>PRODUCT_TITLE</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>"#).replace("PRODUCT_TITLE", &input.lock.product.id).into_bytes())?,
+        file("ui/index.html",super::templates::render("UI index",input.templates.get("ui/index.html")?,minijinja::context!{product_id => &input.lock.product.id})?.into_bytes())?,
         file("ui/tsconfig.json",br#"{"compilerOptions":{"target":"ES2022","lib":["ES2022","DOM","DOM.Iterable"],"module":"ESNext","moduleResolution":"Bundler","jsx":"react-jsx","strict":true,"skipLibCheck":true,"noEmit":true,"esModuleInterop":true,"allowImportingTsExtensions":true},"include":["src","packages"]}"#.to_vec())?,
         file("ui/vite.config.ts",b"import {defineConfig} from 'vite';import react from '@vitejs/plugin-react';import tailwindcss from '@tailwindcss/vite';export default defineConfig({plugins:[react(),tailwindcss()],server:{strictPort:true,proxy:{'/api':{target:'http://127.0.0.1:18087',rewrite:p=>p.slice(4)}}}});\n".to_vec())?,
         file("ui/.dockerignore",b"node_modules\ndist\n.git\n.env*\n".to_vec())?,
         file("ui/Dockerfile",b"FROM node:24.21.0-alpine AS build\nWORKDIR /app\nCOPY . .\nRUN npm ci && npm run build\nFROM nginxinc/nginx-unprivileged:1.28-alpine\nCOPY --from=build /app/dist /usr/share/nginx/html\nCOPY nginx.conf /etc/nginx/nginx.conf\nUSER 65532:65532\nEXPOSE 8080\n".to_vec())?];
+    if let Some((_, bytes)) = npm_lock {
+        out.push(file("ui/package-lock.json", bytes)?);
+    }
     for package in packages {
         out.extend(package.files);
     }
@@ -384,10 +440,10 @@ mod tests {
     impl Drop for TestPackage {
         fn drop(&mut self) {
             // Only the three explicitly created files/directories; no recursive removal.
-            let _ = std::fs::remove_file(self.0.join("src/index.ts"));
-            let _ = std::fs::remove_file(self.0.join("package.json"));
-            let _ = std::fs::remove_dir(self.0.join("src"));
-            let _ = std::fs::remove_dir(&self.0);
+            drop(std::fs::remove_file(self.0.join("src/index.ts")));
+            drop(std::fs::remove_file(self.0.join("package.json")));
+            drop(std::fs::remove_dir(self.0.join("src")));
+            drop(std::fs::remove_dir(&self.0));
         }
     }
     #[test]

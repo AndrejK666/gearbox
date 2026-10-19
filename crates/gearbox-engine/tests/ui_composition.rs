@@ -19,9 +19,11 @@ fn ui_requires_its_declared_backends_in_the_selected_profile() {
     catalogue.gears.insert(required.id.clone(), required);
     let mut intent = fixtures::intent(&["front"]);
     intent.ui = Some(gearbox_ir::ui::ProductUi {
+        entry_points: Default::default(),
         shell: "ui/shell".into(),
         sdk: "ui/sdk".into(),
         source: None,
+        npm_lock: None,
         modules: BTreeSet::from([fixtures::gid("front")]),
     });
     let result = gearbox_engine::resolve::resolve(&catalogue, &intent, &intent.default_profile);

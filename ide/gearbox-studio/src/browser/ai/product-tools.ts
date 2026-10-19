@@ -14,8 +14,9 @@
 
 import { inject, injectable } from "@theia/core/shared/inversify";
 import { createToolCallError } from "@theia/ai-core";
-import type { ToolCallResult, ToolProvider, ToolRequest } from "@theia/ai-core";
+import type { ToolCallResult, ToolProvider } from "@theia/ai-core";
 
+import type { TitledToolRequest } from "../../common/tool-presentation";
 import { CatalogueStore } from "../catalogue-store";
 import { ProductEditService } from "../product-edit-service";
 
@@ -26,10 +27,11 @@ export class ProductGearTool implements ToolProvider {
   @inject(ProductEditService) protected readonly edits!: ProductEditService;
   @inject(CatalogueStore) protected readonly catalogue!: CatalogueStore;
 
-  getTool(): ToolRequest {
+  getTool(): TitledToolRequest {
     return {
       id: ProductGearTool.ID,
       name: ProductGearTool.ID,
+      title: "Change product composition",
       description:
         "Add a gear to the open Gearbox product, or remove it if it is already selected. " +
         "The gear is named by its kebab-case id, e.g. `tenant-resolver`. A preview of the " +

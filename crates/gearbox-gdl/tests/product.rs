@@ -887,3 +887,21 @@ fn postgres_refuses_literal_defaulted_passwords_and_invalid_connections() {
         assert!(eval(&source).0.is_none(), "accepted {database}");
     }
 }
+
+#[test]
+fn ui_entry_points_are_named_same_origin_paths() {
+    let (intent, codes, messages) = eval(&product(
+        "ui = ui_product(shell = path(\"shell\"), sdk = path(\"sdk\"), modules = [], entry_points = {\"Console\": \"/#operator\"}),",
+    ));
+    assert!(codes.is_empty(), "{messages}");
+    assert_eq!(
+        intent.unwrap().ui.unwrap().entry_points["Console"],
+        "/#operator"
+    );
+    for route in ["https://example.com", "//example.com", "/../private"] {
+        let (_, codes, _) = eval(&product(&format!(
+            "ui = ui_product(shell = path(\"shell\"), sdk = path(\"sdk\"), modules = [], entry_points = {{\"Console\": \"{route}\"}}),"
+        )));
+        assert!(!codes.is_empty());
+    }
+}

@@ -422,11 +422,14 @@ fn collect_orphaned_files(
         // (`.base`, `.apply-staging`), which are directories; applying it to
         // files would exempt `docker/.dockerignore`, which this tool writes and
         // could therefore orphan. For a file the marker is the gate anyway.
+        // Build caches and operator links are not generator-owned output.
+        if path.is_symlink() {
+            continue;
+        }
         let dotted_dir = path.is_dir()
-            && path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with('.'));
+            && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                n.starts_with('.') || matches!(n, "node_modules" | "target" | "dist")
+            });
         if dotted_dir {
             continue;
         }
@@ -562,7 +565,8 @@ fn to_plan(staged: &Staged) -> FilePlan {
         ownership: staged.entry.ownership,
         kind: staged.entry.kind,
         blake3: format!("blake3:{}", blake3::hash(&staged.final_bytes).to_hex()),
-        preview_available: std::str::from_utf8(&staged.final_bytes).is_ok(),
+        preview_available: staged.entry.kind != gearbox_ir::FileKind::Binary
+            && std::str::from_utf8(&staged.final_bytes).is_ok(),
     }
 }
 

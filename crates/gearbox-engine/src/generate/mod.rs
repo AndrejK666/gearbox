@@ -47,6 +47,7 @@ mod merge3;
 mod paths;
 mod rust;
 mod templates;
+mod terraform;
 mod ui;
 mod workspace;
 
@@ -349,6 +350,9 @@ pub fn generate(input: &GenerateInput<'_>) -> Result<Generated, GenerateError> {
         insert(&mut files, entry)?;
     }
     for entry in helm::files(input, &files)? {
+        insert(&mut files, entry)?;
+    }
+    for entry in terraform::files(input)? {
         insert(&mut files, entry)?;
     }
 

@@ -2157,9 +2157,11 @@ fn scaffold_gear_files(
 # Every field: {reference}
 # The commented lines below are fields this gear may need. Uncomment one to use it.
 
+gdl_version = "{version}"
+
 gear(
-    gdl_version = "{version}",
     name = {name},
+    deps = [],  # Keep this list equal to #[toolkit::gear(deps = [...])].
     # New code makes no promise yet. Raise it -- preview, then stable -- when
     # the gear has earned it; there is no default because `stable` would be one.
     maturity = "experimental",
@@ -2457,8 +2459,8 @@ fn lib_source(
         crate::protocol::GearKind::Minimal => String::new(),
         crate::protocol::GearKind::Service => String::from(
             "\n// Next: runtime capabilities and co-located deps go on the attribute above\n\
-             // (`capabilities = [...]`, `deps = [...]`) -- restating them in gear.gdl is\n\
-             // refused (GBX0210). A single `ctx.config*()` call in `init` links this gear\n\
+             // (`capabilities = [...]`, `deps = [...]`). Keep deps in gear.gdl equal;\n\
+             // a mismatch is GBX0214. A single `ctx.config*()` call in `init` links this gear\n\
              // to its configuration struct; uncomment `config_schema` in gear.gdl then.\n",
         ),
         crate::protocol::GearKind::Plugin => match plugin {
