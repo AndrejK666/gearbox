@@ -315,7 +315,7 @@ export const DIAGNOSTIC_CATALOGUE: {
     title: "REST gears with no REST host",
     severity: "error",
     domain: "topology",
-    docs: "A process exposes REST interfaces but contains no REST host to mount them.",
+    docs: "A process's REST interfaces have no REST host that can serve them.\n\nA host process with REST gears and no `rest_host` gear is served by the\nruntime's built-in HTTP host (gears-rust ADR-0011 section 5): the generator writes\nits `http_host` section. That host is a public listener -- only exposed\noperations, internal ones 404 -- so this is reported when a consumer in\nanother application reaches a gear in such a process over REST, and when\nno address could be assigned at all.",
     requiresEvidence: false,
     prevents: "RegistryError::RestRequiresHost in cf-gears-toolkit",
   },

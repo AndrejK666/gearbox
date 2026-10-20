@@ -199,19 +199,58 @@ fn a_rest_host_in_a_worker_is_refused() {
 }
 
 #[test]
-fn rest_gears_with_no_host_are_refused() {
+fn rest_gears_with_no_host_are_served_by_the_builtin_host() {
+    // The runtime's built-in HTTP host serves them (gears-rust ADR-0011 section 5
+    // step 4) once the configuration has an `http_host` section, so the process
+    // is given that listener's address instead of being refused.
     let cat = support::catalogue_of(vec![support::gear_with_caps(
         "api",
         &[RuntimeCap::Rest],
         &[],
     )]);
     let r = resolve(&cat, &support::intent(&["api"]), &pid("dev"));
+    assert!(
+        !r.diagnostics
+            .iter()
+            .any(|d| d.code == DiagnosticCode::TopologyRestWithoutHost),
+        "{:?}",
+        r.diagnostics
+    );
+    let app = &r.partition.applications[0];
+    assert_eq!(app.kind, gearbox_ir::ApplicationKind::Host);
+    assert_eq!(
+        app.serve.as_ref().map(|s| s.listen_addr.as_str()),
+        Some("127.0.0.1:8080")
+    );
+}
+
+#[test]
+fn a_remote_consumer_of_a_builtin_host_provider_is_refused() {
+    // The built-in host is a public listener: exposed operations only, and a
+    // contract's REST routes are internal. A worker that reaches a gear in such
+    // a process resolves, starts, and gets 404 on every call.
+    let mut cat = support::catalogue_with_declared_edge();
+    cat.gears
+        .get_mut(&support::gid("provider"))
+        .unwrap()
+        .runtime_caps = [RuntimeCap::Rest].into_iter().collect();
+    // `anchor` keeps `provider` in the host process through `deps`.
+    let anchor = support::gear_with_caps("anchor", &[], &["provider"]);
+    cat.gears.insert(anchor.id.clone(), anchor);
+    let mut intent = support::self_hosted(&["anchor", "host", "provider"], Discovery::Static, None);
+    support::pin(&mut intent, "consumer-app", "host", 1);
+
+    let r = resolve(&cat, &intent, &pid("local"));
     let d = r
         .diagnostics
         .iter()
         .find(|d| d.code == DiagnosticCode::TopologyRestWithoutHost)
         .expect("GBX0305");
-    assert!(d.message.contains("api"), "{}", d.message);
+    assert!(
+        d.message.contains("consumer-app") && d.message.contains("built-in HTTP host"),
+        "{}",
+        d.message
+    );
 }
 
 #[test]

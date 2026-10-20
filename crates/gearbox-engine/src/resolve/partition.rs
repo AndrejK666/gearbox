@@ -160,9 +160,64 @@ pub fn partition(
 
     assign_endpoints(catalogue, declaration, &mut applications);
     assign_spawns(declaration, &mut applications, uri, diagnostics);
+    assign_builtin_hosts(catalogue, declaration, &mut applications);
     assign_chart_fields(declaration, product_version, &mut applications);
     report_orphans(closure, &applications, uri, diagnostics);
     Partition { applications }
+}
+
+/// The base port the built-in HTTP host of a host process is allocated from.
+const BUILTIN_HOST_BASE_PORT: u16 = 8080;
+
+/// Give a host process with REST gears and no `rest_host` gear the address of
+/// the runtime's built-in HTTP host (gears-rust ADR-0011 section 5, step 4).
+///
+/// The runtime serves those gears itself when the configuration has an
+/// `http_host` section, as a public listener: only `.exposed()` operations, the
+/// platform header removed first, internal operations unreachable over HTTP.
+/// The address rides [`ResolvedApplication::serve`] because it is the same kind
+/// of fact a worker's is -- a top-level listener no gear's key configures -- and
+/// the image and chart already publish that port. A host has no directory
+/// presence, so the advertised URI is informational.
+fn assign_builtin_hosts(
+    catalogue: &Catalogue,
+    declaration: &DeploymentProfileDecl,
+    applications: &mut [ResolvedApplication],
+) {
+    let mut taken: BTreeSet<u16> = applications
+        .iter()
+        .flat_map(|p| {
+            p.listens
+                .iter()
+                .map(|e| e.address.as_str())
+                .chain(p.serve.iter().map(|s| s.listen_addr.as_str()))
+        })
+        .filter_map(|address| address.rsplit_once(':').and_then(|(_, p)| p.parse().ok()))
+        .collect();
+    let mut order: Vec<usize> = (0..applications.len()).collect();
+    order.sort_by(|a, b| applications[*a].name.cmp(&applications[*b].name));
+    for index in order {
+        let application = &applications[index];
+        if application.kind != ApplicationKind::Host
+            || application.rest_host.is_some()
+            || !application
+                .gears
+                .iter()
+                .any(|g| has_cap(catalogue, g, RuntimeCap::Rest))
+        {
+            continue;
+        }
+        let Some(port) = next_free_port(BUILTIN_HOST_BASE_PORT, &taken) else {
+            continue;
+        };
+        taken.insert(port);
+        let address = format!("{}:{port}", bind_host(declaration));
+        applications[index].serve = Some(WorkerServe {
+            advertise_uri: format!("http://{address}"),
+            listen_addr: address,
+            allow_loopback_advertise: allows_loopback(declaration),
+        });
+    }
 }
 
 /// The base port a worker's own REST listener is allocated from.

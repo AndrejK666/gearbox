@@ -528,7 +528,14 @@ existed there was nothing to write it against.
 
 **REST gears with no REST host**
 
-A process exposes REST interfaces but contains no REST host to mount them.
+A process's REST interfaces have no REST host that can serve them.
+
+A host process with REST gears and no `rest_host` gear is served by the
+runtime's built-in HTTP host (gears-rust ADR-0011 section 5): the generator writes
+its `http_host` section. That host is a public listener -- only exposed
+operations, internal ones 404 -- so this is reported when a consumer in
+another application reaches a gear in such a process over REST, and when
+no address could be assigned at all.
 
 *Prevents `RegistryError::RestRequiresHost` in `cf-gears-toolkit`. The reference is resolved against the `gears-rust` checkout by `gearbox-project`'s corpus test.*
 

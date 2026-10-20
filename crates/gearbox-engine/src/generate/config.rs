@@ -44,7 +44,24 @@ struct AppConfig {
     /// happen, so this is written whenever the process is a worker.
     #[serde(skip_serializing_if = "Option::is_none")]
     oop_http: Option<OopHttpSection>,
+    /// The runtime's built-in HTTP host, for a host process whose REST gears
+    /// have no REST host gear. Without it the runtime refuses to start
+    /// (`RestRequiresHost`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    http_host: Option<HttpHostSection>,
+    /// A host's outbound platform credential: what its directory-resolving
+    /// clients attach when a consumed contract is served by another process (an
+    /// `AuthZ` plane in its own unit). A worker carries it in `oop_http` instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    internal_auth: Option<Value>,
     gears: BTreeMap<String, GearSection>,
+}
+
+/// The built-in host's listener. Public by the runtime's default: only exposed
+/// operations are served.
+#[derive(Serialize)]
+struct HttpHostSection {
+    listen_addr: String,
 }
 
 #[derive(Serialize)]
@@ -266,12 +283,24 @@ pub fn app_config(
     let config = AppConfig {
         server: ServerSection { home_dir },
         database,
-        oop_http: application.serve.as_ref().map(|serve| OopHttpSection {
-            listen_addr: serve.listen_addr.clone(),
-            advertise_uri: serve.advertise_uri.clone(),
-            allow_loopback_advertise: serve.allow_loopback_advertise,
-            internal_auth: internal_auth.clone(),
-        }),
+        oop_http: application
+            .serve
+            .as_ref()
+            .filter(|_| application.is_worker())
+            .map(|serve| OopHttpSection {
+                listen_addr: serve.listen_addr.clone(),
+                advertise_uri: serve.advertise_uri.clone(),
+                allow_loopback_advertise: serve.allow_loopback_advertise,
+                internal_auth: internal_auth.clone(),
+            }),
+        http_host: application
+            .serve
+            .as_ref()
+            .filter(|_| !application.is_worker())
+            .map(|serve| HttpHostSection {
+                listen_addr: serve.listen_addr.clone(),
+            }),
+        internal_auth: internal_auth.filter(|_| !application.is_worker()),
         gears,
     };
 

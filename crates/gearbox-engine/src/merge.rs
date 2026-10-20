@@ -137,15 +137,14 @@ pub fn merge(
     };
 
     // The one cross-check the projected catalogue still needs, and it only
-    // applies to gears that consume: `#[toolkit::consumes]` derives its
-    // endpoint-override config key from the kebab-case of the struct
-    // identifier, not from `name`, so a mismatch makes that key unreachable and
-    // the runtime only warns. Gears that consume nothing are unaffected --
-    // three of the eight slice gears differ here harmlessly.
+    // applies to gears that consume. `#[toolkit::consumes]` written above
+    // `#[toolkit::gear]` keys its config by the declared `name`; written below,
+    // it falls back to the kebab-case of the struct identifier, and a mismatch
+    // makes the consumer_wiring key unreachable. Gears that consume nothing are
+    // unaffected -- three of the eight slice gears differ here harmlessly.
     if !decl.consumes.is_empty() {
-        use heck::ToKebabCase;
-        let derived = projected.struct_ident.to_kebab_case();
-        if derived != projected.name {
+        let derived = &projected.consumer_wiring_key;
+        if *derived != projected.name {
             diagnostics.push(
                 Diagnostic::error(
                     DiagnosticCode::ValidateConsumerWiringMismatch,
@@ -157,8 +156,8 @@ pub fn merge(
                         projected.struct_ident, projected.name
                     ),
                     format!(
-                        "rename the struct to match, or set name = \"{derived}\" in \
-                         #[toolkit::gear]"
+                        "write #[toolkit::consumes] above #[toolkit::gear], rename the struct to \
+                         match, or set name = \"{derived}\" in #[toolkit::gear]"
                     ),
                 )
                 .at(Location::file(uri.to_owned()))

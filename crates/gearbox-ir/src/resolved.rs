@@ -162,8 +162,11 @@ pub struct ResolvedEndpoint {
 
 /// Where a worker serves its own REST surface, and how it advertises it.
 ///
-/// Only a worker has one. A host's REST-contributing gears mount on its REST
-/// host; a worker has none -- `GBX0312` refuses one -- and serves through the
+/// A worker has one, and so does a host process with REST gears and no REST
+/// host gear: the runtime's built-in HTTP host serves those (gears-rust ADR-0011
+/// section 5), written as `http_host` rather than `oop_http`. A host with a REST host
+/// gear has none -- its REST-contributing gears mount on that gear. A worker has
+/// no REST host gear -- `GBX0312` refuses one -- and serves through the
 /// out-of-process runtime's own listener instead. That listener is configured
 /// by a **top-level** `oop_http` section rather than by any gear's key, which is
 /// why this cannot ride [`ResolvedApplication::listens`].

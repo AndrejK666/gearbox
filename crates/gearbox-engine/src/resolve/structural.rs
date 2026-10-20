@@ -392,8 +392,12 @@ fn check_rest_without_host(
     diagnostics: &mut Diagnostics,
 ) {
     // Only meaningful for a host process: a worker publishes through `oop_serve`,
-    // which needs no `rest_host` gear at all.
-    if application.kind != ApplicationKind::Host || application.rest_host.is_some() {
+    // which needs no `rest_host` gear at all. A host with an address for the
+    // built-in HTTP host is served by it (`partition::assign_builtin_hosts`).
+    if application.kind != ApplicationKind::Host
+        || application.rest_host.is_some()
+        || application.serve.is_some()
+    {
         return;
     }
     let rest_gears: Vec<&GearId> = application
@@ -422,6 +426,59 @@ fn check_rest_without_host(
         )
         .at(Location(uri)),
     );
+}
+
+/// A remote consumer of a gear behind the built-in HTTP host.
+///
+/// That host is a public listener (gears-rust ADR-0011 section 5): it serves only
+/// `.exposed()` operations and answers 404 for the rest, and a contract's REST
+/// routes are internal. The binding resolves, the consumer starts, and every
+/// call fails -- so it is the same refusal as a process with no REST host at all,
+/// reported under the same code.
+pub fn check_builtin_host_providers(
+    partition: &Partition,
+    bindings: &[gearbox_ir::ResolvedBinding],
+    uri: &str,
+    diagnostics: &mut Diagnostics,
+) {
+    // Only REST: a gRPC binding is served by the process's hub, not its HTTP host.
+    for binding in bindings
+        .iter()
+        .filter(|b| b.is_remote() && b.transport == gearbox_ir::Transport::Rest)
+    {
+        let Some(provider) = partition
+            .applications
+            .iter()
+            .find(|a| a.name == binding.provider_application)
+        else {
+            continue;
+        };
+        if provider.kind != ApplicationKind::Host
+            || provider.rest_host.is_some()
+            || provider.serve.is_none()
+        {
+            continue;
+        }
+        diagnostics.push(
+            Diagnostic::error(
+                DiagnosticCode::TopologyRestWithoutHost,
+                format!(
+                    "`{}` in application `{}` reaches `{}` in `{}` over REST, but `{}` has no REST \
+                     host gear: its built-in HTTP host serves only exposed operations",
+                    binding.consumer,
+                    binding.consumer_application,
+                    binding.provider,
+                    binding.provider_application,
+                    binding.provider_application,
+                ),
+                "select a gear with the `rest_host` capability (api-gateway) into the provider's \
+                 application -- its internal listener serves every operation -- or place the \
+                 consumer in the same application",
+            )
+            .with_evidence("libs/toolkit/src/runtime/http_host.rs:1")
+            .at(Location(uri)),
+        );
+    }
 }
 
 /// Directory discovery needs two gears the description never names.

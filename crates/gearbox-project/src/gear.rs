@@ -41,6 +41,11 @@ pub struct ProjectedGear {
     /// override. That is the one cross-check the projected catalogue still needs
     /// (GBX0206).
     pub struct_ident: String,
+    /// The gear name `#[toolkit::consumes]` keys `consumer_wiring` by. Written
+    /// *above* `#[toolkit::gear]`, the consumes macro expands first and reads the
+    /// declared `name`; otherwise it falls back to the kebab-case of
+    /// [`struct_ident`](Self::struct_ident).
+    pub consumer_wiring_key: String,
     /// Arguments the macro accepts but this parser does not model.
     ///
     /// Recorded rather than dropped so a future macro argument surfaces as a
@@ -252,6 +257,22 @@ pub fn project_gear(site: &crate::attribute::AttributeSite<'_>) -> syn::Result<P
     projected.struct_ident.clone_from(&site.struct_ident);
     projected.provides = crate::contract::project_provides(site.item_attrs)?;
     projected.consumes = crate::contract::project_consumes(site.item_attrs)?;
+    let gear_position = site
+        .item_attrs
+        .iter()
+        .position(|attr| std::ptr::eq(attr, site.attr));
+    let reads_gear_name = gear_position.is_some_and(|gear| {
+        site.item_attrs
+            .iter()
+            .enumerate()
+            .filter(|(_, attr)| crate::contract::is_consumes_attribute(attr))
+            .all(|(index, _)| index < gear)
+    });
+    projected.consumer_wiring_key = if reads_gear_name {
+        projected.name.clone()
+    } else {
+        heck::ToKebabCase::to_kebab_case(projected.struct_ident.as_str())
+    };
     // `AttributeSite` carries the item's whole attribute list -- the same list
     // `provides` is read from -- so the cfg is here to be read. It used to be
     // left `false` for a caller to fill in, which made the primary projection

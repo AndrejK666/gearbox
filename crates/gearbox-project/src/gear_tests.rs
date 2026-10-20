@@ -192,3 +192,28 @@ fn a_cfg_anywhere_on_the_module_path_counts() {
         "the gate is two levels up, and the chain has to be walked to see it"
     );
 }
+
+/// `#[toolkit::consumes]` above `#[toolkit::gear]` keys its `consumer_wiring` by
+/// the declared gear name; below it, by the kebab-case of the struct.
+#[test]
+fn consumes_above_the_gear_attribute_reads_the_gear_name() {
+    let above = project(&[rust_file(
+        "src/gear.rs",
+        r#"
+        #[toolkit::consumes(contract = authz_resolver_sdk::AuthZResolverApi, from = "authz-resolver")]
+        #[toolkit::gear(name = "credstore", capabilities = [system])]
+        pub struct CredStoreGear;
+        "#,
+    )]);
+    assert_eq!(above.consumer_wiring_key, "credstore");
+
+    let below = project(&[rust_file(
+        "src/gear.rs",
+        r#"
+        #[toolkit::gear(name = "credstore", capabilities = [system])]
+        #[toolkit::consumes(contract = authz_resolver_sdk::AuthZResolverApi, from = "authz-resolver")]
+        pub struct CredStoreGear;
+        "#,
+    )]);
+    assert_eq!(below.consumer_wiring_key, "cred-store-gear");
+}

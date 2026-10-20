@@ -842,6 +842,37 @@ fn a_spawned_gear_is_configured_by_the_host_but_not_linked_into_it() {
     );
 }
 
+/// A host process with REST gears and no REST host gear is served by the
+/// runtime's built-in HTTP host, which reads a top-level `http_host` section
+/// (gears-rust ADR-0011 section 5, step 4). It is not `oop_http`: a host has no
+/// directory presence to advertise.
+#[test]
+fn a_host_without_a_rest_host_gear_configures_the_builtin_http_host() {
+    let Some((mut lock, source_roots)) = resolve("dev") else {
+        return;
+    };
+    let host = lock
+        .applications
+        .iter_mut()
+        .find(|p| !p.is_worker())
+        .expect("the dev profile has a host");
+    host.rest_host = None;
+    host.serve = Some(gearbox_ir::WorkerServe {
+        listen_addr: "127.0.0.1:8080".to_owned(),
+        advertise_uri: "http://127.0.0.1:8080".to_owned(),
+        allow_loopback_advertise: true,
+    });
+    let name = host.name.clone();
+    let files = generate_tree(&lock, &source_roots, &out_root());
+
+    let config = text(&files.files, &format!("config/{name}.yaml"));
+    assert!(
+        config.contains("http_host:\n  listen_addr: 127.0.0.1:8080"),
+        "{config}"
+    );
+    assert!(!config.contains("oop_http:"), "{config}");
+}
+
 /// Without `oop_http` the runtime silently takes the legacy gRPC-only path and
 /// never registers the gear, which would make the lock's `via directory` a
 /// claim about something that cannot happen.
@@ -853,6 +884,7 @@ fn a_worker_is_configured_to_serve_rest_and_advertise_itself() {
 
     let worker_config = text(&files.files, "config/api-contracts.yaml");
     assert!(worker_config.contains("oop_http:"), "{worker_config}");
+    assert!(!worker_config.contains("http_host:"), "{worker_config}");
     assert!(worker_config.contains("advertise_uri:"), "{worker_config}");
     // The runtime defaults this to false and refuses to start on a loopback
     // advertise without it.
