@@ -69,6 +69,9 @@ pub struct Inputs<'a> {
     pub selected: &'a BTreeSet<GearId>,
     /// Gears `prefer.isolate` asked to run in their own process.
     pub isolates: &'a BTreeSet<GearId>,
+    /// The description's `grpc-hub` `listen_addr`, when it sets one: a
+    /// production self-hosted profile keeps a socket path it chose.
+    pub hub_listen: Option<&'a str>,
 }
 
 /// Assign gears to processes for one profile.
@@ -158,10 +161,18 @@ pub fn partition(
         }
     }
 
-    assign_endpoints(catalogue, declaration, &mut applications);
+    assign_endpoints(
+        catalogue,
+        declaration,
+        product_id,
+        input.hub_listen,
+        &mut applications,
+    );
     assign_spawns(declaration, &mut applications, uri, diagnostics);
     assign_builtin_hosts(catalogue, declaration, &mut applications);
+    assign_internal_listener(declaration, &mut applications);
     assign_chart_fields(declaration, product_version, &mut applications);
+    assign_unit_charts(catalogue, declaration, product_version, &mut applications);
     report_orphans(closure, &applications, uri, diagnostics);
     report_duplicated_by_deps(input, &applications, uri, diagnostics);
     Partition { applications }
@@ -379,8 +390,41 @@ fn allows_loopback(declaration: &DeploymentProfileDecl) -> bool {
 fn assign_endpoints(
     catalogue: &Catalogue,
     declaration: &DeploymentProfileDecl,
+    product_id: &str,
+    hub_listen: Option<&str>,
     applications: &mut [ResolvedApplication],
 ) {
+    // A production single-node self-hosted hub is a socket in a private
+    // directory, not TCP (gears-rust ADR-0011 section 1), one per process so
+    // two hubs never bind one path: under the product's home, by application.
+    // The description's own `uds://` path is the directory's hub -- the one
+    // workers are handed (the host passes its bound endpoint on). The hub
+    // creates the directory 0700 and the socket 0600.
+    let private_sockets = matches!(declaration, DeploymentProfileDecl::SelfHosted { .. })
+        && !declaration.development();
+    let private_socket = |application: &ResolvedApplication| -> Option<String> {
+        if !private_sockets {
+            return None;
+        }
+        let hosts_directory = application
+            .gears
+            .iter()
+            .any(|g| g.as_str() == "service-discovery");
+        Some(
+            hub_listen
+                .filter(|addr| hosts_directory && addr.starts_with("uds://"))
+                .map_or_else(
+                    || {
+                        format!(
+                            "uds://~/.cf-gears/{product_id}/{}/run/{}/grpc-hub.sock",
+                            declaration.id(),
+                            application.name
+                        )
+                    },
+                    str::to_owned,
+                ),
+        )
+    };
     let mut taken: BTreeSet<u16> = BTreeSet::new();
     let host = bind_host(declaration);
     let loopback = allows_loopback(declaration);
@@ -394,6 +438,7 @@ fn assign_endpoints(
 
     for index in order {
         let gears = applications[index].gears.clone();
+        let socket = private_socket(&applications[index]);
         let mut listens = Vec::new();
         for gear in gears {
             let Some(descriptor) = catalogue.gears.get(&gear) else {
@@ -411,12 +456,18 @@ fn assign_endpoints(
                 // One process has no caller for the hub: every gRPC service is
                 // reached in-process. `none` registers them and binds nothing
                 // (gears-rust ADR-0011 section 1; Gearbox ADR-0026 section 6).
-                if embedded && gear.as_str() == GRPC_HUB {
+                if gear.as_str() == GRPC_HUB
+                    && let Some(address) = if embedded {
+                        Some(UNBOUND.to_owned())
+                    } else {
+                        socket.clone()
+                    }
+                {
                     listens.push(ResolvedEndpoint {
                         name: served.name.clone(),
                         gear: gear.clone(),
                         config_key: config_key.clone(),
-                        address: UNBOUND.to_owned(),
+                        address,
                         advertise_uri: None,
                         allow_loopback_advertise: loopback,
                     });
@@ -468,12 +519,157 @@ fn assign_chart_fields(
             product_version,
         ));
         application.service_port = contract_port(application);
+        let subchart = application.name.to_string();
+        for endpoint in &mut application.listens {
+            if endpoint.name == "internal"
+                && let Some(port) = parse_port(&endpoint.address)
+            {
+                endpoint.advertise_uri = Some(format!(
+                    "http://{subchart}.{namespace}.svc.cluster.local:{port}"
+                ));
+                endpoint.allow_loopback_advertise = false;
+            }
+        }
         if let Some(uri) = cluster_dns(application, namespace)
             && let Some(serve) = application.serve.as_mut()
         {
             serve.advertise_uri = uri;
             serve.allow_loopback_advertise = false;
         }
+    }
+}
+
+/// The gateway's internal listener, for a production profile with more than
+/// one process (gears-rust ADR-0011 §1; Gearbox ADR-0026 §6).
+///
+/// The public listener of a production gateway serves only exposed operations,
+/// so the operations other processes call -- the `AuthZ` plane's `evaluate`,
+/// Types Registry, the directory's REST -- need a listener of their own. It is
+/// what the gateway advertises in the directory, and what a static endpoint to
+/// the host names (`contract_port` prefers it). A development profile keeps
+/// the single listener it always had; one process has no caller for it.
+fn assign_internal_listener(
+    declaration: &DeploymentProfileDecl,
+    applications: &mut [ResolvedApplication],
+) {
+    if declaration.development()
+        || matches!(declaration, DeploymentProfileDecl::Embedded { .. })
+        || applications.len() < 2
+    {
+        return;
+    }
+    let mut taken: BTreeSet<u16> = applications
+        .iter()
+        .flat_map(|p| {
+            p.listens
+                .iter()
+                .map(|e| e.address.as_str())
+                .chain(p.serve.iter().map(|s| s.listen_addr.as_str()))
+        })
+        .filter_map(|address| address.rsplit_once(':').and_then(|(_, p)| p.parse().ok()))
+        .collect();
+    let host = bind_host(declaration);
+    let loopback = allows_loopback(declaration);
+    for application in applications.iter_mut() {
+        let Some(gateway) = application
+            .rest_host
+            .clone()
+            .filter(|gear| gear.as_str() == "api-gateway")
+        else {
+            continue;
+        };
+        let Some(port) = next_free_port(INTERNAL_LISTENER_BASE_PORT, &taken) else {
+            continue;
+        };
+        taken.insert(port);
+        application.listens.push(ResolvedEndpoint {
+            name: "internal".to_owned(),
+            gear: gateway,
+            config_key: "internal_bind_addr".to_owned(),
+            address: format!("{host}:{port}"),
+            // Kubernetes rewrites this to the Service DNS in `assign_chart_fields`.
+            advertise_uri: Some(format!("http://127.0.0.1:{port}")),
+            allow_loopback_advertise: loopback,
+        });
+    }
+}
+
+/// The base port of a production gateway's internal listener.
+const INTERNAL_LISTENER_BASE_PORT: u16 = 8088;
+
+/// Ship a gear's hand-written unit chart for an application that *is* that
+/// unit: anchored on the gear and linking exactly the chart's gears (plugins
+/// aside, they configure rather than define the unit). Its database, if any,
+/// reaches the chart through `configOverlay` and `secretEnv`. Anything else is
+/// a different binary and gets a generated chart. Kubernetes only: no other
+/// profile renders a chart.
+fn assign_unit_charts(
+    catalogue: &Catalogue,
+    declaration: &DeploymentProfileDecl,
+    product_version: &str,
+    applications: &mut [ResolvedApplication],
+) {
+    let DeploymentProfileDecl::Kubernetes { image_registry, .. } = declaration else {
+        return;
+    };
+    for application in applications.iter_mut() {
+        let Some(anchor) = catalogue.gears.get(&application.anchor) else {
+            continue;
+        };
+        let Some(chart) = &anchor.unit_chart else {
+            continue;
+        };
+        let linked: BTreeSet<&GearId> = application
+            .gears
+            .iter()
+            .filter(|g| {
+                catalogue
+                    .gears
+                    .get(*g)
+                    .is_none_or(|gear| gear.implements.is_none())
+            })
+            .collect();
+        if linked != chart.gears.iter().collect() {
+            continue;
+        }
+        application.image = Some(image_ref(
+            image_registry.as_deref(),
+            &chart.image,
+            product_version,
+        ));
+        // The chart fixes its Services: the process is addressed by them, so the
+        // directory endpoint and static endpoints name what the chart creates.
+        let namespace = match declaration {
+            DeploymentProfileDecl::Kubernetes { namespace, .. } => {
+                namespace.as_deref().unwrap_or("default")
+            }
+            _ => "default",
+        };
+        for (endpoint_name, at) in &chart.services {
+            let Some((service, port)) = at.rsplit_once(':') else {
+                continue;
+            };
+            let uri = format!("http://{service}.{namespace}.svc.cluster.local:{port}");
+            if endpoint_name == "serve" {
+                if let Some(serve) = application.serve.as_mut() {
+                    serve.listen_addr = format!("0.0.0.0:{port}");
+                    serve.advertise_uri = uri;
+                }
+                continue;
+            }
+            for endpoint in &mut application.listens {
+                if &endpoint.name == endpoint_name {
+                    endpoint.address = format!("0.0.0.0:{port}");
+                    endpoint.advertise_uri = Some(uri.clone());
+                }
+            }
+        }
+        application.service_port = contract_port(application);
+        application.unit_chart = Some(gearbox_ir::ResolvedUnitChart {
+            source: anchor.source.clone(),
+            path: chart.path.clone(),
+            image: chart.image.clone(),
+        });
     }
 }
 
@@ -493,15 +689,39 @@ fn contract_port(application: &ResolvedApplication) -> Option<u16> {
     if let Some(serve) = &application.serve {
         return parse_port(&serve.listen_addr);
     }
+    // A production gateway's internal listener first: its public one serves
+    // exposed operations only, and a neighbour calls the rest.
     application
         .listens
         .iter()
-        .find(|endpoint| endpoint.name == "rest")
+        .find(|endpoint| endpoint.name == "internal")
+        .or_else(|| {
+            application
+                .listens
+                .iter()
+                .find(|endpoint| endpoint.name == "rest")
+        })
         .or_else(|| application.listens.first())
         .and_then(|endpoint| parse_port(&endpoint.address))
 }
 
 pub(crate) fn cluster_dns(application: &ResolvedApplication, namespace: &str) -> Option<String> {
+    // A unit chart names its own Services: the endpoint a neighbour dials is
+    // the one it advertises.
+    if application.unit_chart.is_some() {
+        let listened = ["internal", "rest"].iter().find_map(|name| {
+            application
+                .listens
+                .iter()
+                .find(|e| e.name == *name)
+                .and_then(|e| e.advertise_uri.clone())
+        });
+        if let Some(uri) =
+            listened.or_else(|| application.serve.as_ref().map(|s| s.advertise_uri.clone()))
+        {
+            return Some(uri);
+        }
+    }
     let name = application.subchart.as_deref()?;
     let port = application.service_port?;
     Some(format!(
@@ -540,6 +760,7 @@ fn split(
         scoped,
         selected,
         isolates,
+        hub_listen: _,
     } = *input;
     // A pin on the REST host names the host application; moving that gear to
     // a worker would leave the remaining REST gears with no composed router.
@@ -939,6 +1160,7 @@ fn build(
         serve: None,
         image: None,
         subchart: None,
+        unit_chart: None,
         service_port: None,
     }
 }

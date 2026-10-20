@@ -210,6 +210,7 @@ fn gateway_process() -> ResolvedApplication {
         serve: None,
         image: None,
         subchart: None,
+        unit_chart: None,
         service_port: None,
     }
 }
@@ -235,6 +236,7 @@ fn worker_process(name: &str, gears: &[&str]) -> ResolvedApplication {
         serve: None,
         image: None,
         subchart: None,
+        unit_chart: None,
         service_port: None,
     }
 }
@@ -411,6 +413,7 @@ pub fn fixture() -> ResolvedProduct {
             version: "0.1.0".to_owned(),
             profile: ProfileId::new("local").unwrap(),
             profile_kind: "self-hosted".to_owned(),
+            development: false,
             layout: gearbox_ir::DEFAULT_LAYOUT.to_owned(),
             gearbox_version: "0.1.0".to_owned(),
             lock_hash: String::new(),

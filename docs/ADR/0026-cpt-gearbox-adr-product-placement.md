@@ -155,18 +155,22 @@ It requires:
 * `embedded` (the all-in-one binary): one process, and placement declarations are inert (GBX0307). The hub is written
   as `listen_addr: none`, or as UDS in a private runtime directory until that mode exists. No internal listener is
   generated.
-* **As implemented (2B).** For `embedded` the generator writes `public.exposed_only: true` on the gateway (under the
-  description's value, so a development product can turn it off) and on the built-in host's `http_host.public`, and
-  the lock and configuration carry the hub as `listen_addr: none`. `self_hosted` and `kubernetes` keep the gateway's
-  default until the generator also writes the internal listener their workers call co-hosted operations on
-  (`tasks/service-deployment/todo-issues.md` item 10). The cross-target invariant is checked over the repository's
-  products (`crates/gearbox-engine/tests/cross_target.rs`, G13). A cluster edge is compared by its request, because
-  it is recorded as a binding only where the requester runs apart from `cluster` (§4).
-* `self_hosted`: REST workers are spawned locally. A remote cluster binding is GBX0415. The hub is on UDS, workers on
-  loopback, and platform auth is `SharedSecret` with enforcement. Several nodes are not production-capable (no mTLS;
-  GBX0604).
-* `kubernetes`: everything above.
-* No target silently drops or moves a gear.
+* **As implemented (2B, Phase 3).** Every profile is production unless it says `development = True` (GDL 1.3).
+  The production rules are **GBX0325**: errors on a production profile, warnings on a development one. The generator
+  writes `public.exposed_only: true` under the description's value for `embedded` and every production profile; a
+  production multi-process gateway gets an internal listener (`internal_bind_addr`, advertised by its Service DNS or
+  loopback), which is the port neighbours' static endpoints name; a production hub with platform auth gets
+  `internal_auth_enforcement: required`; with `kube` platform auth every generated unit mounts the projected token for
+  its audience and is granted TokenReview. The embedded hub is `listen_addr: none`. A development multi-process profile
+  keeps the single listener. Platform auth is gear configuration and cannot yet differ per profile
+  (`tasks/service-deployment/todo-issues.md` item 15). The cross-target invariant is checked over the repository's
+  products (`crates/gearbox-engine/tests/cross_target.rs`, G13); a cluster edge is compared by its request, because it
+  is recorded as a binding only where the requester runs apart from `cluster` (§4).
+* **As implemented (Phase 3).** A unit with a hand-written chart (gears-rust ADR-0004 amendment: Flight Control,
+  `cluster-oop`) is named by its anchor gear's `deploy = helm_chart(...)` (GDL 1.3). On a `kubernetes` profile an
+  application that is exactly that unit ships the chart and the unit's image instead of a generated subchart and crate;
+  the description supplies only its gears' configuration (`configOverlay`) and Secret-backed placeholders
+  (`secretEnv`). Every other application keeps a generated chart.
 
 ### 7. Installation references are deferred
 

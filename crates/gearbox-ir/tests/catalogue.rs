@@ -71,6 +71,7 @@ fn gear(id: &str, deps: &[&str], caps: &[RuntimeCap]) -> GearDescriptor {
         serves: Vec::new(),
         client_trait: None,
         rest_planes: None,
+        unit_chart: None,
         cluster_providers: Vec::new(),
         extension_points: Vec::new(),
         implements: None,

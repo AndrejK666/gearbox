@@ -49,6 +49,7 @@ mod rust;
 mod templates;
 mod terraform;
 mod ui;
+mod unit_chart;
 mod workspace;
 
 use std::collections::BTreeMap;
@@ -181,6 +182,8 @@ pub enum GenerateError {
     #[error("config key `{key}` cannot nest under an existing non-object value")]
     ConfigShape { key: String },
 
+    #[error("unit chart `{chart}`: {reason}")]
+    UnitChart { chart: String, reason: String },
     #[error("{what} `{}`", .path.display())]
     Io {
         what: &'static str,
@@ -311,10 +314,17 @@ pub fn generate(input: &GenerateInput<'_>) -> Result<Generated, GenerateError> {
         registry: input.registry,
     };
 
-    // Every process is a workspace member, host or worker. A generated crate
-    // sitting inside the workspace root without being a member is the failure
-    // Cargo reports as "believes it's in a workspace when it's not".
-    let applications: Vec<_> = input.lock.applications.iter().collect();
+    // Every generated process is a workspace member, host or worker. A
+    // generated crate sitting inside the workspace root without being a member
+    // is the failure Cargo reports as "believes it's in a workspace when it's
+    // not". A process shipped as a hand-written unit chart has no crate here:
+    // its own image runs it (`ResolvedApplication::unit_chart`).
+    let applications: Vec<_> = input
+        .lock
+        .applications
+        .iter()
+        .filter(|application| application.unit_chart.is_none())
+        .collect();
 
     insert(
         &mut files,
@@ -340,6 +350,11 @@ pub fn generate(input: &GenerateInput<'_>) -> Result<Generated, GenerateError> {
         };
         insert(&mut files, entry)?;
         insert(&mut files, rust::registered_gears(input, application)?)?;
+    }
+    // The configuration of every process, shipped as a unit chart or not: for
+    // a unit chart it is what the description decided, and the chart's
+    // `configOverlay` carries the gears' part of it.
+    for application in &input.lock.applications {
         insert(&mut files, config::app_config(input, application)?)?;
     }
 

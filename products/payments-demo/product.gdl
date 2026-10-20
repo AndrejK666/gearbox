@@ -1,3 +1,5 @@
+gdl_version = "1.3"
+
 # The Payments Demo product.
 #
 # All three deployment profiles are declared as DATA and selected at resolve
@@ -14,11 +16,12 @@ product(
     sources = [source(id = "gears-rust", at = path("../../../gears-rust"))],
 
     profiles = [
-        embedded(id = "dev", database = postgres(
+        embedded(development = True, id = "dev", database = postgres(
             host = "127.0.0.1", user = "postgres", password = "${GEARS_PG_PASSWORD}",
             params = {"sslmode": "disable"},
         )),
         self_hosted(
+            development = True,
             id = "local",
             host = "gateway",
             worker_discovery = "directory",
@@ -27,6 +30,7 @@ product(
             target_dir = "../../../gears-rust/target",
         ),
         kubernetes(
+            development = True,
             id = "prod",
             discovery = "static",
             namespace = "payments",

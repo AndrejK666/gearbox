@@ -347,6 +347,58 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
         })
     }
 
+    /// `helm_chart(path = path(...), image = "...", gears = [...])` -- the
+    /// hand-written chart of the executable unit this gear anchors, for
+    /// `gear(deploy = ...)` (GDL 1.3).
+    ///
+    /// # Arguments
+    /// * `path`: The chart directory, as path(...), relative to this gear description.
+    /// * `image`: The image repository the unit's Dockerfile builds, without registry or tag.
+    /// * `gears`: The non-plugin gear ids the unit's binary links, this gear included.
+    /// * `services`: The Services the chart fixes, endpoint name to `"service:port"`
+    ///   (`grpc`, `internal`, `rest`, or `serve` for a worker's own listener).
+    fn helm_chart<'v>(
+        #[starlark(require = named)] path: &'v SourceAtRecord,
+        #[starlark(require = named)] image: &str,
+        #[starlark(require = named)] gears: UnpackList<String>,
+        #[starlark(require = named)] services: Option<
+            starlark::values::dict::UnpackDictEntries<String, String>,
+        >,
+    ) -> anyhow::Result<crate::records::HelmChartRecord> {
+        let services: Vec<(String, String)> = services.map(|d| d.entries).unwrap_or_default();
+        for (endpoint, at) in &services {
+            let valid = at
+                .rsplit_once(':')
+                .is_some_and(|(name, port)| !name.is_empty() && port.parse::<u16>().is_ok());
+            if !valid {
+                return Err(anyhow::anyhow!(
+                    "services[{endpoint:?}] is `{at}`; write \"service:port\""
+                ));
+            }
+        }
+        if path.kind != "path" {
+            return Err(anyhow::anyhow!(
+                "a unit chart is located with path(...), relative to this description"
+            ));
+        }
+        if image.is_empty() || image.contains(':') || image.contains('@') {
+            return Err(anyhow::anyhow!(
+                "`image` is a repository name without a tag or digest, e.g. \"cluster-oop\""
+            ));
+        }
+        if gears.items.is_empty() {
+            return Err(anyhow::anyhow!(
+                "`gears` names the gears the unit's binary links"
+            ));
+        }
+        Ok(crate::records::HelmChartRecord {
+            path: path.at.clone().unwrap_or_default(),
+            image: image.to_owned(),
+            gears: gears.items,
+            services,
+        })
+    }
+
     /// `npm(name = ..., path = ...)` -- an npm package, e.g. a TypeScript SDK.
     ///
     /// Located, not read: `name` is the package name, `path` is where it lives,
@@ -873,6 +925,8 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `consumes`: The contracts the gear calls, as `consume(...)`.
     /// * `requires`: The cluster primitives the gear needs, as `cluster.*(...)`.
     /// * `serves`: What the gear listens on, as `endpoint(...)`.
+    /// * `deploy`: The hand-written chart of the unit this gear anchors, as `helm_chart(...)`.
+    ///   A product application that is exactly that unit ships it instead of a generated one.
     /// * `rest_planes`: The planes its REST operations use: `"tenant"`, `"platform"`. `[]` for a
     ///   gear whose REST capability serves only probes. Absent is read as `["tenant"]` (GBX0417).
     /// * `cluster_plugins`: Where cluster backend plugin crates are, as `cluster_plugin(...)`.
@@ -935,6 +989,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] requires: Option<UnpackList<&'v ClusterRequireRecord>>,
         #[starlark(require = named)] serves: Option<UnpackList<&'v EndpointRecord>>,
         #[starlark(require = named)] rest_planes: Option<UnpackList<&str>>,
+        #[starlark(require = named)] deploy: Option<&'v crate::records::HelmChartRecord>,
         #[starlark(require = named)] cluster_plugins: Option<UnpackList<&'v ClusterPluginRecord>>,
         #[starlark(require = named)] roles: Option<UnpackList<&'v RoleRecord>>,
         #[starlark(require = named)] config_schema: Option<&'v ConfigRecord>,
@@ -1003,6 +1058,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
                 (requires.is_some(), "requires"),
                 (serves.is_some(), "serves"),
                 (rest_planes.is_some(), "rest_planes"),
+                (deploy.is_some(), "deploy"),
                 (cluster_plugins.is_some(), "cluster_plugins"),
                 (roles.is_some(), "roles"),
                 (config_schema.is_some(), "config_schema"),
@@ -1132,6 +1188,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
                 .map(|l| l.items.into_iter().cloned().collect())
                 .unwrap_or_default(),
             rest_planes,
+            deploy: deploy.cloned(),
             cluster_plugins: cluster_plugins
                 .map(|l| l.items.into_iter().cloned().collect())
                 .unwrap_or_default(),

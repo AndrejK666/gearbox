@@ -88,6 +88,8 @@ pub struct GearDecl {
     /// `rest_planes = [...]`: the planes the gear's REST operations use. `None`
     /// when not written, which the resolver reads as tenant.
     pub rest_planes: Option<std::collections::BTreeSet<gearbox_ir::RestPlane>>,
+    /// `deploy = helm_chart(...)`: the unit's hand-written chart.
+    pub deploy: Option<crate::records::HelmChartRecord>,
     /// Where the cluster backend plugin crates live, so their `PROVIDER_NAME`
     /// consts and capability declarations can be projected.
     ///

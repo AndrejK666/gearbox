@@ -238,6 +238,7 @@ id = "payments-demo"
 version = "0.1.0"
 profile = "local"
 profile_kind = "self-hosted"
+development = true
 layout = "apps"
 gearbox_version = "<version>"
 lock_hash = "<digest>"
@@ -697,6 +698,40 @@ kind = "colocated-by"
 because = "`static-authn-plugin` names `types-registry` in its `deps`, so the two are linked into one binary and no profile can separate them. Removing that entry is the only thing that can."
 
 [[diagnostics]]
+code = "GBX0325"
+severity = "warning"
+message = "profile `local` breaks a production rule: `static-authn-plugin` in `accept_all` mode authenticates every request (ADR-0011 section 3)"
+help = "allowed because the profile is `development = True`; a production profile refuses it"
+
+[diagnostics.location]
+uri = "file://<repo>/products/payments-demo/product.gdl"
+
+[diagnostics.location.range.start]
+line = 22
+character = 8
+
+[diagnostics.location.range.end]
+line = 30
+character = 9
+
+[[diagnostics]]
+code = "GBX0325"
+severity = "warning"
+message = 'profile `local` breaks a production rule: a self-hosted profile needs platform auth `internal_auth.provider = "shared_secret"` on `api-gateway`, which configures none (ADR-0011 section 3)'
+help = "allowed because the profile is `development = True`; a production profile refuses it"
+
+[diagnostics.location]
+uri = "file://<repo>/products/payments-demo/product.gdl"
+
+[diagnostics.location.range.start]
+line = 22
+character = 8
+
+[diagnostics.location.range.end]
+line = 30
+character = 9
+
+[[diagnostics]]
 code = "GBX0323"
 severity = "info"
 message = "`api-contracts-consumer` is at preview: usable, but not declared stable"
@@ -706,11 +741,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 46
+line = 50
 character = 8
 
 [diagnostics.location.range.end]
-line = 46
+line = 50
 character = 65
 
 [[diagnostics]]
@@ -723,11 +758,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 45
+line = 49
 character = 8
 
 [diagnostics.location.range.end]
-line = 45
+line = 49
 character = 56
 
 [[diagnostics]]
@@ -740,11 +775,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 43
+line = 47
 character = 8
 
 [diagnostics.location.range.end]
-line = 43
+line = 47
 character = 54
 
 [[diagnostics]]
@@ -757,11 +792,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 68
+line = 72
 character = 8
 
 [diagnostics.location.range.end]
-line = 82
+line = 86
 character = 9
 
 [[diagnostics]]
@@ -774,11 +809,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 56
+line = 60
 character = 8
 
 [diagnostics.location.range.end]
-line = 56
+line = 60
 character = 50
 
 [[diagnostics]]
@@ -808,11 +843,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 44
+line = 48
 character = 8
 
 [diagnostics.location.range.end]
-line = 44
+line = 48
 character = 60
 
 [[diagnostics]]
@@ -825,11 +860,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 68
+line = 72
 character = 8
 
 [diagnostics.location.range.end]
-line = 82
+line = 86
 character = 9
 
 [[diagnostics]]
@@ -877,11 +912,11 @@ evidence = "gears/system/cluster/cluster/src/defaults/leader.rs (CasBasedLeaderE
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 110
+line = 114
 character = 8
 
 [diagnostics.location.range.end]
-line = 127
+line = 131
 character = 9
 
 [[diagnostics]]
@@ -895,9 +930,9 @@ evidence = "libs/toolkit/src/bootstrap/run.rs:74"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 20
+line = 22
 character = 8
 
 [diagnostics.location.range.end]
-line = 27
+line = 30
 character = 9

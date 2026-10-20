@@ -6,6 +6,7 @@ import type { Entrypoint } from "./Entrypoint";
 import type { GearId } from "./GearId";
 import type { ImageRef } from "./ImageRef";
 import type { ResolvedEndpoint } from "./ResolvedEndpoint";
+import type { ResolvedUnitChart } from "./ResolvedUnitChart";
 import type { SpawnSpec } from "./SpawnSpec";
 import type { WorkerServe } from "./WorkerServe";
 
@@ -81,6 +82,13 @@ image?: ImageRef | null,
  * Equal to the application name. Helm looks for subcharts under `charts/`.
  */
 subchart?: string | null, 
+/**
+ * The hand-written chart this application ships instead of a generated
+ * one: it is exactly the unit a gear's `deploy = helm_chart(...)`
+ * packages. The generator then writes no crate or Dockerfile for it --
+ * the unit's own image runs it -- and copies the chart into the umbrella.
+ */
+unit_chart?: ResolvedUnitChart | null, 
 /**
  * The port neighbours dial for contract traffic, when the profile
  * generates a chart.

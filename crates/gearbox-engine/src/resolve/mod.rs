@@ -18,6 +18,7 @@ pub mod cuts;
 pub mod database;
 pub mod partition;
 pub mod product;
+pub mod production;
 pub mod profile;
 pub mod structural;
 mod ui;
@@ -197,6 +198,12 @@ pub fn resolve_at(
             Preference::ExistingInfrastructure | Preference::FewerApplications => None,
         })
         .collect();
+    let hub_listen = intent
+        .selected_gears
+        .iter()
+        .find(|s| s.gear.as_str() == "grpc-hub")
+        .and_then(|s| s.config.get("listen_addr"))
+        .and_then(serde_json::Value::as_str);
     let input = partition::Inputs {
         catalogue,
         closure: &closure,
@@ -204,6 +211,7 @@ pub fn resolve_at(
         scoped: &scoped,
         selected: &selected,
         isolates: &isolates,
+        hub_listen,
     };
     let partition = if let Some(declaration) = intent.profiles.get(profile) {
         let partition = partition::partition(
@@ -216,6 +224,14 @@ pub fn resolve_at(
         );
         // Step 5 -- what the runtime will refuse, said before a binary exists.
         structural::check(catalogue, &partition, declaration, &uri, &mut diagnostics);
+        production::check(
+            intent,
+            profile,
+            declaration,
+            partition.applications.len() > 1,
+            &uri,
+            &mut diagnostics,
+        );
         database::check_sqlite_placement(&partition, declaration, &uri, &mut diagnostics);
         partition
     } else {

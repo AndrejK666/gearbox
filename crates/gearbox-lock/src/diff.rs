@@ -372,6 +372,7 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
             version,
             profile: _,
             profile_kind,
+            development,
             layout,
             gearbox_version,
             lock_hash,
@@ -379,7 +380,10 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
         (
             id.clone(),
             version.clone(),
-            profile_kind.clone(),
+            format!(
+                "{profile_kind}{}",
+                if *development { " (development)" } else { "" }
+            ),
             layout.clone(),
             gearbox_version.clone(),
             lock_hash.clone(),

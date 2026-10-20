@@ -304,10 +304,13 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `id`: The profile's id, kebab-case.
     /// * `database`: Optional external `postgres(...)` configuration for DB-backed gears.
     /// * `sqlite_databases`: Gear ids mapped to relative SQLite files below each gear home.
+    /// * `development`: `True` reports the production rules as warnings and keeps the
+    ///   generator's development defaults. The default is a production profile.
     fn embedded<'v>(
         #[starlark(require = named)] id: &str,
         #[starlark(require = named)] database: Option<&crate::records::PostgresRecord>,
         #[starlark(require = named)] sqlite_databases: Option<Value<'_>>,
+        #[starlark(require = named)] development: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<ProfileRecord> {
         Ok(ProfileRecord {
@@ -321,6 +324,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
             cargo_profile: None,
             namespace: None,
             image_registry: None,
+            development: development.unwrap_or(false),
             declared_at: call_location(eval),
         })
     }
@@ -331,6 +335,8 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `id`: The profile's id, kebab-case.
     /// * `database`: Optional external `postgres(...)` configuration for DB-backed gears.
     /// * `sqlite_databases`: Gear ids mapped to relative SQLite files below each gear home.
+    /// * `development`: `True` reports the production rules as warnings and keeps the
+    ///   generator's development defaults. The default is a production profile.
     /// * `host`: The application that hosts the workers.
     /// * `worker_discovery`: `"static"` or `"directory"`.
     /// * `target_dir`: The Cargo target directory the host starts workers from, relative to this
@@ -344,6 +350,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] cargo_profile: Option<&str>,
         #[starlark(require = named)] database: Option<&crate::records::PostgresRecord>,
         #[starlark(require = named)] sqlite_databases: Option<Value<'_>>,
+        #[starlark(require = named)] development: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<ProfileRecord> {
         Ok(ProfileRecord {
@@ -357,6 +364,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
             cargo_profile: cargo_profile.map(str::to_owned),
             namespace: None,
             image_registry: None,
+            development: development.unwrap_or(false),
             declared_at: call_location(eval),
         })
     }
@@ -367,6 +375,8 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `id`: The profile's id, kebab-case.
     /// * `database`: Optional external `postgres(...)` configuration for DB-backed gears.
     /// * `sqlite_databases`: Gear ids mapped to relative SQLite files below each gear home.
+    /// * `development`: `True` reports the production rules as warnings and keeps the
+    ///   generator's development defaults. The default is a production profile.
     /// * `discovery`: `"static"` or `"directory"`.
     /// * `namespace`: The namespace the chart deploys to.
     /// * `image_registry`: The registry images are pulled from.
@@ -377,6 +387,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] image_registry: Option<&str>,
         #[starlark(require = named)] database: Option<&crate::records::PostgresRecord>,
         #[starlark(require = named)] sqlite_databases: Option<Value<'_>>,
+        #[starlark(require = named)] development: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<ProfileRecord> {
         Ok(ProfileRecord {
@@ -390,6 +401,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
             cargo_profile: None,
             namespace: namespace.map(str::to_owned),
             image_registry: image_registry.map(str::to_owned),
+            development: development.unwrap_or(false),
             declared_at: call_location(eval),
         })
     }

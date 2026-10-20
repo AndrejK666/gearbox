@@ -22,7 +22,7 @@ pub use catalogue::{
     CargoFeature, Catalogue, ConfigFieldDecl, ConfigFieldType, ConfigSchema, DeclaredRole,
     DesignGear, DocUrls, EndpointDecl, ExtensionPointDecl, GearDescriptor, GearDocs, GitOrigin,
     GtsTypeDecl, Implementation, LifecycleDecl, LoadStage, Located, Maturity, PendingGear,
-    PluginImpl, ResolvedSource, RestPlane, RuntimeCap, Scenario, SourceKind, Visibility,
+    PluginImpl, ResolvedSource, RestPlane, RuntimeCap, Scenario, SourceKind, UnitChart, Visibility,
 };
 pub use contract::{
     CargoRef, ContractDescriptor, ContractKind, ContractVersion, Ecosystem, GrpcProjection,
@@ -56,5 +56,6 @@ pub use resolved::{
     CutBlocker, CutCandidate, CutSavings, DEFAULT_LAYOUT, Entrypoint, ImageRef, InclusionReason,
     KubernetesSettings, LOCK_SCHEMA_VERSION, ResolvedApplication, ResolvedBinding,
     ResolvedBindingMode, ResolvedClusterBinding, ResolvedEndpoint, ResolvedGear, ResolvedProduct,
-    ResolvedProductHeader, Selected, SelfHostedSettings, SpawnSpec, WorkerServe, is_valid_layout,
+    ResolvedProductHeader, ResolvedUnitChart, Selected, SelfHostedSettings, SpawnSpec, WorkerServe,
+    is_valid_layout,
 };

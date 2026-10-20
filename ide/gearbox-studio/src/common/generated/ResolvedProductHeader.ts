@@ -10,6 +10,12 @@ export type ResolvedProductHeader = { id: string, version: string, profile: Prof
  */
 profile_kind: string, 
 /**
+ * The profile is `development = True`: production rules were reported as
+ * warnings and the generator keeps its development defaults. Absent
+ * (false) is a production profile.
+ */
+development?: boolean, 
+/**
  * The directory the generated application crates live under, one path
  * segment. Default [`DEFAULT_LAYOUT`].
  *

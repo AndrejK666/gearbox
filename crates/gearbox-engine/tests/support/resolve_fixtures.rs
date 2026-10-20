@@ -67,6 +67,7 @@ pub fn descriptor(id: &str) -> GearDescriptor {
         serves: Vec::new(),
         client_trait: None,
         rest_planes: None,
+        unit_chart: None,
         cluster_providers: Vec::new(),
         extension_points: Vec::new(),
         implements: None,
@@ -99,6 +100,7 @@ pub fn intent(gears: &[&str]) -> ProductIntent {
                 database: None,
                 sqlite_databases: BTreeMap::new(),
                 id: dev.clone(),
+                development: false,
                 declared_at: None,
             },
         )]
@@ -340,6 +342,7 @@ pub fn self_hosted_intent(gears: &[&str]) -> ProductIntent {
             discovery: gearbox_ir::Discovery::Static,
             target_dir: None,
             cargo_profile: None,
+            development: false,
             declared_at: None,
         },
     );
@@ -385,6 +388,7 @@ pub fn self_hosted(
             discovery,
             target_dir: target_dir.map(ToOwned::to_owned),
             cargo_profile: None,
+            development: false,
             declared_at: None,
         },
     );
@@ -404,6 +408,7 @@ pub fn kubernetes(gears: &[&str], discovery: gearbox_ir::Discovery) -> ProductIn
             discovery,
             namespace: None,
             image_registry: None,
+            development: false,
             declared_at: None,
         },
     );

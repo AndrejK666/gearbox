@@ -92,6 +92,34 @@ fn rest_planes_distinguish_undeclared_from_none() {
     );
 }
 
+#[test]
+fn deploy_names_the_unit_chart_this_gear_anchors() {
+    let (decl, codes) = eval(&format!(
+        "gear(maturity = \"preview\", {PKG}, deploy = helm_chart(path = path(\"deploy/helm/x\"), \
+         image = \"x-oop\", gears = [\"x\", \"grpc-hub\"]))"
+    ));
+    assert!(codes.is_empty(), "{codes:?}");
+    let chart = decl.unwrap().deploy.expect("a unit chart");
+    assert_eq!(chart.path, "deploy/helm/x");
+    assert_eq!(chart.image, "x-oop");
+    assert_eq!(chart.gears, ["x", "grpc-hub"]);
+
+    // An image reference is a repository: the tag is the product's version.
+    for bad in [
+        "helm_chart(path = path(\"c\"), image = \"x:1\", gears = [\"x\"])",
+        "helm_chart(path = path(\"c\"), image = \"x\", gears = [])",
+        "helm_chart(path = git(url = \"https://e.x/r\", path = \"c\"), image = \"x\", gears = [\"x\"])",
+    ] {
+        assert!(
+            !diagnostics_of(&format!(
+                "gear(maturity = \"preview\", {PKG}, deploy = {bad})"
+            ))
+            .is_empty(),
+            "{bad}"
+        );
+    }
+}
+
 fn eval(src: &str) -> (Option<GearDecl>, Vec<DiagnosticCode>) {
     let out = GdlEngine::new().eval_gear(&identity(), src);
     let codes = out.diagnostics.iter().map(|d| d.code).collect();

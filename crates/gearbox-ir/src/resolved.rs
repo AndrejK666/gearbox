@@ -410,6 +410,13 @@ pub struct ResolvedApplication {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subchart: Option<String>,
 
+    /// The hand-written chart this application ships instead of a generated
+    /// one: it is exactly the unit a gear's `deploy = helm_chart(...)`
+    /// packages. The generator then writes no crate or Dockerfile for it --
+    /// the unit's own image runs it -- and copies the chart into the umbrella.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_chart: Option<ResolvedUnitChart>,
+
     /// The port neighbours dial for contract traffic, when the profile
     /// generates a chart.
     ///
@@ -649,6 +656,16 @@ impl ResolvedBinding {
     }
 }
 
+/// A hand-written unit chart an application ships, located in its source.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ResolvedUnitChart {
+    pub source: SourceId,
+    /// The chart directory, relative to the source root.
+    pub path: RelPath,
+    /// The unit's image repository, without registry or tag.
+    pub image: String,
+}
+
 /// What a cluster primitive resolved to.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "via", rename_all = "kebab-case")]
@@ -851,6 +868,12 @@ pub struct ResolvedProductHeader {
 
     /// The profile family: `embedded`, `self-hosted`, or `kubernetes`.
     pub profile_kind: String,
+
+    /// The profile is `development = True`: production rules were reported as
+    /// warnings and the generator keeps its development defaults. Absent
+    /// (false) is a production profile.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub development: bool,
 
     /// The directory the generated application crates live under, one path
     /// segment. Default [`DEFAULT_LAYOUT`].

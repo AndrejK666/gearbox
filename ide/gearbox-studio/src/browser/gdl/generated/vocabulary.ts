@@ -21,6 +21,7 @@ export const GEAR_FUNCTIONS: readonly string[] = [
   "git",
   "go",
   "grpc",
+  "helm_chart",
   "lifecycle",
   "npm",
   "nuget",

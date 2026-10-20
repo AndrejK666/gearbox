@@ -845,6 +845,7 @@ fn deployment_profile(
             id: id.clone(),
             database: record.database.as_ref().map(|db| db.settings.clone()),
             sqlite_databases: record.sqlite_databases.clone(),
+            development: record.development,
             declared_at: record.declared_at.clone(),
         }),
         "self-hosted" => {
@@ -887,6 +888,7 @@ fn deployment_profile(
                 )?,
                 target_dir: record.target_dir.clone(),
                 cargo_profile,
+                development: record.development,
                 declared_at: record.declared_at.clone(),
             })
         }
@@ -903,6 +905,7 @@ fn deployment_profile(
             )?,
             namespace: record.namespace.clone(),
             image_registry: record.image_registry.clone(),
+            development: record.development,
             declared_at: record.declared_at.clone(),
         }),
         other => {

@@ -60,12 +60,26 @@ pub fn files(input: &GenerateInput<'_>, files: &FileSet) -> Result<Vec<FileEntry
     let version = input.lock.product.version.as_str();
     let mut out = Vec::new();
 
-    out.push(umbrella_chart(input, product, version)?);
+    // Hand-written unit charts first: the umbrella depends on them by their
+    // own name and version.
+    let mut copied: BTreeMap<String, (String, String)> = BTreeMap::new();
+    for application in &input.lock.applications {
+        let sub = subchart_name(application);
+        if let Some(chart) = super::unit_chart::copy(input, application, product, sub)? {
+            copied.insert(sub.to_owned(), (chart.name, chart.version));
+            out.extend(chart.files);
+        }
+    }
+
+    out.push(umbrella_chart(input, product, version, &copied)?);
     out.extend(umbrella_values(input, files)?);
     out.push(umbrella_helpers(product)?);
 
     for application in &input.lock.applications {
         let sub = subchart_name(application);
+        if copied.contains_key(sub) {
+            continue;
+        }
         out.push(subchart_chart(product, sub, version)?);
         out.extend(subchart_templates(input, application, files)?);
     }
@@ -115,6 +129,27 @@ fn database_secret(
     }))
 }
 
+/// Whether the process runs the directory, which is that process's memory: one
+/// replica, and a rollout that stops it before starting the next -- a surge
+/// would start a second, independent registry (ADR-0004 amendment).
+fn hosts_directory(application: &ResolvedApplication) -> bool {
+    application
+        .gears
+        .iter()
+        .any(|gear| gear.as_str() == "service-discovery")
+}
+
+/// Requests and limits for a production workload; a development profile
+/// leaves them to the operator, as before.
+fn production_resources(input: &GenerateInput<'_>) -> Option<serde_json::Value> {
+    (!input.lock.product.development).then(|| {
+        serde_json::json!({
+            "requests": {"cpu": "100m", "memory": "128Mi"},
+            "limits": {"memory": "512Mi"},
+        })
+    })
+}
+
 fn uses_sqlite(application: &ResolvedApplication, input: &GenerateInput<'_>) -> bool {
     application
         .gears
@@ -133,6 +168,12 @@ fn directory_endpoint(input: &GenerateInput<'_>) -> Option<String> {
         .listens
         .iter()
         .find(|endpoint| endpoint.gear.as_str() == "grpc-hub")?;
+    // A unit chart's hub is behind the Service the chart names.
+    if host.unit_chart.is_some()
+        && let Some(uri) = &grpc.advertise_uri
+    {
+        return Some(uri.clone());
+    }
     let port: u16 = grpc.address.rsplit(':').next()?.parse().ok()?;
     Some(format!(
         "http://{}.{}.svc.cluster.local:{port}",
@@ -152,6 +193,7 @@ fn umbrella_chart(
     input: &GenerateInput<'_>,
     product: &str,
     version: &str,
+    unit_charts: &BTreeMap<String, (String, String)>,
 ) -> Result<FileEntry, GenerateError> {
     helm_safe("Chart.yaml name", product)?;
     helm_safe("Chart.yaml version", version)?;
@@ -173,11 +215,23 @@ fn umbrella_chart(
     for application in &input.lock.applications {
         let sub = subchart_name(application);
         helm_safe("Chart.yaml dependency name", sub)?;
+        // A unit chart keeps its own name and version; the process name is
+        // its alias, which is also its values key.
+        let (name, dep_version) = unit_charts
+            .get(sub)
+            .map_or((sub, version), |(n, v)| (n.as_str(), v.as_str()));
+        helm_safe("Chart.yaml dependency name", name)?;
+        helm_safe("Chart.yaml dependency version", dep_version)?;
         body.push_str("  - name: ");
-        body.push_str(sub);
+        body.push_str(name);
         body.push('\n');
+        if name != sub {
+            body.push_str("    alias: ");
+            body.push_str(sub);
+            body.push('\n');
+        }
         body.push_str("    version: \"");
-        body.push_str(version);
+        body.push_str(dep_version);
         body.push_str("\"\n");
         body.push_str("    repository: \"file://charts/");
         body.push_str(sub);
@@ -238,8 +292,65 @@ fn umbrella_values(
     input: &GenerateInput<'_>,
     files: &FileSet,
 ) -> Result<Vec<FileEntry>, GenerateError> {
-    let mut blocks = BTreeMap::new();
+    let mut blocks: BTreeMap<String, SubchartBlock> = BTreeMap::new();
     for application in &input.lock.applications {
+        if application.unit_chart.is_some() {
+            // The unit chart's own values: its image (registry folded into the
+            // repository, as the chart reads it), and the description's
+            // configuration of its gears, merged by the chart over its own
+            // before its production rules are checked.
+            let image = application.image.as_ref();
+            // `${VAR}` placeholders in the overlay, from the existing Secret the
+            // description names -- the same pairing a generated chart makes.
+            let config_rel = paths::rel(&["config", &format!("{}.yaml", application.name)])?;
+            let database = database_secret(application, input)?;
+            let mut secret_env: Vec<UnitSecretEnv> = match existing_secret(application, input)? {
+                Some(secret) => files
+                    .get(&config_rel)
+                    .and_then(FileEntry::as_text)
+                    .map(secret_vars)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|name| database.as_ref().is_none_or(|db| &db.password_env != name))
+                    .map(|name| UnitSecretEnv {
+                        name: name.clone(),
+                        secret_name: secret.clone(),
+                        key: name,
+                    })
+                    .collect(),
+                None => Vec::new(),
+            };
+            if let Some(db) = &database {
+                secret_env.push(UnitSecretEnv {
+                    name: db.password_env.clone(),
+                    secret_name: db.existing_secret.clone(),
+                    key: db.password_env.clone(),
+                });
+            }
+            blocks.insert(
+                subchart_name(application).to_owned(),
+                SubchartBlock::Unit(UnitChartValues {
+                    enabled: true,
+                    secret_env,
+                    image: UnitImageValues {
+                        repository: image.map_or_else(String::new, |i| {
+                            i.registry.as_deref().map_or_else(
+                                || i.repository.clone(),
+                                |registry| format!("{registry}/{}", i.repository),
+                            )
+                        }),
+                        tag: image.map_or_else(String::new, |i| i.tag.clone()),
+                    },
+                    config_overlay: super::config::unit_chart_overlay(input, application)?,
+                    // A worker registers with the directory this product resolved.
+                    directory_endpoint: application
+                        .is_worker()
+                        .then(|| directory_endpoint(input))
+                        .flatten(),
+                }),
+            );
+            continue;
+        }
         let image = image_values(application, input);
         let sqlite = uses_sqlite(application, input);
         let config_rel = paths::rel(&["config", &format!("{}.yaml", application.name)])?;
@@ -252,62 +363,87 @@ fn umbrella_values(
         if let Some(secret) = &database {
             keys.retain(|key| key != &secret.password_env);
         }
+        let kube = kube_platform_token(input);
+        let block = SubchartValues {
+            database,
+            enabled: true,
+            replica_count: application.replicas,
+            image,
+            service_account: ServiceAccountValues {
+                create: true,
+                // The directory admits a registrar whose ServiceAccount is the
+                // name it registers under (and whose namespace is allowed):
+                // with Kube platform auth a worker's account is that name.
+                name: (kube.is_some() && application.is_worker())
+                    .then(|| application.registers_as().to_owned()),
+                annotations: None,
+            },
+            name_override: None,
+            fullname_override: None,
+            pod_annotations: None,
+            common_labels: None,
+            common_annotations: None,
+            pod_labels: None,
+            node_selector: None,
+            tolerations: None,
+            affinity: None,
+            resources: production_resources(input),
+            extra_env: None,
+            extra_volumes: kube.as_ref().map(|token| {
+                serde_json::json!([{
+                    "name": "platform-token",
+                    "projected": {"sources": [{"serviceAccountToken": {
+                        "path": token.file,
+                        "audience": token.audience,
+                        "expirationSeconds": 3600,
+                    }}]},
+                }])
+            }),
+            extra_volume_mounts: kube.as_ref().map(|token| {
+                serde_json::json!([{
+                    "name": "platform-token",
+                    "mountPath": token.dir,
+                    "readOnly": true,
+                }])
+            }),
+            pod_security_context: Some(restricted_pod_security_context()),
+            container_security_context: Some(restricted_container_security_context()),
+            liveness_probe: ProbeValues::liveness(),
+            readiness_probe: ProbeValues::readiness(),
+            startup_probe: ProbeValues::startup(),
+            service: ServiceValues {
+                kind: "ClusterIP".to_owned(),
+                annotations: None,
+                session_affinity: None,
+            },
+            home_volume: HomeVolumeValues {
+                kind: if sqlite {
+                    HomeVolumeKind::PersistentVolumeClaim
+                } else {
+                    HomeVolumeKind::EmptyDir
+                },
+                size_limit: None,
+                claim_name: None,
+            },
+            // A unit that validates Kube platform tokens calls TokenReview with
+            // its own ServiceAccount token: mounted, and granted below.
+            automount_service_account_token: kube.is_some(),
+            token_review: kube.is_some(),
+            strategy: (sqlite || hosts_directory(application))
+                .then(|| serde_json::json!({"type": "Recreate"})),
+            termination_grace_period_seconds: None,
+            priority_class_name: None,
+            topology_spread_constraints: None,
+            revision_history_limit: None,
+            init_containers: None,
+            extra_containers: None,
+            custom: BTreeMap::new(),
+            existing_secret: existing_secret(application, input)?,
+            secret_keys: if keys.is_empty() { None } else { Some(keys) },
+        };
         blocks.insert(
             subchart_name(application).to_owned(),
-            SubchartValues {
-                database,
-                enabled: true,
-                replica_count: application.replicas,
-                image,
-                service_account: ServiceAccountValues {
-                    create: true,
-                    name: None,
-                    annotations: None,
-                },
-                name_override: None,
-                fullname_override: None,
-                pod_annotations: None,
-                common_labels: None,
-                common_annotations: None,
-                pod_labels: None,
-                node_selector: None,
-                tolerations: None,
-                affinity: None,
-                resources: None,
-                extra_env: None,
-                extra_volumes: None,
-                extra_volume_mounts: None,
-                pod_security_context: Some(restricted_pod_security_context()),
-                container_security_context: Some(restricted_container_security_context()),
-                liveness_probe: ProbeValues::liveness(),
-                readiness_probe: ProbeValues::readiness(),
-                startup_probe: ProbeValues::startup(),
-                service: ServiceValues {
-                    kind: "ClusterIP".to_owned(),
-                    annotations: None,
-                    session_affinity: None,
-                },
-                home_volume: HomeVolumeValues {
-                    kind: if sqlite {
-                        HomeVolumeKind::PersistentVolumeClaim
-                    } else {
-                        HomeVolumeKind::EmptyDir
-                    },
-                    size_limit: None,
-                    claim_name: None,
-                },
-                automount_service_account_token: false,
-                strategy: sqlite.then(|| serde_json::json!({"type": "Recreate"})),
-                termination_grace_period_seconds: None,
-                priority_class_name: None,
-                topology_spread_constraints: None,
-                revision_history_limit: None,
-                init_containers: None,
-                extra_containers: None,
-                custom: BTreeMap::new(),
-                existing_secret: existing_secret(application, input)?,
-                secret_keys: if keys.is_empty() { None } else { Some(keys) },
-            },
+            SubchartBlock::Generated(Box::new(block)),
         );
     }
     let values = UmbrellaValues {
@@ -374,7 +510,20 @@ fn values_schema(input: &GenerateInput<'_>) -> Result<FileEntry, GenerateError> 
     let mut required = Vec::new();
     for application in &input.lock.applications {
         let name = subchart_name(application);
-        let schema = if uses_sqlite(application, input) {
+        let schema = if application.unit_chart.is_some() {
+            // A unit chart validates its values with its own schema.
+            serde_json::json!({"type": "object"})
+        } else if hosts_directory(application) && !uses_sqlite(application, input) {
+            // The directory is process memory: one replica, never surged.
+            serde_json::json!({"allOf": [subchart, {
+                "type": "object",
+                "required": ["strategy"],
+                "properties": {
+                    "replicaCount": {"const": 1},
+                    "strategy": {"type": "object", "required": ["type"], "properties": {"type": {"const": "Recreate"}}}
+                }
+            }]})
+        } else if uses_sqlite(application, input) {
             serde_json::json!({"allOf": [subchart, {
                 "type": "object",
                 "required": ["homeVolume", "strategy"],
@@ -499,6 +648,10 @@ fn inline_refs(value: &mut serde_json::Value, defs: &serde_json::Value) {
 #[derive(serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[schemars(deny_unknown_fields)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each bool is one Helm value of the subchart, not a state machine"
+)]
 struct SubchartValues {
     #[serde(skip_serializing_if = "Option::is_none")]
     database: Option<DatabaseSecretValues>,
@@ -620,6 +773,10 @@ struct SubchartValues {
     /// GBX0603 reports -- so the token would be an unused credential inside every
     /// pod, which is the kind of thing a policy scanner is right to flag.
     automount_service_account_token: bool,
+    /// Grant this unit's `ServiceAccount` `tokenreviews` `create`: the product's
+    /// platform auth is `kube`, and every generated unit may serve a platform
+    /// operation it has to validate (gears-rust ADR-0011 §3).
+    token_review: bool,
     /// Rollout strategy. Free-form: `RollingUpdate` percentages and `Recreate`
     /// have different shapes and Kubernetes owns both.
     #[serde(
@@ -680,7 +837,43 @@ struct UmbrellaValues {
     #[serde(skip_serializing_if = "Option::is_none")]
     global: Option<GlobalValues>,
     #[serde(flatten)]
-    subcharts: BTreeMap<String, SubchartValues>,
+    subcharts: BTreeMap<String, SubchartBlock>,
+}
+
+/// One process's block of the umbrella values: a generated subchart's, or a
+/// hand-written unit chart's, which has its own shape and its own schema.
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum SubchartBlock {
+    Generated(Box<SubchartValues>),
+    Unit(UnitChartValues),
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnitChartValues {
+    enabled: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    secret_env: Vec<UnitSecretEnv>,
+    image: UnitImageValues,
+    #[serde(serialize_with = "super::json::map")]
+    config_overlay: serde_json::Map<String, serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    directory_endpoint: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnitSecretEnv {
+    name: String,
+    secret_name: String,
+    key: String,
+}
+
+#[derive(serde::Serialize)]
+struct UnitImageValues {
+    repository: String,
+    tag: String,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -1124,11 +1317,19 @@ fn existing_secret(
     application: &ResolvedApplication,
     input: &GenerateInput<'_>,
 ) -> Result<Option<String>, GenerateError> {
+    // The process that runs `cluster` connects to every scope's backend, so it
+    // needs the credentials of every scope, requesters there or not (a cluster
+    // placed in its own application has none).
+    let hosts_cluster = application
+        .gears
+        .iter()
+        .any(|gear| gear.as_str() == CLUSTER_SERVICE);
     let Some(name) = input.lock.cluster.iter().find_map(|binding| {
-        if !binding
-            .requesters
-            .iter()
-            .any(|gear| application.contains(gear))
+        if !hosts_cluster
+            && !binding
+                .requesters
+                .iter()
+                .any(|gear| application.contains(gear))
         {
             return None;
         }
@@ -1143,6 +1344,49 @@ fn existing_secret(
     };
     helm_safe("existingSecret", &name)?;
     Ok(Some(name))
+}
+
+/// The product's Kube platform token, when its platform auth is `kube`: the
+/// projected token every generated unit presents and the audience it is minted
+/// for, from the gateway's `internal_auth` -- the one platform-plane setting a
+/// description makes (`generate::config` copies it to the hubs and workers).
+struct KubeToken {
+    audience: String,
+    dir: String,
+    file: String,
+}
+
+fn kube_platform_token(input: &GenerateInput<'_>) -> Option<KubeToken> {
+    let auth = input
+        .lock
+        .gears
+        .iter()
+        .find(|(id, _)| id.as_str() == "api-gateway")?
+        .1
+        .config
+        .get("internal_auth")?;
+    if auth.get("provider")?.as_str()? != "kube" {
+        return None;
+    }
+    let audience = auth
+        .get("audiences")
+        .and_then(|a| a.get(0))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("toolkit-internal")
+        .to_owned();
+    let path = auth
+        .get("token_path")
+        .and_then(serde_json::Value::as_str)
+        .map_or_else(
+            || format!("/var/run/secrets/tokens/{audience}"),
+            str::to_owned,
+        );
+    let (dir, file) = path.rsplit_once('/')?;
+    Some(KubeToken {
+        audience,
+        dir: dir.to_owned(),
+        file: file.to_owned(),
+    })
 }
 
 /// The three parts of the image, taken from the lock rather than parsed back out.

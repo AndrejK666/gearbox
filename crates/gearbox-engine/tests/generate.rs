@@ -1373,7 +1373,14 @@ fn values_schema_rejects_unknown_keys_and_wrong_types() {
     .expect("schema is JSON");
     assert_eq!(schema["additionalProperties"], false);
     assert_eq!(schema["type"], "object");
-    let gateway = &schema["properties"]["api-gateway"];
+    // The gateway hosts the directory, so its block is the subchart schema with
+    // the singleton rule beside it (`allOf`).
+    let block = &schema["properties"]["api-gateway"];
+    let gateway = block["allOf"].get(0).unwrap_or(block);
+    assert_eq!(
+        block["allOf"][1]["properties"]["replicaCount"]["const"], 1,
+        "the directory's process is one replica"
+    );
     assert_eq!(gateway["additionalProperties"], false);
     assert_eq!(gateway["properties"]["replicaCount"]["type"], "integer");
     for hatch in [
@@ -2837,4 +2844,598 @@ fn a_non_anchor_provider_is_looked_up_under_its_workers_directory_name() {
     let wiring =
         &config["gears"][consumer.as_str()]["config"]["consumer_wiring"]["beside-the-anchor"];
     assert_eq!(wiring["directory_name"], worker.registers_as(), "{wiring}");
+}
+
+/// P4 / ADR-0026 §6: a production Kubernetes profile with Kube platform auth.
+/// The gateway gets an internal listener (advertised by its Service DNS, the
+/// port neighbours dial), an exposed-only public listener and an enforcing hub;
+/// every generated unit mounts the projected platform token and may call
+/// `TokenReview`. The repository's products are `development = True`, so this
+/// takes payments-demo `prod` and makes it production.
+#[test]
+fn a_production_kubernetes_profile_gets_the_production_shape() {
+    let Some(root) = gears_rust() else {
+        return;
+    };
+    let opened = vec![SourceRoot::open(SourceId::new("gears-rust").unwrap(), &root).unwrap()];
+    let scan = load_catalogue(&opened);
+    let path = product_gdl();
+    let mut intent = load_product(&path, None)
+        .intent
+        .expect("the product evaluates");
+    let prod = ProfileId::new("prod").unwrap();
+    if let Some(gearbox_ir::DeploymentProfileDecl::Kubernetes { development, .. }) =
+        intent.profiles.get_mut(&prod)
+    {
+        *development = false;
+    }
+    intent
+        .selected_gears
+        .iter_mut()
+        .find(|s| s.gear.as_str() == "api-gateway")
+        .unwrap()
+        .config
+        .insert(
+            "internal_auth".to_owned(),
+            serde_json::json!({
+                "provider": "kube",
+                "audiences": ["toolkit-internal"],
+                "token_path": "/var/run/secrets/tokens/toolkit-internal",
+            }),
+        );
+    let resolution =
+        gearbox_engine::resolve::resolve_at(&scan.catalogue, &intent, &prod, Some(&path));
+    let errors: Vec<_> = resolution
+        .diagnostics
+        .errors()
+        .map(|d| d.message.clone())
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "a conforming production profile: {errors:?}"
+    );
+    let sources = opened
+        .iter()
+        .map(|r| (r.id.clone(), r.to_resolved()))
+        .collect();
+    let lock =
+        gearbox_engine::resolve::product::assemble(&scan.catalogue, &intent, &resolution, sources);
+    assert!(!lock.product.development);
+    let roots = opened
+        .iter()
+        .map(|r| (r.id.clone(), r.root.clone()))
+        .collect();
+    let files = generate_tree(&lock, &roots, &out_root()).files;
+
+    let host = lock
+        .applications
+        .iter()
+        .find(|a| !a.is_worker())
+        .expect("a host");
+    let internal = host
+        .listens
+        .iter()
+        .find(|e| e.name == "internal")
+        .expect("an internal listener");
+    let port: u16 = internal
+        .address
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(
+        host.service_port,
+        Some(port),
+        "neighbours dial the internal listener"
+    );
+
+    let config = yaml(text(&files, &format!("config/{}.yaml", host.name)));
+    let gateway = &config["gears"]["api-gateway"]["config"];
+    assert_eq!(
+        gateway["public"]["exposed_only"],
+        serde_json::Value::Bool(true),
+        "{gateway}"
+    );
+    assert_eq!(
+        gateway["internal_bind_addr"],
+        format!("0.0.0.0:{port}"),
+        "{gateway}"
+    );
+    assert_eq!(
+        gateway["internal_advertise_uri"],
+        format!("http://{}.payments.svc.cluster.local:{port}", host.name),
+        "{gateway}"
+    );
+    assert_eq!(
+        config["gears"]["grpc-hub"]["config"]["internal_auth_enforcement"], "required",
+        "{config}"
+    );
+    // The directory admits registrars from the release's namespace only.
+    assert_eq!(
+        config["gears"]["service-discovery"]["config"]["platform_namespaces"],
+        serde_json::json!(["payments"]),
+        "{config}"
+    );
+
+    let values = yaml(text(&files, "helm/payments-demo/values.yaml"));
+    // The directory's process is never surged.
+    assert_eq!(values[host.name.as_str()]["strategy"]["type"], "Recreate");
+    for application in &lock.applications {
+        let block = &values[application.name.as_str()];
+        assert!(
+            block["resources"]["requests"]["memory"].is_string(),
+            "{block}"
+        );
+        if application.is_worker() {
+            // The directory admits a registrar by the name it registers under.
+            assert_eq!(
+                block["serviceAccount"]["name"],
+                application.registers_as(),
+                "{block}"
+            );
+        }
+        assert_eq!(
+            block["automountServiceAccountToken"],
+            serde_json::Value::Bool(true),
+            "{block}"
+        );
+        assert_eq!(
+            block["tokenReview"],
+            serde_json::Value::Bool(true),
+            "{block}"
+        );
+        assert_eq!(
+            block["extraVolumes"][0]["projected"]["sources"][0]["serviceAccountToken"]["audience"],
+            "toolkit-internal",
+            "{block}"
+        );
+        assert_eq!(
+            block["extraVolumeMounts"][0]["mountPath"],
+            "/var/run/secrets/tokens"
+        );
+    }
+
+    // With GEARBOX_HELM set, the chart renders: the token volume and the
+    // TokenReview grant are Kubernetes objects, not only values.
+    let Some(rendered) = helm_render(
+        &files,
+        "production-shape-test",
+        "helm/payments-demo",
+        &["-n", "payments"],
+    ) else {
+        return;
+    };
+    assert_eq!(
+        rendered.matches("kind: ClusterRoleBinding").count(),
+        lock.applications.len(),
+        "one TokenReview grant per unit"
+    );
+    assert!(
+        rendered.contains("audience: toolkit-internal"),
+        "the projected token"
+    );
+}
+
+/// With `GEARBOX_HELM` set, write `files` under `.gearbox/<dir>` and render the
+/// chart at `chart` with `args`; `None` when Helm is not configured.
+fn helm_render(
+    files: &gearbox_ir::FileSet,
+    dir: &str,
+    chart: &str,
+    args: &[&str],
+) -> Option<String> {
+    let helm = std::env::var_os("GEARBOX_HELM")?;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.gearbox")
+        .join(dir);
+    // Absent on a first run; anything else surfaces when the files are written.
+    drop(std::fs::remove_dir_all(&root));
+    for file in files.iter() {
+        let at = root.join(file.path.as_str());
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, &file.bytes).unwrap();
+    }
+    let output = std::process::Command::new(helm)
+        .args(["template", "t"])
+        .arg(root.join(chart))
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Review of Phase 3, finding 8: a production single-node self-hosted hub is a
+/// socket in a private directory under the product's home, not TCP; the
+/// description's own `uds://` path wins.
+#[test]
+fn a_production_self_hosted_hub_is_a_private_socket() {
+    let Some(root) = gears_rust() else {
+        return;
+    };
+    let opened = vec![SourceRoot::open(SourceId::new("gears-rust").unwrap(), &root).unwrap()];
+    let scan = load_catalogue(&opened);
+    let path = product_gdl();
+    let mut intent = load_product(&path, None)
+        .intent
+        .expect("the product evaluates");
+    let local = ProfileId::new("local").unwrap();
+    if let Some(gearbox_ir::DeploymentProfileDecl::SelfHosted { development, .. }) =
+        intent.profiles.get_mut(&local)
+    {
+        *development = false;
+    }
+    let hub_address = |intent: &gearbox_ir::ProductIntent| {
+        let resolution =
+            gearbox_engine::resolve::resolve_at(&scan.catalogue, intent, &local, Some(&path));
+        resolution
+            .partition
+            .applications
+            .iter()
+            .flat_map(|a| &a.listens)
+            .find(|e| e.gear.as_str() == "grpc-hub")
+            .map(|e| e.address.clone())
+            .expect("a hub")
+    };
+    assert_eq!(
+        hub_address(&intent),
+        "uds://~/.cf-gears/payments-demo/local/run/gateway/grpc-hub.sock"
+    );
+    // The demo reaches the hub through api-gateway's deps; naming it lets the
+    // description give it a path.
+    if !intent
+        .selected_gears
+        .iter()
+        .any(|s| s.gear.as_str() == "grpc-hub")
+    {
+        let mut hub = intent.selected_gears[0].clone();
+        hub.gear = gearbox_ir::GearId::new("grpc-hub").unwrap();
+        hub.config.clear();
+        hub.plugins.clear();
+        intent.selected_gears.push(hub);
+    }
+    intent
+        .selected_gears
+        .iter_mut()
+        .find(|s| s.gear.as_str() == "grpc-hub")
+        .unwrap()
+        .config
+        .insert(
+            "listen_addr".to_owned(),
+            serde_json::json!("uds:///run/payments/hub.sock"),
+        );
+    assert_eq!(hub_address(&intent), "uds:///run/payments/hub.sock");
+}
+
+/// Review of Phase 3, finding 5: a product whose process is exactly Flight
+/// Control ships Flight Control's chart and image, Types Registry's database
+/// included -- it reaches the chart in `configOverlay`, its password through
+/// `secretEnv` from the description's existing Secret.
+#[test]
+fn an_exact_flight_control_ships_its_unit_chart() {
+    let Some(root) = gears_rust() else {
+        return;
+    };
+    let opened = vec![SourceRoot::open(SourceId::new("gears-rust").unwrap(), &root).unwrap()];
+    let scan = load_catalogue(&opened);
+    let path = product_gdl();
+    let mut intent = load_product(&path, None)
+        .intent
+        .expect("the product evaluates");
+    let keep = [
+        "api-gateway",
+        "service-discovery",
+        "authn-resolver",
+        "types-registry",
+    ];
+    intent
+        .selected_gears
+        .retain(|s| keep.contains(&s.gear.as_str()));
+    if !intent
+        .selected_gears
+        .iter()
+        .any(|s| s.gear.as_str() == "types-registry")
+    {
+        let mut types = intent.selected_gears[0].clone();
+        types.gear = gearbox_ir::GearId::new("types-registry").unwrap();
+        types.config.clear();
+        types.plugins.clear();
+        intent.selected_gears.push(types);
+    }
+    intent.bindings.clear();
+    intent.cluster_scopes.clear();
+    intent.application_pins.clear();
+    let prod = ProfileId::new("prod").unwrap();
+    let resolution =
+        gearbox_engine::resolve::resolve_at(&scan.catalogue, &intent, &prod, Some(&path));
+    let sources = opened
+        .iter()
+        .map(|r| (r.id.clone(), r.to_resolved()))
+        .collect();
+    let lock =
+        gearbox_engine::resolve::product::assemble(&scan.catalogue, &intent, &resolution, sources);
+    assert_eq!(lock.applications.len(), 1, "{:?}", lock.applications);
+    let host = &lock.applications[0];
+    assert!(host.needs_db, "Types Registry is database-backed");
+    let chart = host
+        .unit_chart
+        .as_ref()
+        .unwrap_or_else(|| panic!("Flight Control's unit chart: {:?}", host.gears));
+    assert_eq!(chart.image, "flight-control");
+
+    let roots = opened
+        .iter()
+        .map(|r| (r.id.clone(), r.root.clone()))
+        .collect();
+    let files = generate_tree(&lock, &roots, &out_root()).files;
+    let values = yaml(text(&files, "helm/payments-demo/values.yaml"));
+    let block = &values[host.name.as_str()];
+    assert!(
+        block["configOverlay"]["database"]["servers"]["pg"].is_object(),
+        "{block}"
+    );
+    assert!(
+        block["configOverlay"]["gears"]["types-registry"]["database"]["dbname"].is_string(),
+        "{block}"
+    );
+    assert_eq!(
+        block["secretEnv"][0]["secretName"], "payments-db",
+        "{block}"
+    );
+    assert!(
+        !files.iter().any(|f| f.path.as_str().starts_with("apps/")),
+        "no crate is generated for it"
+    );
+}
+
+/// Review of Phase 3 follow-up: an exact Flight Control and a separate cluster
+/// unit ship both hand-written charts, and the topology names what those charts
+/// create -- workers dial `flight-control-grpc:50051` for the directory, and
+/// cluster is advertised by its own Service. The description's OIDC settings
+/// reach Flight Control's chart; with `GEARBOX_HELM` set the umbrella renders.
+#[test]
+fn flight_control_and_cluster_units_render_together() {
+    let Some(root) = gears_rust() else {
+        return;
+    };
+    let opened = vec![SourceRoot::open(SourceId::new("gears-rust").unwrap(), &root).unwrap()];
+    let scan = load_catalogue(&opened);
+    let path = product_gdl();
+    let mut intent = load_product(&path, None)
+        .intent
+        .expect("the product evaluates");
+    let keep = [
+        "api-gateway",
+        "service-discovery",
+        "authn-resolver",
+        "cluster",
+    ];
+    intent
+        .selected_gears
+        .retain(|s| keep.contains(&s.gear.as_str()));
+    for gear in ["types-registry", "grpc-hub"] {
+        let mut selection = intent.selected_gears[0].clone();
+        selection.gear = gearbox_ir::GearId::new(gear).unwrap();
+        selection.config.clear();
+        selection.plugins.clear();
+        intent.selected_gears.push(selection);
+    }
+    intent.bindings.clear();
+    intent.cluster_scopes.clear();
+    intent.application_pins = vec![gearbox_ir::ApplicationPin {
+        name: gearbox_ir::ApplicationId::new("cluster").unwrap(),
+        anchor: gearbox_ir::GearId::new("cluster").unwrap(),
+        include: [gearbox_ir::GearId::new("grpc-hub").unwrap()]
+            .into_iter()
+            .collect(),
+        role: None,
+        replicas: 1,
+        profiles: std::collections::BTreeSet::new(),
+        declared_at: None,
+    }];
+    let prod = ProfileId::new("prod").unwrap();
+    if let Some(gearbox_ir::DeploymentProfileDecl::Kubernetes { development, .. }) =
+        intent.profiles.get_mut(&prod)
+    {
+        *development = false;
+    }
+    for selection in &mut intent.selected_gears {
+        match selection.gear.as_str() {
+            "api-gateway" => {
+                selection.config.insert(
+                    "internal_auth".to_owned(),
+                    serde_json::json!({"provider": "kube", "audiences": ["toolkit-internal"],
+                        "token_path": "/var/run/secrets/tokens/toolkit-internal"}),
+                );
+            }
+            "authn-resolver" => {
+                for plugin in &mut selection.plugins {
+                    if plugin.gear.as_str() == "oidc-authn-plugin" {
+                        plugin.config = [(
+                            "jwt".to_owned(),
+                            serde_json::json!({
+                                "trusted_issuers": [{"issuer": "https://id.example.com"}],
+                                "expected_audience": ["payments"],
+                            }),
+                        )]
+                        .into_iter()
+                        .collect();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let resolution =
+        gearbox_engine::resolve::resolve_at(&scan.catalogue, &intent, &prod, Some(&path));
+    let errors: Vec<_> = resolution
+        .diagnostics
+        .errors()
+        .map(|d| d.message.clone())
+        .collect();
+    assert!(errors.is_empty(), "{errors:#?}");
+    let sources = opened
+        .iter()
+        .map(|r| (r.id.clone(), r.to_resolved()))
+        .collect();
+    let lock =
+        gearbox_engine::resolve::product::assemble(&scan.catalogue, &intent, &resolution, sources);
+    let unit = |name: &str| {
+        lock.applications
+            .iter()
+            .find(|a| a.unit_chart.as_ref().is_some_and(|c| c.image == name))
+            .unwrap_or_else(|| panic!("{name}: {:?}", lock.applications))
+    };
+    let flight_control = unit("flight-control");
+    let cluster = unit("cluster-oop");
+
+    let roots = opened
+        .iter()
+        .map(|r| (r.id.clone(), r.root.clone()))
+        .collect();
+    let files = generate_tree(&lock, &roots, &out_root()).files;
+    let values = yaml(text(&files, "helm/payments-demo/values.yaml"));
+    assert_eq!(
+        values[cluster.name.as_str()]["directoryEndpoint"],
+        "http://flight-control-grpc.payments.svc.cluster.local:50051",
+        "the directory is behind the Service Flight Control's chart creates"
+    );
+    let jwt = &values[flight_control.name.as_str()]["configOverlay"]["gears"]["oidc-authn-plugin"]
+        ["config"]["jwt"];
+    assert_eq!(jwt["expected_audience"][0], "payments", "{jwt}");
+
+    let tags = [
+        "--set".to_owned(),
+        format!("{}.image.tag=t", flight_control.name),
+        "--set".to_owned(),
+        format!("{}.image.tag=t", cluster.name),
+    ];
+    let mut args = vec!["-n", "payments"];
+    args.extend(tags.iter().map(String::as_str));
+    let Some(rendered) = helm_render(&files, "units-together-test", "helm/payments-demo", &args)
+    else {
+        return;
+    };
+    assert!(
+        rendered.contains("name: flight-control-grpc"),
+        "Flight Control's Services"
+    );
+    assert!(rendered.contains("name: cluster\n"), "cluster's Service");
+}
+
+/// Review of Phase 3 follow-ups 2 and 3: two production self-hosted hubs never
+/// share a socket -- one per process by default, and an authored `uds://` path
+/// is the directory's hub only -- in a profile that resolves without errors,
+/// its production auth configured.
+#[test]
+fn two_self_hosted_hubs_get_distinct_sockets() {
+    let Some(root) = gears_rust() else {
+        return;
+    };
+    let opened = vec![SourceRoot::open(SourceId::new("gears-rust").unwrap(), &root).unwrap()];
+    let scan = load_catalogue(&opened);
+    let path = product_gdl();
+    let mut intent = load_product(&path, None)
+        .intent
+        .expect("the product evaluates");
+    let local = ProfileId::new("local").unwrap();
+    if let Some(gearbox_ir::DeploymentProfileDecl::SelfHosted { development, .. }) =
+        intent.profiles.get_mut(&local)
+    {
+        *development = false;
+    }
+    // Production auth: a shared platform secret, and tenant AuthN that does not
+    // accept everyone.
+    for selection in &mut intent.selected_gears {
+        if selection.gear.as_str() == "api-gateway" {
+            selection.config.insert(
+                "internal_auth".to_owned(),
+                serde_json::json!({"provider": "shared_secret", "secret": ""}),
+            );
+        }
+        for plugin in &mut selection.plugins {
+            if plugin.gear.as_str() == "static-authn-plugin" {
+                plugin
+                    .config
+                    .insert("mode".to_owned(), serde_json::json!("static_tokens"));
+            }
+        }
+    }
+    // A second hub, in the `api-contracts` worker.
+    let mut hub = intent.selected_gears[0].clone();
+    hub.gear = gearbox_ir::GearId::new("grpc-hub").unwrap();
+    hub.config.clear();
+    hub.plugins.clear();
+    intent.selected_gears.push(hub);
+    intent
+        .application_pins
+        .iter_mut()
+        .find(|p| p.name.as_str() == "api-contracts")
+        .unwrap()
+        .include
+        .insert(gearbox_ir::GearId::new("grpc-hub").unwrap());
+    let hubs = |intent: &gearbox_ir::ProductIntent| -> BTreeMap<String, String> {
+        let resolution =
+            gearbox_engine::resolve::resolve_at(&scan.catalogue, intent, &local, Some(&path));
+        let errors: Vec<_> = resolution
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == gearbox_ir::Severity::Error)
+            .map(|d| format!("{}: {}", d.code, d.message))
+            .collect();
+        assert_eq!(errors, Vec::<String>::new());
+        let directory = resolution
+            .partition
+            .applications
+            .iter()
+            .find(|a| a.gears.iter().any(|g| g.as_str() == "service-discovery"))
+            .expect("an application hosts the directory");
+        assert_eq!(directory.name.as_str(), "gateway");
+        resolution
+            .partition
+            .applications
+            .iter()
+            .filter_map(|a| {
+                a.listens
+                    .iter()
+                    .find(|e| e.gear.as_str() == "grpc-hub")
+                    .map(|e| (a.name.to_string(), e.address.clone()))
+            })
+            .collect()
+    };
+    let defaults = hubs(&intent);
+    assert_eq!(defaults.len(), 2, "{defaults:?}");
+    assert_eq!(
+        defaults["api-contracts"],
+        "uds://~/.cf-gears/payments-demo/local/run/api-contracts/grpc-hub.sock"
+    );
+    assert_eq!(
+        defaults["gateway"],
+        "uds://~/.cf-gears/payments-demo/local/run/gateway/grpc-hub.sock"
+    );
+
+    intent
+        .selected_gears
+        .iter_mut()
+        .find(|s| s.gear.as_str() == "grpc-hub")
+        .unwrap()
+        .config
+        .insert(
+            "listen_addr".to_owned(),
+            serde_json::json!("uds:///run/payments/hub.sock"),
+        );
+    let authored = hubs(&intent);
+    assert_eq!(
+        authored["gateway"], "uds:///run/payments/hub.sock",
+        "the directory's hub"
+    );
+    assert_eq!(
+        authored["api-contracts"],
+        "uds://~/.cf-gears/payments-demo/local/run/api-contracts/grpc-hub.sock"
+    );
 }

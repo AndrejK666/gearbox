@@ -162,6 +162,11 @@ pub enum DeploymentProfileDecl {
         /// Explicit per-gear SQLite files relative to the gear home.
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         sqlite_databases: BTreeMap<GearId, crate::SqliteDatabase>,
+        /// `development = True`: the production rules (gears-rust ADR-0011 sections 1 and 3,
+        /// Gearbox ADR-0026 section 6) are reported as warnings rather than errors, and
+        /// the generator keeps its development defaults. Absent means production.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        development: bool,
         /// Where `embedded(...)` was written in the product description.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         declared_at: Option<Location>,
@@ -191,6 +196,11 @@ pub enum DeploymentProfileDecl {
         /// product cannot drift with the operator's environment.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cargo_profile: Option<String>,
+        /// `development = True`: the production rules (gears-rust ADR-0011 sections 1 and 3,
+        /// Gearbox ADR-0026 section 6) are reported as warnings rather than errors, and
+        /// the generator keeps its development defaults. Absent means production.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        development: bool,
         /// Where `self_hosted(...)` was written in the product description.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         declared_at: Option<Location>,
@@ -209,6 +219,11 @@ pub enum DeploymentProfileDecl {
         namespace: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         image_registry: Option<String>,
+        /// `development = True`: the production rules (gears-rust ADR-0011 sections 1 and 3,
+        /// Gearbox ADR-0026 section 6) are reported as warnings rather than errors, and
+        /// the generator keeps its development defaults. Absent means production.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        development: bool,
         /// Where `kubernetes(...)` was written in the product description.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         declared_at: Option<Location>,
@@ -229,6 +244,16 @@ impl DeploymentProfileDecl {
             | Self::Kubernetes {
                 sqlite_databases, ..
             } => sqlite_databases,
+        }
+    }
+
+    /// Whether the description marked this profile `development = True`.
+    #[must_use]
+    pub const fn development(&self) -> bool {
+        match self {
+            Self::Embedded { development, .. }
+            | Self::SelfHosted { development, .. }
+            | Self::Kubernetes { development, .. } => *development,
         }
     }
 

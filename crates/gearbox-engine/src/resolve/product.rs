@@ -47,6 +47,7 @@ pub fn assemble(
             version: intent.version.clone(),
             profile: resolution.profile.clone(),
             profile_kind: declaration.map_or("unknown", |d| d.kind()).to_owned(),
+            development: declaration.is_some_and(gearbox_ir::DeploymentProfileDecl::development),
             layout: intent
                 .layout
                 .clone()

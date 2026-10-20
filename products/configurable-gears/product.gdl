@@ -1,3 +1,5 @@
+gdl_version = "1.3"
+
 # A product that exists to be *configured*, not to be a realistic deployment.
 #
 # `payments-demo` is the corpus's real product, and its `gears` list is chosen to
@@ -33,8 +35,9 @@ product(
     # feature can be seen being *offered*, which is that claim from the other
     # side rather than a second claim.
     profiles = [
-        embedded(id = "dev"),
+        embedded(development = True, id = "dev"),
         kubernetes(
+            development = True,
             id = "prod",
             discovery = "static",
             namespace = "configurable",

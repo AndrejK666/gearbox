@@ -19,6 +19,12 @@ export type DeploymentProfileDecl = { "profile": "embedded", id: ProfileId, data
  */
 sqlite_databases?: { [key in GearId]: SqliteDatabase }, 
 /**
+ * `development = True`: the production rules (gears-rust ADR-0011 sections 1 and 3,
+ * Gearbox ADR-0026 section 6) are reported as warnings rather than errors, and
+ * the generator keeps its development defaults. Absent means production.
+ */
+development?: boolean, 
+/**
  * Where `embedded(...)` was written in the product description.
  */
 declared_at?: Location | null, } | { "profile": "self_hosted", id: ProfileId, database?: PostgresDatabase | null, 
@@ -43,6 +49,12 @@ target_dir?: string | null,
  */
 cargo_profile?: string | null, 
 /**
+ * `development = True`: the production rules (gears-rust ADR-0011 sections 1 and 3,
+ * Gearbox ADR-0026 section 6) are reported as warnings rather than errors, and
+ * the generator keeps its development defaults. Absent means production.
+ */
+development?: boolean, 
+/**
  * Where `self_hosted(...)` was written in the product description.
  */
 declared_at?: Location | null, } | { "profile": "kubernetes", id: ProfileId, database?: PostgresDatabase | null, 
@@ -50,6 +62,12 @@ declared_at?: Location | null, } | { "profile": "kubernetes", id: ProfileId, dat
  * Explicit per-gear SQLite files relative to the gear home.
  */
 sqlite_databases?: { [key in GearId]: SqliteDatabase }, discovery: Discovery, namespace?: string | null, image_registry?: string | null, 
+/**
+ * `development = True`: the production rules (gears-rust ADR-0011 sections 1 and 3,
+ * Gearbox ADR-0026 section 6) are reported as warnings rather than errors, and
+ * the generator keeps its development defaults. Absent means production.
+ */
+development?: boolean, 
 /**
  * Where `kubernetes(...)` was written in the product description.
  */

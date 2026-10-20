@@ -880,6 +880,16 @@ diagnostic_codes! {
     /// (ADR `cpt-gearbox-adr-one-per-installation`).
     TopologyDuplicateRegistration = "GBX0320", Topology, Warning, false, "two applications register the same directory name";
 
+    /// A production profile breaks a production rule (gears-rust ADR-0011
+    /// sections 1 and 3, Gearbox ADR-0026 section 6; test case P4): the public
+    /// listener serves internal operations, a multi-process profile has no
+    /// platform auth of its kind (`kube` on Kubernetes, `shared_secret`
+    /// self-hosted), an embedded hub binds TCP, a hub socket sits in a shared
+    /// temporary directory, a hub does not enforce platform auth, or tenant
+    /// `AuthN` accepts everyone. Every profile is a production target unless it
+    /// says `development = True`, which reports the same findings as warnings.
+    TopologyNotProductionReady = "GBX0325", Topology, Error, false, "a production profile breaks a production rule";
+
     /// A product selects a gear that is described but has no code yet.
     ///
     /// `implementation = "design"` in its `gear.gdl`: the catalogue knows the gear's

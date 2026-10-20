@@ -25,6 +25,7 @@ import type { RestPlane } from "./RestPlane";
 import type { RuntimeCap } from "./RuntimeCap";
 import type { Scenario } from "./Scenario";
 import type { SourceId } from "./SourceId";
+import type { UnitChart } from "./UnitChart";
 import type { Visibility } from "./Visibility";
 
 /**
@@ -108,6 +109,10 @@ requires?: Array<Requirement>, serves?: Array<EndpointDecl>,
  * serves only probes. An authored claim: the runtime is what checks it.
  */
 rest_planes?: Array<RestPlane> | null, 
+/**
+ * The hand-written chart of the unit this gear anchors, if it has one.
+ */
+unit_chart?: UnitChart | null, 
 /**
  * The client trait the gear macro asserts is object-safe, if declared.
  */

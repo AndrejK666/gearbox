@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 117, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 118, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -438,6 +438,14 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "warning",
     domain: "topology",
     docs: "Two applications register the same name in the directory.\n\nA worker registers one name -- its own, or its role's. A host registers\none per REST provider it contains, plus one per gRPC provider, each\nunder that gear's own name. So the same name can be registered twice:\nby a host that reaches a gear through its closure, and by a worker\nanchored on that same gear because a description forced it out. A\nconsumer resolving the name then round-robins between two endpoints\nwith nothing marking either as the one meant.\n\n**Not about linking.** A gear compiled into several binaries is expected\nand correct -- co-location is a closure, not a partition -- and produces\nno second registration by itself: a gear linked into a worker anchored\non something else is not registered there at all. Linked, serving\nroutes, and registered under a name are three different sets, and only\nthe third can collide.\n\n**A warning ordinarily and an error for a gear declared\n`one_per_installation`.** Round-robin between two copies of a stateless\nservice is load balancing; between two that own disjoint state it is\ncorruption, and only the gear can say which it is\n(ADR `cpt-gearbox-adr-one-per-installation`).",
+    requiresEvidence: false,
+  },
+  GBX0325: {
+    code: "GBX0325",
+    title: "a production profile breaks a production rule",
+    severity: "error",
+    domain: "topology",
+    docs: "A production profile breaks a production rule (gears-rust ADR-0011\nsections 1 and 3, Gearbox ADR-0026 section 6; test case P4): the public\nlistener serves internal operations, a multi-process profile has no\nplatform auth of its kind (`kube` on Kubernetes, `shared_secret`\nself-hosted), an embedded hub binds TCP, a hub socket sits in a shared\ntemporary directory, a hub does not enforce platform auth, or tenant\n`AuthN` accepts everyone. Every profile is a production target unless it\nsays `development = True`, which reports the same findings as warnings.",
     requiresEvidence: false,
   },
   GBX0321: {

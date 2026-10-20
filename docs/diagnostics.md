@@ -15,7 +15,7 @@ remedy at the point it is raised
 (`cpt-gearbox-nfr-actionable-diagnostics`), which is per-occurrence and
 so is not listed here.
 
-Codes: **117**.
+Codes: **118**.
 
 ## `GBX01xx` — Parsing and evaluating GDL
 
@@ -475,6 +475,7 @@ Explicit GDL dependencies must match the co-location edges in Rust.
 | [GBX0318](#gbx0318) | warning | a gear's roles cannot all be deployed |
 | [GBX0319](#gbx0319) | error | an application names a role its anchor does not declare |
 | [GBX0320](#gbx0320) | warning | two applications register the same directory name |
+| [GBX0325](#gbx0325) | error | a production profile breaks a production rule |
 | [GBX0321](#gbx0321) | error | gear is at design maturity |
 | [GBX0322](#gbx0322) | warning | gear is experimental |
 | [GBX0323](#gbx0323) | info | gear is at preview |
@@ -774,6 +775,19 @@ the third can collide.
 service is load balancing; between two that own disjoint state it is
 corruption, and only the gear can say which it is
 (ADR `cpt-gearbox-adr-one-per-installation`).
+
+### GBX0325
+
+**a production profile breaks a production rule**
+
+A production profile breaks a production rule (gears-rust ADR-0011
+sections 1 and 3, Gearbox ADR-0026 section 6; test case P4): the public
+listener serves internal operations, a multi-process profile has no
+platform auth of its kind (`kube` on Kubernetes, `shared_secret`
+self-hosted), an embedded hub binds TCP, a hub socket sits in a shared
+temporary directory, a hub does not enforce platform auth, or tenant
+`AuthN` accepts everyone. Every profile is a production target unless it
+says `development = True`, which reports the same findings as warnings.
 
 ### GBX0321
 

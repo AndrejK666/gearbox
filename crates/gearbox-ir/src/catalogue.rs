@@ -204,6 +204,30 @@ impl Implementation {
     }
 }
 
+/// A hand-written chart that packages one executable unit anchored on this gear
+/// (`gear(deploy = helm_chart(...))`, GDL 1.3).
+///
+/// When a product application *is* that unit -- anchored on this gear, linking
+/// exactly `gears` (plugins aside) -- the generator ships this chart instead of
+/// generating one, and the unit's own image instead of a generated crate: the
+/// chart owns the unit's ports, listeners and hardening, and the product
+/// supplies only its gears' configuration (`configOverlay`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct UnitChart {
+    /// The chart directory, relative to the source root.
+    pub path: RelPath,
+    /// The image repository the unit's Dockerfile builds, without registry or tag.
+    pub image: String,
+    /// The non-plugin gears the unit's binary links.
+    pub gears: BTreeSet<GearId>,
+    /// The Services the chart fixes, by endpoint name (`grpc`, `internal`,
+    /// `rest`, or `serve` for a worker's own listener) to `service:port`. The
+    /// resolver addresses the process by these, not by names and ports it
+    /// would have chosen for a generated chart.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub services: BTreeMap<String, String>,
+}
+
 /// An authentication plane a gear's REST operations use (gears-rust ADR-0008,
 /// ADR-0011 section 3). Anonymous operations need no validator, so they are not
 /// a plane here.
@@ -557,6 +581,10 @@ pub struct GearDescriptor {
     /// serves only probes. An authored claim: the runtime is what checks it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rest_planes: Option<BTreeSet<RestPlane>>,
+
+    /// The hand-written chart of the unit this gear anchors, if it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_chart: Option<UnitChart>,
 
     /// The client trait the gear macro asserts is object-safe, if declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -405,6 +405,30 @@ pub fn merge(
             }
         }
     });
+    let unit_chart = decl.deploy.as_ref().and_then(|chart| {
+        let path = gdl_dir.resolve(&chart.path).map_err(|e| e.to_string());
+        let gears: Result<BTreeSet<_>, _> = chart
+            .gears
+            .iter()
+            .map(|g| GearId::new(g.clone()).map_err(|e| e.to_string()))
+            .collect();
+        match (path, gears) {
+            (Ok(path), Ok(gears)) => Some(gearbox_ir::UnitChart {
+                path,
+                image: chart.image.clone(),
+                gears,
+                services: chart.services.iter().cloned().collect(),
+            }),
+            (Err(error), _) | (_, Err(error)) => {
+                diagnostics.push(invalid(
+                    uri,
+                    format!("invalid unit chart: {error}"),
+                    "use a chart path inside the source root and valid gear ids",
+                ));
+                None
+            }
+        }
+    });
     let gear = GearDescriptor {
         display_name: decl.name.clone().unwrap_or_else(|| id.to_string()),
         id,
@@ -443,6 +467,7 @@ pub fn merge(
             .collect(),
         // Declared; the runtime's start check is what verifies it.
         rest_planes: decl.rest_planes.clone(),
+        unit_chart,
         // Projected.
         client_trait: projected.client_trait.clone(),
         // Projected from `provider_registry()` plus the plugin crates

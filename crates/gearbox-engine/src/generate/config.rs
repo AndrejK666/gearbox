@@ -262,11 +262,30 @@ pub fn app_config(
     write_cluster_sdk_wiring(input, application, &mut gears);
     write_cluster(input, &mut gears);
     write_spawns(input, application, &mut gears);
-    write_public_listener(input, &mut gears);
+    write_public_listener(input, application, &mut gears);
 
     // One platform-plane provider for the embedded host and its workers. The
     // product supplies secret values through AppConfig's APP__ environment
     // overrides; no credential value is needed during generation.
+    // The directory admits registrars from the release's namespace only: an
+    // empty allowlist would accept a same-named ServiceAccount from anywhere.
+    if !input.lock.product.development
+        && let (Some(kubernetes), Some(directory)) =
+            (&input.lock.kubernetes, gears.get_mut("service-discovery"))
+    {
+        directory
+            .config
+            .entry("platform_namespaces")
+            .or_insert_with(|| {
+                Value::Array(vec![Value::String(
+                    kubernetes
+                        .namespace
+                        .clone()
+                        .unwrap_or_else(|| "default".to_owned()),
+                )])
+            });
+    }
+
     let internal_auth = input
         .lock
         .gears
@@ -279,6 +298,13 @@ pub fn app_config(
         grpc.config
             .entry("internal_auth")
             .or_insert_with(|| auth.clone());
+        // A production hub that validates platform tokens enforces them
+        // (ADR-0011 §3); written under the description's value.
+        if !input.lock.product.development {
+            grpc.config
+                .entry("internal_auth_enforcement")
+                .or_insert(Value::String("required".to_owned()));
+        }
     }
 
     let home_dir = if input.lock.kubernetes.is_some() {
@@ -330,27 +356,116 @@ pub fn app_config(
     ))
 }
 
-/// The REST host's public listener in an embedded profile: only exposed
-/// operations (Gearbox ADR-0026 section 6, test case G18).
+/// The REST host's public listener serves only exposed operations in an
+/// embedded profile and in every production one (Gearbox ADR-0026 section 6,
+/// test cases G18 and P4).
 ///
-/// The all-in-one binary has no internal listener and no other process, so
-/// nothing but the public surface should answer. Written *under* the
-/// description's value: a development product turns it off by setting
-/// `public = {"exposed_only": False}` on the gateway. The multi-process
-/// profiles keep the gateway's default until the generator writes the internal
-/// listener their workers call co-hosted operations on (todo-issues).
-fn write_public_listener(input: &GenerateInput<'_>, gears: &mut BTreeMap<String, GearSection>) {
+/// The all-in-one binary has no other process, so nothing but the public
+/// surface should answer. A production multi-process gateway also has the
+/// internal listener the resolver assigned (`internal_bind_addr`), whose
+/// advertised address is written here. Both are written *under* the
+/// description's values; turning the filter off is GBX0325 on a production
+/// profile. A development multi-process profile keeps the gateway's single
+/// listener.
+fn write_public_listener(
+    input: &GenerateInput<'_>,
+    application: &ResolvedApplication,
+    gears: &mut BTreeMap<String, GearSection>,
+) {
     let embedded = input.lock.kubernetes.is_none() && input.lock.self_hosted.is_none();
-    let Some(gateway) = gears.get_mut(REST_HOST_GEAR).filter(|_| embedded) else {
-        return;
-    };
-    let public = gateway
-        .config
-        .entry("public")
-        .or_insert_with(|| Value::Object(Map::new()));
-    if let Value::Object(public) = public {
-        public.entry("exposed_only").or_insert(Value::Bool(true));
+    let production = !input.lock.product.development;
+    if let Some(gateway) = gears
+        .get_mut(REST_HOST_GEAR)
+        .filter(|_| embedded || production)
+    {
+        let public = gateway
+            .config
+            .entry("public")
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Value::Object(public) = public {
+            public.entry("exposed_only").or_insert(Value::Bool(true));
+        }
+        // The internal listener's advertised address (`internal_bind_addr`
+        // itself is the endpoint's config key, written with the others).
+        if let Some(uri) = application
+            .listens
+            .iter()
+            .find(|e| e.name == "internal" && e.gear.as_str() == REST_HOST_GEAR)
+            .and_then(|e| e.advertise_uri.clone())
+        {
+            gateway
+                .config
+                .entry("internal_advertise_uri")
+                .or_insert(Value::String(uri));
+        }
     }
+}
+
+/// What a unit chart is given for one process: the description's own
+/// configuration of each of its gears, and the cluster profiles the resolver
+/// bound -- not the topology the generator would have written (ports,
+/// endpoints, wiring, spawns), which the chart owns
+/// (`ResolvedApplication::unit_chart`). Merged by the chart over its own
+/// configuration, before its production rules are checked.
+pub(super) fn unit_chart_overlay(
+    input: &GenerateInput<'_>,
+    application: &ResolvedApplication,
+) -> Result<Map<String, Value>, GenerateError> {
+    let mut gears: BTreeMap<String, GearSection> = application
+        .gears
+        .iter()
+        .map(|id| {
+            let mut config: Map<String, Value> =
+                input.lock.gears.get(id).map_or_else(Map::new, |gear| {
+                    gear.config
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect()
+                });
+            if let Some(catalogue) = input.catalogue {
+                drop_unknown_keys(catalogue, id, &mut config);
+            }
+            (
+                id.to_string(),
+                GearSection {
+                    database: None,
+                    runtime: None,
+                    config,
+                },
+            )
+        })
+        .collect();
+    // The database the description resolved, as for a generated process: the
+    // server section and each gear's database. Its password stays a `${VAR}`
+    // the chart's `secretEnv` maps from the existing Secret.
+    let database = write_database(input, application, &mut gears)?;
+    write_cluster(input, &mut gears);
+    let mut gear_sections = Map::new();
+    for (id, section) in gears {
+        let mut gear = Map::new();
+        if let Some(db) = &section.database {
+            gear.insert("database".to_owned(), to_json(db)?);
+        }
+        if !section.config.is_empty() {
+            gear.insert("config".to_owned(), Value::Object(section.config));
+        }
+        if !gear.is_empty() {
+            gear_sections.insert(id, Value::Object(gear));
+        }
+    }
+    let mut overlay = Map::new();
+    overlay.insert("gears".to_owned(), Value::Object(gear_sections));
+    if let Some(database) = &database {
+        overlay.insert("database".to_owned(), to_json(database)?);
+    }
+    Ok(overlay)
+}
+
+fn to_json(value: &impl Serialize) -> Result<Value, GenerateError> {
+    serde_json::to_value(value).map_err(|source| GenerateError::Json {
+        what: "a unit chart's configuration overlay",
+        source,
+    })
 }
 
 /// Drop keys the projected schema does not name.

@@ -46,7 +46,14 @@ pub fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, GenerateError>
 
     let ignore = dockerignore(input, &context)?;
     let mut files = Vec::new();
-    for application in &input.lock.applications {
+    // A unit chart's process runs the unit's own image, built by its own
+    // Dockerfile in the source; nothing is generated for it here.
+    for application in input
+        .lock
+        .applications
+        .iter()
+        .filter(|application| application.unit_chart.is_none())
+    {
         files.push(dockerfile(input, application, &out_rel)?);
         files.push(FileEntry::text(
             paths::rel(&[
@@ -170,7 +177,12 @@ fn build_script(input: &GenerateInput<'_>, context: &Path) -> Result<FileEntry, 
     body.push_str("}\n\n");
 
     body.push_str("if [ \"$#\" -eq 0 ]; then\n");
-    for application in &input.lock.applications {
+    for application in input
+        .lock
+        .applications
+        .iter()
+        .filter(|application| application.unit_chart.is_none())
+    {
         let image = image_reference(application, input);
         body.push_str("  build_one ");
         body.push_str(application.name.as_str());
@@ -182,7 +194,12 @@ fn build_script(input: &GenerateInput<'_>, context: &Path) -> Result<FileEntry, 
     body.push_str("fi\n\n");
     body.push_str("for name in \"$@\"; do\n");
     body.push_str("  case \"$name\" in\n");
-    for application in &input.lock.applications {
+    for application in input
+        .lock
+        .applications
+        .iter()
+        .filter(|application| application.unit_chart.is_none())
+    {
         let image = image_reference(application, input);
         body.push_str("    ");
         body.push_str(application.name.as_str());
@@ -191,6 +208,18 @@ fn build_script(input: &GenerateInput<'_>, context: &Path) -> Result<FileEntry, 
         body.push(' ');
         body.push_str(&sh_single(&image));
         body.push_str(" ;;\n");
+    }
+    for application in &input.lock.applications {
+        if let Some(chart) = &application.unit_chart {
+            body.push_str("    ");
+            body.push_str(application.name.as_str());
+            body.push_str(") echo ");
+            body.push_str(&sh_single(&format!(
+                "{} runs the unit image `{}`: build it with the Dockerfile beside {} in source {}",
+                application.name, chart.image, chart.path, chart.source
+            )));
+            body.push_str(" ;;\n");
+        }
     }
     body.push_str("    *) echo \"unknown application: $name\" >&2; exit 1 ;;\n");
     body.push_str("  esac\n");

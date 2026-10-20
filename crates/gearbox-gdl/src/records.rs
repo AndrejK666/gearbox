@@ -78,6 +78,16 @@ gdl_record! {
 }
 
 gdl_record! {
+    /// `helm_chart(path = path(...), image = "...", gears = [...])`
+    HelmChartRecord as "gdl_helm_chart" {
+        pub path: String,
+        pub image: String,
+        pub gears: Vec<String>,
+        pub services: Vec<(String, String)>,
+    }
+}
+
+gdl_record! {
     /// `ui_product(shell = path(...), sdk = path(...), modules = [...])`
     UiProductRecord as "gdl_ui_product" {
         pub shell: String,
@@ -483,6 +493,8 @@ gdl_record! {
         pub cargo_profile: Option<String>,
         pub namespace: Option<String>,
         pub image_registry: Option<String>,
+        /// `development = True`: production rules become warnings.
+        pub development: bool,
         /// Where this profile constructor was written.
         #[allocative(skip)]
         pub declared_at: Option<gearbox_ir::Location>,

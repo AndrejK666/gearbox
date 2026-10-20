@@ -348,6 +348,28 @@ One Cargo feature the gear offers, for `gear(cargo_features = [...])`. `name` is
 
 `cargo_features` distinguishes absent from empty. Absent means nobody has curated this gear and a client falls back to the crate's whole `[features]` table, labelled uncurated. `cargo_features = []` is a curation that offers nothing, which is the right answer for a crate whose only feature gates its own tests.
 
+### `helm_chart(...)` → unit chart
+
+```
+helm_chart(path, image, gears)
+```
+
+For `gear(deploy = ...)` (GDL 1.3): the hand-written chart of the executable unit
+this gear anchors. `path` is `path(...)`, relative to the description; `image` is
+the repository the unit's Dockerfile builds, without a registry or tag; `gears`
+are the non-plugin gear ids its binary links, this gear included.
+
+On a `kubernetes` profile, an application anchored on this gear that links
+exactly `gears` (plugins aside) and needs no database **ships this chart**: the
+generator copies it, with its `file://` dependencies, into the product's umbrella
+under the application's name as an alias, and writes no crate or Dockerfile for
+it -- the unit's own image runs it, tagged with the product version. Its values
+are the image, the description's configuration of its gears as `configOverlay`,
+and `secretEnv` for `${VAR}` placeholders backed by the description's existing
+Secret. Ports, listeners and hardening are the chart's, and the chart checks its
+production rules after merging the overlay. Any other application anchored on the
+gear gets a generated chart.
+
 ### `endpoint(...)` → endpoint
 
 ```
@@ -529,6 +551,7 @@ gear(
   requires = [],                    # cluster.*(...)
   serves = [],                      # endpoint(...)
   rest_planes?,                     # "tenant" | "platform"; absent is read as ["tenant"]
+  deploy?,                          # helm_chart(...), the unit this gear anchors
   cluster_plugins = [],             # cluster_plugin(...)
   roles = [],                       # role(...), recorded but not resolved
   config_schema?,                   # config(...)
@@ -730,10 +753,20 @@ A `registry` source is the registry itself rather than one package, so a product
 ### Deployment profiles
 
 ```
-embedded(id, database?)
-self_hosted(id, host, worker_discovery, target_dir?, cargo_profile?, database?)
-kubernetes(id, discovery, namespace?, image_registry?, database?)
+embedded(id, database?, development = False)
+self_hosted(id, host, worker_discovery, target_dir?, cargo_profile?, database?, development = False)
+kubernetes(id, discovery, namespace?, image_registry?, database?, development = False)
 ```
+
+Every profile is a **production** target unless it says `development = True`
+(GDL 1.3). A production profile is held to the production rules before anything
+is generated (**GBX0325**, gears-rust ADR-0011 §1/§3): the gateway's public listener
+stays exposed-only, a multi-process profile has its kind's platform auth on
+`api-gateway` (`internal_auth.provider = "kube"` on `kubernetes`, `"shared_secret"`
+on `self_hosted`), an `embedded` hub binds no TCP, a hub socket is not in `/tmp`,
+a hub enforces platform auth, and tenant AuthN is not `static-authn-plugin` in
+`accept_all` mode. `development = True` reports the same findings as warnings and
+keeps the generator's development defaults.
 
 `id` is kebab-case. Duplicate ids are **GBX0110**. `worker_discovery` / `discovery` is `"static"` or `"directory"`, and nothing else. `host` is an application name, kebab-case. `cargo_profile` is a single path segment: `dev`, `release`, or a custom Cargo profile. `dev` writes under `target/debug`. `target_dir` is the Cargo target directory the host spawns workers out of, **as written** and relative to the description; a `self_hosted` profile without one cannot say where a worker binary is, which is **GBX0310**. On `kubernetes`, `namespace` and `image_registry` prefix what the chart deploys and where it pulls from; both are optional, recorded in the lock and used to derive the generated deployment artifacts.
 
@@ -966,14 +999,18 @@ product(
     version = "0.1.0",
     layout = "apps",
     sources = [source(id = "gears-rust", at = path("../../../gears-rust"))],
+    # Development profiles: accept-all AuthN and no platform auth are allowed
+    # (GBX0325 as warnings). A production profile needs its kind's platform auth
+    # on api-gateway -- see "Deployment profiles".
     profiles = [
-        embedded(id = "dev", database = postgres(host = "127.0.0.1", user = "postgres",
+        embedded(id = "dev", development = True,
+                 database = postgres(host = "127.0.0.1", user = "postgres",
                     password = "${GEARS_PG_PASSWORD}", params = {"sslmode": "disable"})),
-        self_hosted(id = "local", host = "gateway", worker_discovery = "directory",
+        self_hosted(id = "local", development = True, host = "gateway", worker_discovery = "directory",
                     target_dir = "../../../gears-rust/target",
                     database = postgres(host = "127.0.0.1", user = "postgres",
                         password = "${GEARS_PG_PASSWORD}", params = {"sslmode": "disable"})),
-        kubernetes(id = "prod", discovery = "static", namespace = "payments",
+        kubernetes(id = "prod", development = True, discovery = "static", namespace = "payments",
                     database = postgres(host = "postgres.example.com", user = "payments",
                         password = "${GEARS_PG_PASSWORD}", existing_secret = "payments-db")),
     ],
