@@ -540,6 +540,7 @@ fn build_bindings(
             mode: binding_mode(&record.mode),
             transport: record.transport.as_deref().and_then(transport),
             endpoint: record.endpoint.clone(),
+            critical: record.critical,
             profiles: scoped,
             declared_at: record.declared_at.clone(),
         });

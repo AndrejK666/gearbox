@@ -520,6 +520,9 @@ gdl_record! {
         /// From `transport.*`, when the operator pinned one.
         pub transport: Option<String>,
         pub endpoint: Option<String>,
+        /// Whether readiness waits for the provider; overrides the gear's
+        /// `consume(critical = ...)`.
+        pub critical: Option<bool>,
         pub profiles: Vec<String>,
         /// Where this `bind(...)` call was written.
         #[allocative(skip)]

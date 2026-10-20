@@ -204,6 +204,38 @@ impl Implementation {
     }
 }
 
+/// An authentication plane a gear's REST operations use (gears-rust ADR-0008,
+/// ADR-0011 section 3). Anonymous operations need no validator, so they are not
+/// a plane here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum RestPlane {
+    /// Operations a tenant bearer token authenticates; served only with a
+    /// tenant authenticator (`authn-resolver`) in the process.
+    Tenant,
+    /// Operations the platform token authenticates (`.platform()`).
+    Platform,
+}
+
+impl RestPlane {
+    /// Every value.
+    pub const ALL: [Self; 2] = [Self::Tenant, Self::Platform];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Tenant => "tenant",
+            Self::Platform => "platform",
+        }
+    }
+
+    /// The value a description spells, if it is one.
+    #[must_use]
+    pub fn parse(spelling: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.as_str() == spelling)
+    }
+}
+
 /// One thing a gear lets its users do, and whether it is written yet.
 ///
 /// What a `GEARS.md` line holds: `- [x] p1 - enqueue and execute jobs`.
@@ -517,6 +549,14 @@ pub struct GearDescriptor {
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub serves: Vec<EndpointDecl>,
+
+    /// The planes the gear's REST operations use, when its description says
+    /// (`rest_planes = [...]`). `None` is not "none": undeclared, the resolver
+    /// assumes tenant operations, the fail-closed reading of the runtime's start
+    /// check (GBX0417). `Some` of an empty set is a gear whose REST capability
+    /// serves only probes. An authored claim: the runtime is what checks it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest_planes: Option<BTreeSet<RestPlane>>,
 
     /// The client trait the gear macro asserts is object-safe, if declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]

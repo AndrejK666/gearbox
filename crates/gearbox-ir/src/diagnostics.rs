@@ -1001,6 +1001,72 @@ diagnostic_codes! {
     /// is one string in one attribute.
     BindingWiringKeySkew = "GBX0412", Binding, Error, false, "the endpoint override key names a different provider than the consumer declared";
 
+    /// A `bind(mode = ...)` asks for a placement the description forbids
+    /// (ADR `cpt-gearbox-adr-product-placement` section 2).
+    ///
+    /// `mode = local` is honoured by placing the provider with the consumer --
+    /// unless an `application(...)` pins the provider elsewhere, which is two
+    /// statements that cannot both hold. `mode = remote` is honoured by leaving
+    /// them apart -- unless a `deps` chain or an `include` puts the provider in
+    /// the consumer's process, where the client hub finds the local instance
+    /// and the remote client is never used. Both name what forces the
+    /// contradiction. An embedded profile is one process by definition, so a
+    /// mode there is inapplicable rather than contradicted (GBX0407).
+    BindingModeContradicted = "GBX0413", Binding, Error, false, "binding mode contradicted by the placement the description forces";
+
+    /// A gear given its own application is also linked into another one by a
+    /// `deps` chain (ADR `cpt-gearbox-adr-product-placement` section 3).
+    ///
+    /// The second copy is not a reference to the first: it is another
+    /// instance, with its own state, serving that process's in-process
+    /// callers. The description reads as "this runs separately" and the
+    /// product runs it twice. `deps` is link-time, so only the gear's source can
+    /// sever the edge (`#[toolkit::consumes]` plus `consume(...)`). Gears
+    /// replicated into every process by design -- `types-registry`,
+    /// `authn-resolver` (ADR `cpt-gearbox-adr-referenced-gears`) -- are exempt;
+    /// a duplicate directory *registration* is GBX0320.
+    PlacementDuplicatedByDeps = "GBX0414", Binding, Error, false, "a separately placed gear is linked into another application by `deps`";
+
+    /// A requester of a cluster primitive sits in an application without the
+    /// `cluster` gear, and the profile is not Kubernetes
+    /// (ADR `cpt-gearbox-adr-product-placement` section 4).
+    ///
+    /// The cluster SDK reaches a remote cluster at
+    /// `cluster.<POD_NAMESPACE>.svc.cluster.local:50051` and has no other way
+    /// to find it: no directory lookup, no configured endpoint. Outside
+    /// Kubernetes there is no such name, so the requester would start and fail
+    /// its first coordination call.
+    RemoteClusterNeedsKubernetes = "GBX0415", Binding, Error, true, "a remote cluster binding needs a Kubernetes profile",
+        prevents = Prevents::error("cf-gears-cluster-sdk", "ClusterError", "InvalidConfig");
+
+    /// More than one application of a Kubernetes profile links the `cluster`
+    /// gear (ADR `cpt-gearbox-adr-product-placement` section 4).
+    ///
+    /// Every process that links cluster gets a Service named `cluster`, which is
+    /// what the SDK addresses; two such processes need two Services under one
+    /// name, and the chart cannot install. Remote requesters would also split
+    /// between unrelated coordination state.
+    ClusterInSeveralApplications = "GBX0416", Binding, Error, false, "the `cluster` gear is in several applications of a Kubernetes profile";
+
+    /// An application serves REST and links no tenant authenticator
+    /// (ADR `cpt-gearbox-adr-product-placement` section 8).
+    ///
+    /// The runtime refuses to start a process that serves tenant-authenticated
+    /// operations without a tenant authenticator, rather than serving them
+    /// unauthenticated (gears-rust ADR-0011 section 3). A replicated Types
+    /// Registry alone is enough to trip it. Reported before generation, naming
+    /// the gears whose routes need it.
+    ApplicationWithoutAuthenticator = "GBX0417", Binding, Error, false, "an application serving REST has no tenant authenticator";
+
+    /// A requester reaches `cluster` remotely, and the cluster gear does not
+    /// provide the contract it needs over gRPC
+    /// (ADR `cpt-gearbox-adr-product-placement` section 4).
+    ///
+    /// The SDK's remote client speaks gRPC to the primitive's service and to the
+    /// profile service it resolves the scope through; a provider that does not
+    /// declare them is a binding the runtime cannot make.
+    RemoteClusterWithoutGrpc = "GBX0418", Binding, Error, false, "a remote cluster contract is not provided over gRPC";
+
     // ---------------------------------------------------------------- GBX05xx
     /// A cluster provider was selected automatically.
     ClusterAutoSelected = "GBX0501", Cluster, Info, false, "cluster provider selected automatically";

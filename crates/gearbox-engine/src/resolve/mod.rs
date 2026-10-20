@@ -224,7 +224,7 @@ pub fn resolve_at(
     };
 
     // Step 6 -- bindings, derived from placement rather than declared.
-    let bindings = intent.profiles.get(profile).map_or_else(Vec::new, |d| {
+    let mut bindings = intent.profiles.get(profile).map_or_else(Vec::new, |d| {
         let mut derived = bindings::derive(
             catalogue,
             &cuts,
@@ -252,6 +252,29 @@ pub fn resolve_at(
         &mut diagnostics,
     );
     cluster::report_stateful_replicas(catalogue, &partition, &cluster, &uri, &mut diagnostics);
+    // A requester apart from `cluster` reaches it over gRPC (ADR-0026 section 4).
+    if let Some(declaration) = intent.profiles.get(profile) {
+        bindings.extend(cluster::remote_bindings(
+            catalogue,
+            &partition,
+            &cluster,
+            intent,
+            declaration,
+            &uri,
+            &mut diagnostics,
+        ));
+        bindings.sort_by(|a, b| {
+            (&a.consumer, &a.contract, &a.consumer_application).cmp(&(
+                &b.consumer,
+                &b.contract,
+                &b.consumer_application,
+            ))
+        });
+    }
+    // Last, once every binding and its endpoint are known.
+    for binding in &mut bindings {
+        binding.gates_readiness = binding.derive_gates_readiness();
+    }
 
     let ui = ui::resolve(catalogue, intent, &closure, &uri, &mut diagnostics);
     diagnostics.finish();

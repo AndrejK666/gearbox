@@ -870,7 +870,99 @@ fn a_host_without_a_rest_host_gear_configures_the_builtin_http_host() {
         config.contains("http_host:\n  listen_addr: 127.0.0.1:8080"),
         "{config}"
     );
+    assert_eq!(
+        yaml(config)["http_host"]["public"]["exposed_only"],
+        serde_json::Value::Bool(true),
+        "{config}"
+    );
     assert!(!config.contains("oop_http:"), "{config}");
+}
+
+/// A generated runtime configuration, parsed.
+fn yaml(text: &str) -> serde_json::Value {
+    serde_saphyr::from_str(text).expect("the generated configuration is YAML")
+}
+
+/// G18 (Gearbox ADR-0026 section 6): the embedded profile is the all-in-one
+/// production binary. Its public listener serves only exposed operations, the
+/// gRPC hub binds nothing because no other process exists to dial it, and
+/// nothing is wired through the directory.
+#[test]
+fn an_embedded_profile_serves_only_exposed_operations_and_binds_no_hub() {
+    let Some((lock, files)) = generated("dev") else {
+        return;
+    };
+    assert_eq!(lock.applications.len(), 1, "one process");
+    let hub = lock.applications[0]
+        .listens
+        .iter()
+        .find(|endpoint| endpoint.gear.as_str() == "grpc-hub")
+        .expect("the host links the gRPC hub");
+    assert_eq!(hub.address, "none", "the lock says what the config says");
+
+    let config = yaml(text(&files.files, "config/payments-demo.yaml"));
+    let gears = &config["gears"];
+    assert_eq!(
+        gears["api-gateway"]["config"]["public"]["exposed_only"],
+        serde_json::Value::Bool(true),
+        "{config}"
+    );
+    assert_eq!(
+        gears["grpc-hub"]["config"]["listen_addr"],
+        serde_json::Value::String("none".to_owned()),
+        "{config}"
+    );
+    for (id, gear) in gears.as_object().expect("a gears map") {
+        assert!(
+            gear["config"].get("consumer_wiring").is_none(),
+            "`{id}` is wired to another process in a one-process product: {config}"
+        );
+    }
+    for section in ["oop_http", "internal_auth"] {
+        assert!(config.get(section).is_none(), "{section}: {config}");
+    }
+}
+
+/// The public filter is written under the description's value, so a
+/// development product can still serve every co-hosted operation.
+#[test]
+fn a_description_can_turn_the_public_filter_off() {
+    let Some((mut lock, source_roots)) = resolve("dev") else {
+        return;
+    };
+    lock.gears
+        .get_mut(&gearbox_ir::GearId::new("api-gateway").unwrap())
+        .expect("api-gateway resolved")
+        .config
+        .insert(
+            "public".to_owned(),
+            serde_json::json!({ "exposed_only": false }),
+        );
+    let files = generate_tree(&lock, &source_roots, &out_root());
+
+    let config = yaml(text(&files.files, "config/payments-demo.yaml"));
+    assert_eq!(
+        config["gears"]["api-gateway"]["config"]["public"]["exposed_only"],
+        serde_json::Value::Bool(false),
+        "{config}"
+    );
+}
+
+/// A process with workers keeps a bound hub: they register and resolve
+/// through it.
+#[test]
+fn a_multi_process_profile_binds_its_hub() {
+    let Some((_, files)) = generated("local") else {
+        return;
+    };
+    let config = yaml(text(&files.files, "config/gateway.yaml"));
+    let listen = &config["gears"]["grpc-hub"]["config"]["listen_addr"];
+    assert!(
+        listen
+            .as_str()
+            .is_some_and(|addr| addr.starts_with("127.0.0.1:")),
+        "{config}"
+    );
 }
 
 /// Without `oop_http` the runtime silently takes the legacy gRPC-only path and
@@ -2660,4 +2752,89 @@ fn generated_file_audit_ignores_ui_dependency_and_build_directories() {
     let messages = format!("{:?}", result.diagnostics);
     assert!(messages.contains("ui/orphan.js"), "{messages}");
     assert!(!messages.contains("unowned.js"), "{messages}");
+}
+
+/// G10: every remote binding's criticality reaches the consumer's wiring, so
+/// the runtime gates readiness on what resolution decided -- including a
+/// product's `bind(critical = False)`.
+#[test]
+fn a_remote_binding_writes_its_criticality_into_the_consumers_wiring() {
+    let Some((mut lock, source_roots)) = resolve("local") else {
+        return;
+    };
+    let remote = lock
+        .bindings
+        .iter()
+        .find(|b| b.is_remote())
+        .expect("the local profile has a remote binding");
+    let (consumer, consumer_app, provider) = (
+        remote.consumer.to_string(),
+        remote.consumer_application.to_string(),
+        remote.provider.to_string(),
+    );
+    // Every major of the pair shares one wiring slot, which is critical if any
+    // of them is: make them all optional.
+    let pair = |b: &&mut gearbox_ir::ResolvedBinding| {
+        b.consumer.as_str() == consumer && b.provider.as_str() == provider
+    };
+    let mut first = true;
+    for binding in lock.bindings.iter_mut().filter(pair) {
+        binding.critical = false;
+        first = false;
+    }
+    assert!(!first);
+    let files = generate_tree(&lock, &source_roots, &out_root());
+    let config: serde_json::Value =
+        serde_saphyr::from_str(text(&files.files, &format!("config/{consumer_app}.yaml"))).unwrap();
+    let wiring =
+        &config["gears"][consumer.as_str()]["config"]["consumer_wiring"][provider.as_str()];
+    assert_eq!(wiring["critical"], false, "{wiring}");
+
+    // One major still critical keeps the shared slot critical.
+    if let Some(binding) = lock.bindings.iter_mut().find(pair) {
+        binding.critical = true;
+    }
+    let files = generate_tree(&lock, &source_roots, &out_root());
+    let config: serde_json::Value =
+        serde_saphyr::from_str(text(&files.files, &format!("config/{consumer_app}.yaml"))).unwrap();
+    let wiring =
+        &config["gears"][consumer.as_str()]["config"]["consumer_wiring"][provider.as_str()];
+    assert_eq!(wiring["critical"], true, "{wiring}");
+}
+
+/// ADR-0010 section 6: under directory discovery a provider that is not its
+/// worker's anchor is looked up under the worker's directory name.
+#[test]
+fn a_non_anchor_provider_is_looked_up_under_its_workers_directory_name() {
+    let Some((mut lock, source_roots)) = resolve("local") else {
+        return;
+    };
+    let worker = lock
+        .applications
+        .iter()
+        .find(|a| a.is_worker())
+        .expect("a worker")
+        .clone();
+    let remote = lock
+        .bindings
+        .iter_mut()
+        .find(|b| b.is_remote() && b.provider_application == worker.name)
+        .expect("a remote binding into the worker");
+    assert!(
+        remote.endpoint.is_none(),
+        "directory discovery pins no endpoint"
+    );
+    // The same binding, as if its provider were a gear the worker links beside
+    // its anchor.
+    remote.provider = gearbox_ir::GearId::new("beside-the-anchor").unwrap();
+    let (consumer, consumer_app) = (
+        remote.consumer.to_string(),
+        remote.consumer_application.to_string(),
+    );
+    let files = generate_tree(&lock, &source_roots, &out_root());
+    let config: serde_json::Value =
+        serde_saphyr::from_str(text(&files.files, &format!("config/{consumer_app}.yaml"))).unwrap();
+    let wiring =
+        &config["gears"][consumer.as_str()]["config"]["consumer_wiring"]["beside-the-anchor"];
+    assert_eq!(wiring["directory_name"], worker.registers_as(), "{wiring}");
 }

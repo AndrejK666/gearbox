@@ -30,6 +30,9 @@ use super::{GenerateError, GenerateInput, header, paths};
 /// config, and no other gear reads it.
 const CLUSTER_GEAR: &str = "cluster";
 
+/// The REST host gear whose public listener [`write_public_listener`] sets.
+const REST_HOST_GEAR: &str = "api-gateway";
+
 #[derive(Serialize)]
 struct AppConfig {
     server: ServerSection,
@@ -57,11 +60,18 @@ struct AppConfig {
     gears: BTreeMap<String, GearSection>,
 }
 
-/// The built-in host's listener. Public by the runtime's default: only exposed
-/// operations are served.
+/// The built-in host's listener: a public one, serving only exposed
+/// operations. That is also the runtime's default; it is written so the file
+/// says what the process serves.
 #[derive(Serialize)]
 struct HttpHostSection {
     listen_addr: String,
+    public: PublicSection,
+}
+
+#[derive(Serialize)]
+struct PublicSection {
+    exposed_only: bool,
 }
 
 #[derive(Serialize)]
@@ -249,8 +259,10 @@ pub fn app_config(
     let database = write_database(input, application, &mut gears)?;
     write_endpoints(application, &mut gears)?;
     write_consumer_wiring(input, application, &mut gears);
+    write_cluster_sdk_wiring(input, application, &mut gears);
     write_cluster(input, &mut gears);
     write_spawns(input, application, &mut gears);
+    write_public_listener(input, &mut gears);
 
     // One platform-plane provider for the embedded host and its workers. The
     // product supplies secret values through AppConfig's APP__ environment
@@ -259,7 +271,7 @@ pub fn app_config(
         .lock
         .gears
         .iter()
-        .find(|(id, _)| id.as_str() == "api-gateway")
+        .find(|(id, _)| id.as_str() == REST_HOST_GEAR)
         .and_then(|(_, host)| host.config.get("internal_auth"))
         .filter(|value| !value.is_null())
         .cloned();
@@ -299,6 +311,7 @@ pub fn app_config(
             .filter(|_| !application.is_worker())
             .map(|serve| HttpHostSection {
                 listen_addr: serve.listen_addr.clone(),
+                public: PublicSection { exposed_only: true },
             }),
         internal_auth: internal_auth.filter(|_| !application.is_worker()),
         gears,
@@ -315,6 +328,29 @@ pub fn app_config(
         FileKind::Yaml,
         Ownership::Generated,
     ))
+}
+
+/// The REST host's public listener in an embedded profile: only exposed
+/// operations (Gearbox ADR-0026 section 6, test case G18).
+///
+/// The all-in-one binary has no internal listener and no other process, so
+/// nothing but the public surface should answer. Written *under* the
+/// description's value: a development product turns it off by setting
+/// `public = {"exposed_only": False}` on the gateway. The multi-process
+/// profiles keep the gateway's default until the generator writes the internal
+/// listener their workers call co-hosted operations on (todo-issues).
+fn write_public_listener(input: &GenerateInput<'_>, gears: &mut BTreeMap<String, GearSection>) {
+    let embedded = input.lock.kubernetes.is_none() && input.lock.self_hosted.is_none();
+    let Some(gateway) = gears.get_mut(REST_HOST_GEAR).filter(|_| embedded) else {
+        return;
+    };
+    let public = gateway
+        .config
+        .entry("public")
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Value::Object(public) = public {
+        public.entry("exposed_only").or_insert(Value::Bool(true));
+    }
 }
 
 /// Drop keys the projected schema does not name.
@@ -370,9 +406,11 @@ fn write_consumer_wiring(
         if binding.consumer_application != application.name || !binding.is_remote() {
             continue;
         }
-        let Some(endpoint) = binding.endpoint.as_ref() else {
+        // The cluster SDK derives its own address and reads its criticality
+        // from a process-wide section (`write_cluster_sdk_wiring`).
+        if binding.mechanism == gearbox_ir::BindingMechanism::ProvidesClientWiring {
             continue;
-        };
+        }
         let Some(section) = gears.get_mut(binding.consumer.as_str()) else {
             continue;
         };
@@ -380,19 +418,97 @@ fn write_consumer_wiring(
             .config
             .entry("consumer_wiring".to_owned())
             .or_insert_with(|| Value::Object(Map::new()));
-        if let Some(map) = wiring.as_object_mut() {
-            // Toolkit reads ConsumerWiring as an object with an endpoint plus
-            // optional flattened client policies. Keep configured policies
-            // when adding the resolved static endpoint.
-            let provider = binding.provider.to_string();
-            let mut options = map
-                .remove(&provider)
-                .and_then(|value| value.as_object().cloned())
-                .unwrap_or_default();
+        let Some(map) = wiring.as_object_mut() else {
+            continue;
+        };
+        // Toolkit reads ConsumerWiring as an object with an endpoint plus
+        // optional flattened client policies. Keep configured policies when
+        // adding what resolution decided.
+        let provider = binding.provider.to_string();
+        let mut options = map
+            .remove(&provider)
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        if let Some(endpoint) = &binding.endpoint {
             options.insert("endpoint".to_owned(), Value::String(endpoint.clone()));
-            map.insert(provider, Value::Object(options));
+        } else if let Some(name) = directory_name(input, binding) {
+            options.insert("directory_name".to_owned(), Value::String(name));
         }
+        // Written for every remote binding; absent would mean critical too
+        // (gears-rust ADR-0010 section 3), but the file should say what was
+        // decided. Two majors of one provider share this slot, so it is critical
+        // if either is.
+        let critical = binding.critical
+            || options
+                .get("critical")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+        options.insert("critical".to_owned(), Value::Bool(critical));
+        map.insert(provider, Value::Object(options));
     }
+}
+
+/// `gears.cluster-sdk.config.consumer_wiring.cluster.critical` for a process
+/// whose cluster requesters reach `cluster` remotely: one SDK client per
+/// process, so one key, true if any requester's binding is critical
+/// (gears-rust ADR-0010 section 3, Gearbox ADR-0026 section 5).
+fn write_cluster_sdk_wiring(
+    input: &GenerateInput<'_>,
+    application: &ResolvedApplication,
+    gears: &mut BTreeMap<String, GearSection>,
+) {
+    let mut remote = input.lock.bindings.iter().filter(|b| {
+        b.consumer_application == application.name
+            && b.mechanism == gearbox_ir::BindingMechanism::ProvidesClientWiring
+    });
+    let Some(first) = remote.next() else {
+        return;
+    };
+    let endpoint = first.endpoint.clone();
+    let critical = first.critical || remote.any(|b| b.critical);
+    let mut options = Map::new();
+    // Pinned under static discovery only. The SDK still derives its channel
+    // from Kubernetes DNS; the key makes the runtime treat the dependency as a
+    // static endpoint, resolved at wiring, instead of waiting for a directory
+    // the profile does not have.
+    if let Some(endpoint) = endpoint {
+        options.insert("endpoint".to_owned(), Value::String(endpoint));
+    } else if let Some(name) = directory_name(input, first) {
+        // Readiness waits for the directory to know `cluster`; a worker that
+        // links it beside another anchor registers under that anchor's name.
+        options.insert("directory_name".to_owned(), Value::String(name));
+    }
+    options.insert("critical".to_owned(), Value::Bool(critical));
+    let mut wiring = Map::new();
+    wiring.insert("cluster".to_owned(), Value::Object(options));
+    let mut config = Map::new();
+    config.insert("consumer_wiring".to_owned(), Value::Object(wiring));
+    gears.insert(
+        "cluster-sdk".to_owned(),
+        GearSection {
+            database: None,
+            runtime: None,
+            config,
+        },
+    );
+}
+
+/// The directory name to look the provider up under, when it is not the
+/// provider's own: a worker registers once, under its anchor (or role), so a
+/// gear it links alongside is found there (gears-rust ADR-0010 section 6). A host
+/// registers each of its REST gears under its own name.
+fn directory_name(
+    input: &GenerateInput<'_>,
+    binding: &gearbox_ir::ResolvedBinding,
+) -> Option<String> {
+    let provider_application = input
+        .lock
+        .applications
+        .iter()
+        .find(|a| a.name == binding.provider_application)?;
+    let registers_as = provider_application.registers_as();
+    (provider_application.is_worker() && registers_as != binding.provider.as_str())
+        .then(|| registers_as.to_owned())
 }
 
 /// The cluster gear's per-scope backend bindings.

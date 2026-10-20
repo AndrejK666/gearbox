@@ -112,14 +112,21 @@ It requires:
 | Condition | Otherwise |
 |-----------|-----------|
 | target is `kubernetes` (the SDK derives Kubernetes DNS only) | **error GBX0415** `RemoteClusterNeedsKubernetes` on `self_hosted` |
-| exactly one application links `cluster` | **error GBX0416** `ClusterInSeveralApplications` (the Service names would collide) |
+| exactly one application links `cluster` | **error GBX0416** `ClusterInSeveralApplications` (the Service names would collide); as implemented, on any Kubernetes profile, remote requesters or not |
 | that application has a gRPC hub listening on TCP | GBX0314 (no hub), extended to a non-TCP listen address |
-| the catalogue's cluster providers declare `grpc` | GBX0406 with the cluster provider named |
+| the catalogue's cluster providers declare `grpc` | as implemented, **error GBX0418** `RemoteClusterWithoutGrpc`, naming each contract -- the primitive's and the profile contract the SDK resolves scopes through |
 
 * The requester's generated chart passes `POD_NAMESPACE` from the downward API.
+* As implemented: the `cluster` Service keeps port 50051 and targets the port the resolver gave that process's hub;
+  under directory discovery the SDK wiring carries `directory_name` when cluster's process registers under another
+  anchor.
 * `write_cluster` keeps writing the profiles into the `cluster` gear's section, wherever it is
   (`generate/config.rs:376-436`).
 * A generic contract edge stays REST-only (GBX0402 stands). No gRPC resolving client is generated in this roadmap.
+* **As implemented (2B).** A remote cluster binding is recorded only where a requester runs apart from `cluster`, so a
+  product that keeps them together writes the lock it wrote before. Event Broker no longer has `deps = [cluster]`
+  (gears-rust R6, as cluster's DESIGN §3.17.7 already required of every consumer), so a product with EB selects
+  `cluster` and places it. The cluster unit needs no tenant authenticator: cluster declares `rest_planes = []` (§8).
 
 ### 5. Criticality is resolved here and written for the runtime
 
@@ -148,6 +155,13 @@ It requires:
 * `embedded` (the all-in-one binary): one process, and placement declarations are inert (GBX0307). The hub is written
   as `listen_addr: none`, or as UDS in a private runtime directory until that mode exists. No internal listener is
   generated.
+* **As implemented (2B).** For `embedded` the generator writes `public.exposed_only: true` on the gateway (under the
+  description's value, so a development product can turn it off) and on the built-in host's `http_host.public`, and
+  the lock and configuration carry the hub as `listen_addr: none`. `self_hosted` and `kubernetes` keep the gateway's
+  default until the generator also writes the internal listener their workers call co-hosted operations on
+  (`tasks/service-deployment/todo-issues.md` item 10). The cross-target invariant is checked over the repository's
+  products (`crates/gearbox-engine/tests/cross_target.rs`, G13). A cluster edge is compared by its request, because
+  it is recorded as a binding only where the requester runs apart from `cluster` (§4).
 * `self_hosted`: REST workers are spawned locally. A remote cluster binding is GBX0415. The hub is on UDS, workers on
   loopback, and platform auth is `SharedSecret` with enforcement. Several nodes are not production-capable (no mTLS;
   GBX0604).
@@ -174,6 +188,13 @@ It requires:
   replicated Types Registry. Gearbox reports such an application before generation as **GBX0417**
   `ApplicationWithoutAuthenticator` (error). The help names the gear whose routes need it and suggests
   `include = ["authn-resolver"]` with a plugin.
+* **As implemented (2B).** Gearbox cannot see a gear's operations, only its `rest` capability, which cluster has for its
+  readiness check alone. `gear(rest_planes = [...])` (GDL 1.3) says which planes a gear's REST serves: `"tenant"`,
+  `"platform"`, or `[]` for probes only. Absent is read as `["tenant"]`, so an undeclared gear is checked as the
+  runtime would find it. The runtime's start check is what verifies the claim.
+* **As implemented (2B).** `lab-ui-backend` no longer has `deps = [oagw]`. The echo declarations it registered into its
+  own Types Registry for OAGW moved to `family-labs-outbound`, a gear that genuinely belongs with OAGW, so the GBX0414
+  case above no longer arises with these gears.
 
 ### Draft syntax (not an accepted API)
 

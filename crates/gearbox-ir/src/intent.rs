@@ -510,6 +510,11 @@ pub struct BindingIntent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
 
+    /// Whether readiness waits for the provider, overriding the gear's
+    /// `consume(critical = ...)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub critical: Option<bool>,
+
     /// Profiles this applies to. Empty means all of them.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub profiles: BTreeSet<ProfileId>,

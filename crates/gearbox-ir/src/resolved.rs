@@ -533,12 +533,16 @@ impl BindingMechanism {
 
     /// Whether this mechanism gates the consumer's readiness.
     ///
-    /// A local binding does not: the local lookup succeeds immediately. A remote
-    /// one does, which is how a critical dependency keeps a process out of
-    /// rotation without turning startup into a global ordering problem.
+    /// A local binding does not: the local lookup succeeds immediately. A
+    /// directory-resolved one does, which is how a critical dependency keeps a
+    /// process out of rotation without turning startup into a global ordering
+    /// problem. A static endpoint does not either: the runtime marks it resolved
+    /// at wiring without contacting the provider (gears-rust ADR-0010 section 3,
+    /// Gearbox ADR-0026 section 5), so `critical` is written but cannot hold the
+    /// consumer back.
     #[must_use]
     pub const fn gates_readiness(self) -> bool {
-        !matches!(self, Self::ColocatedLocal)
+        !matches!(self, Self::ColocatedLocal | Self::ConsumesStatic)
     }
 }
 
@@ -549,6 +553,10 @@ pub struct BindingRequest {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transport: Option<Transport>,
+
+    /// The product's `bind(critical = ...)`, when it overrides the gear.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub critical: Option<bool>,
 }
 
 /// What a binding resolved *to*.
@@ -611,6 +619,14 @@ pub struct ResolvedBinding {
     #[serde(default)]
     pub critical: bool,
 
+    /// Whether readiness waits for this binding: the resolver's verdict,
+    /// [`Self::derive_gates_readiness`], written so that a client prints it
+    /// rather than deriving it again (`cpt-gearbox-fr-studio`, no resolution
+    /// logic). A critical binding under static discovery is `false`: the runtime
+    /// marks a pinned endpoint resolved at wiring (ADR-0026 section 5).
+    #[serde(default)]
+    pub gates_readiness: bool,
+
     pub selected: Selected<BindingRequest>,
 }
 
@@ -621,9 +637,15 @@ impl ResolvedBinding {
     }
 
     /// Whether this binding keeps the consumer out of rotation until it resolves.
+    ///
+    /// An SDK-addressed binding with a pinned endpoint is the static case: the
+    /// runtime marks it resolved at wiring (Kubernetes with static discovery).
     #[must_use]
-    pub const fn gates_readiness(&self) -> bool {
-        self.critical && self.mechanism.gates_readiness()
+    pub const fn derive_gates_readiness(&self) -> bool {
+        self.critical
+            && self.mechanism.gates_readiness()
+            && !(matches!(self.mechanism, BindingMechanism::ProvidesClientWiring)
+                && self.endpoint.is_some())
     }
 }
 
@@ -926,7 +948,8 @@ pub struct ResolvedProduct {
     /// Ordered by name.
     pub applications: Vec<ResolvedApplication>,
 
-    /// Ordered by consumer then contract.
+    /// Ordered by consumer, contract, then consumer application: a gear linked
+    /// into several processes has a binding in each.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bindings: Vec<ResolvedBinding>,
 

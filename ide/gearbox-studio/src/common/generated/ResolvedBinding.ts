@@ -25,4 +25,12 @@ endpoint_source?: string | null, endpoint?: string | null,
 /**
  * Whether the consumer cannot serve without this.
  */
-critical: boolean, selected: Selected<BindingRequest>, };
+critical: boolean, 
+/**
+ * Whether readiness waits for this binding: the resolver's verdict,
+ * [`Self::derive_gates_readiness`], written so that a client prints it
+ * rather than deriving it again (`cpt-gearbox-fr-studio`, no resolution
+ * logic). A critical binding under static discovery is `false`: the runtime
+ * marks a pinned endpoint resolved at wiring (ADR-0026 section 5).
+ */
+gates_readiness: boolean, selected: Selected<BindingRequest>, };

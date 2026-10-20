@@ -187,3 +187,36 @@ fn a_struct_ident_that_is_not_the_gear_name_is_still_reported() {
         found[0].message
     );
 }
+
+#[test]
+fn an_attribute_with_no_consume_record_is_reported() {
+    // G12, the reverse direction (ADR-0026 section 8): the runtime wires the
+    // edge, but the resolver builds edges from `consume(...)` only, so it was
+    // invisible -- Settings' AuthZ consumption sat like this until Phase 2A.
+    let path = root("Consumer", AGREEING);
+    std::fs::write(
+        path.join("consumer/gear.gdl"),
+        r#"
+gear(
+    maturity = "stable",
+    name = "Consumer",
+    description = "d",
+    category = "core-functionality",
+    visibility = "internal",
+    package = cargo(crate_name = "consumer", lib = "consumer", path = "."),
+)
+"#,
+    )
+    .unwrap();
+    let source = SourceRoot::open(SourceId::new("demo").unwrap(), &path).unwrap();
+    let catalogue = load_catalogue(&[source]).catalogue;
+    let found = mismatches(&catalogue);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0]
+            .message
+            .contains("declares no `consume(contract = \"ThingApi\")`"),
+        "{}",
+        found[0].message
+    );
+}

@@ -950,6 +950,15 @@ fn subchart_templates(
         .gears
         .iter()
         .any(|g| g.as_str() == CLUSTER_SERVICE);
+    // The Service keeps the port the SDK dials; the pod's hub listens wherever
+    // the resolver put it, which is not 50051 when another process took that
+    // first.
+    let cluster_target_port = application
+        .listens
+        .iter()
+        .find(|endpoint| endpoint.gear.as_str() == "grpc-hub")
+        .and_then(|endpoint| port_of(&endpoint.address))
+        .unwrap_or(CLUSTER_PORT);
 
     let common = context! {
         name => name,
@@ -996,6 +1005,7 @@ fn subchart_templates(
             ports => &ports,
             cluster_service => cluster_service,
             cluster_port => CLUSTER_PORT,
+            cluster_target_port => cluster_target_port,
         },
     )?;
     let configmap = templates::render_helm(

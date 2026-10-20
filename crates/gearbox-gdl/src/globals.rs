@@ -722,14 +722,15 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `rust`: The Rust path of the versioned trait the gear calls.
     /// * `sdk`: The crate that declares the contract, as `cargo(...)`.
     /// * `critical`: Whether the gear is not ready until this contract is available. The default is
-    ///   `False`.
+    ///   `True`, which is what the runtime does when nothing says otherwise; a product may override it
+    ///   per binding with `bind(critical = ...)`.
     /// * `resolving_client`: The resolving client's name, when the generated default does not
     ///   apply.
     fn consume<'v>(
         #[starlark(require = named)] contract: &str,
         #[starlark(require = named)] rust: &str,
         #[starlark(require = named)] sdk: &'v CargoRecord,
-        #[starlark(require = named, default = false)] critical: bool,
+        #[starlark(require = named, default = true)] critical: bool,
         #[starlark(require = named)] resolving_client: Option<&str>,
         // Accepted only to be refused by name: see `restated`.
         #[starlark(require = named)] from_: Option<&str>,
@@ -872,6 +873,8 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `consumes`: The contracts the gear calls, as `consume(...)`.
     /// * `requires`: The cluster primitives the gear needs, as `cluster.*(...)`.
     /// * `serves`: What the gear listens on, as `endpoint(...)`.
+    /// * `rest_planes`: The planes its REST operations use: `"tenant"`, `"platform"`. `[]` for a
+    ///   gear whose REST capability serves only probes. Absent is read as `["tenant"]` (GBX0417).
     /// * `cluster_plugins`: Where cluster backend plugin crates are, as `cluster_plugin(...)`.
     /// * `roles`: The shapes the gear runs in, as `role(...)`.
     /// * `config_schema`: The configuration to show an integrator, as `config(...)`.
@@ -931,6 +934,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] consumes: Option<UnpackList<&'v ConsumeRecord>>,
         #[starlark(require = named)] requires: Option<UnpackList<&'v ClusterRequireRecord>>,
         #[starlark(require = named)] serves: Option<UnpackList<&'v EndpointRecord>>,
+        #[starlark(require = named)] rest_planes: Option<UnpackList<&str>>,
         #[starlark(require = named)] cluster_plugins: Option<UnpackList<&'v ClusterPluginRecord>>,
         #[starlark(require = named)] roles: Option<UnpackList<&'v RoleRecord>>,
         #[starlark(require = named)] config_schema: Option<&'v ConfigRecord>,
@@ -998,6 +1002,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
                 (consumes.is_some(), "consumes"),
                 (requires.is_some(), "requires"),
                 (serves.is_some(), "serves"),
+                (rest_planes.is_some(), "rest_planes"),
                 (cluster_plugins.is_some(), "cluster_plugins"),
                 (roles.is_some(), "roles"),
                 (config_schema.is_some(), "config_schema"),
@@ -1075,6 +1080,21 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
         if let Some(spec) = implements {
             check_plugin_spec("implements", spec)?;
         }
+        let rest_planes = rest_planes
+            .map(|list| {
+                list.items
+                    .into_iter()
+                    .map(|spelling| {
+                        gearbox_ir::RestPlane::parse(spelling).ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "unknown REST plane `{spelling}`: expected \"tenant\" or \"platform\" \
+                                 (anonymous operations need no validator, so they are not a plane)"
+                            )
+                        })
+                    })
+                    .collect::<anyhow::Result<std::collections::BTreeSet<_>>>()
+            })
+            .transpose()?;
 
         sink(eval)?.set_gear(GearDecl {
             maturity,
@@ -1111,6 +1131,7 @@ fn gdl_vocabulary(builder: &mut GlobalsBuilder) {
             serves: serves
                 .map(|l| l.items.into_iter().cloned().collect())
                 .unwrap_or_default(),
+            rest_planes,
             cluster_plugins: cluster_plugins
                 .map(|l| l.items.into_iter().cloned().collect())
                 .unwrap_or_default(),

@@ -44,9 +44,14 @@ pub fn canonicalize_order(product: &mut ResolvedProduct) {
         application.spawns.sort_by(|a, b| a.gear.cmp(&b.gear));
     }
 
-    product
-        .bindings
-        .sort_by(|a, b| (&a.consumer, &a.contract).cmp(&(&b.consumer, &b.contract)));
+    // A gear linked into several processes has a binding in each.
+    product.bindings.sort_by(|a, b| {
+        (&a.consumer, &a.contract, &a.consumer_application).cmp(&(
+            &b.consumer,
+            &b.contract,
+            &b.consumer_application,
+        ))
+    });
     product.bindings.dedup();
 
     for gear in product.gears.values_mut() {

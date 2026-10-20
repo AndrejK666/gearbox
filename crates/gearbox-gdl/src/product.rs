@@ -459,6 +459,9 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `mode`: How to bind, as a `binding_mode.*` member.
     /// * `transport`: The transport, as a `transport.*` member.
     /// * `endpoint`: A fixed address, used instead of what discovery finds.
+    /// * `critical`: Whether the consumer is not ready until the provider is available, overriding
+    ///   the gear's `consume(critical = ...)`. Gates readiness only for a directory-resolved remote
+    ///   binding.
     /// * `profiles`: The profiles it applies to. Empty means all.
     fn bind<'v>(
         #[starlark(require = named)] consumer: &str,
@@ -466,6 +469,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] mode: &'v crate::values::GdlEnum,
         #[starlark(require = named)] transport: Option<&'v crate::values::GdlEnum>,
         #[starlark(require = named)] endpoint: Option<&str>,
+        #[starlark(require = named)] critical: Option<bool>,
         #[starlark(require = named)] profiles: Option<UnpackList<String>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<BindRecord> {
@@ -484,6 +488,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
             mode: mode.variant.to_owned(),
             transport: transport.map(|t| t.variant.to_owned()),
             endpoint: endpoint.map(str::to_owned),
+            critical,
             profiles: strings(profiles),
             declared_at: call_location(eval),
         })

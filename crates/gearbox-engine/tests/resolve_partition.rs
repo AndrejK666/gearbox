@@ -140,7 +140,17 @@ fn the_severable_edge_actually_moves_a_gear_out() {
 
     let worker = &local.partition.applications[1];
     assert_eq!(worker.kind, ApplicationKind::Worker);
-    assert_eq!(worker.gears, vec![gid("api-contracts")]);
+    // The moved gear, plus the tenant authenticator the product includes so the
+    // worker can serve REST at all (GBX0417), with what `deps` links to it.
+    assert_eq!(
+        worker.gears,
+        vec![
+            gid("api-contracts"),
+            gid("types-registry"),
+            gid("authn-resolver"),
+            gid("static-authn-plugin"),
+        ]
+    );
 }
 
 #[test]
@@ -560,4 +570,67 @@ fn a_product_id_that_is_not_an_application_name_falls_back_to_the_anchor() {
     let r = resolve(&cat, &intent, &pid("dev"));
     assert_eq!(r.partition.applications.len(), 1);
     assert_eq!(r.partition.applications[0].name.as_str(), "host");
+}
+
+fn duplicated(r: &gearbox_engine::resolve::Resolution) -> Vec<&str> {
+    r.diagnostics
+        .iter()
+        .filter(|d| d.code == gearbox_ir::DiagnosticCode::PlacementDuplicatedByDeps)
+        .map(|d| d.message.as_str())
+        .collect()
+}
+
+#[test]
+fn a_pinned_gear_a_deps_chain_also_links_is_refused() {
+    // G4: OAGW is given its own application while `lab-ui-backend` still
+    // `deps` on it, so the gateway would run a second OAGW.
+    let cat = support::catalogue_of(vec![
+        support::gear_with_caps("lab-ui-backend", &[], &["oagw"]),
+        support::gear_with_caps("oagw", &[], &[]),
+    ]);
+    let mut intent = support::self_hosted(
+        &["lab-ui-backend", "oagw"],
+        gearbox_ir::Discovery::Static,
+        Some("t"),
+    );
+    support::pin(&mut intent, "demo-oagw", "oagw", 1);
+    let r = resolve(&cat, &intent, &pid("local"));
+    let messages = duplicated(&r);
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("lab-ui-backend -> oagw")),
+        "{messages:?}"
+    );
+
+    // G5: without the dep there is one OAGW and nothing to report.
+    let cat = support::catalogue_of(vec![
+        support::gear_with_caps("lab-ui-backend", &[], &[]),
+        support::gear_with_caps("oagw", &[], &[]),
+    ]);
+    let r = resolve(&cat, &intent, &pid("local"));
+    assert!(duplicated(&r).is_empty(), "{:?}", duplicated(&r));
+    let copies = r
+        .partition
+        .applications
+        .iter()
+        .filter(|a| a.gears.iter().any(|g| g.as_str() == "oagw"))
+        .count();
+    assert_eq!(copies, 1);
+}
+
+#[test]
+fn a_gear_replicated_by_design_is_not_a_duplicate() {
+    let cat = support::catalogue_of(vec![
+        support::gear_with_caps("api", &[], &["types-registry"]),
+        support::gear_with_caps("types-registry", &[], &[]),
+    ]);
+    let mut intent = support::self_hosted(
+        &["api", "types-registry"],
+        gearbox_ir::Discovery::Static,
+        Some("t"),
+    );
+    support::pin(&mut intent, "registry", "types-registry", 1);
+    let r = resolve(&cat, &intent, &pid("local"));
+    assert!(duplicated(&r).is_empty(), "{:?}", duplicated(&r));
 }

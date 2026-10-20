@@ -244,7 +244,7 @@ gdl_version = "1.2"
 gear(...)  # or product(...)
 ```
 
-The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.2. The legacy `gear(gdl_version=...)` and `product(gdl_version=...)` arguments remain accepted; conflicting declarations are rejected.
+The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.3. The legacy `gear(gdl_version=...)` and `product(gdl_version=...)` arguments remain accepted; conflicting declarations are rejected.
 
 - A minor version only adds: optional fields, constructors and values. A file for an older minor version reads with no change.
 - A major version can remove a field, rename a field or change what a field means.
@@ -528,6 +528,7 @@ gear(
   consumes = [],                    # consume(...)
   requires = [],                    # cluster.*(...)
   serves = [],                      # endpoint(...)
+  rest_planes?,                     # "tenant" | "platform"; absent is read as ["tenant"]
   cluster_plugins = [],             # cluster_plugin(...)
   roles = [],                       # role(...), recorded but not resolved
   config_schema?,                   # config(...)
@@ -551,6 +552,16 @@ Missing or extra dependencies are **GBX0214** and block generation. Rust still
 supplies the actual linking edges. Omission remains supported for legacy
 projection-only descriptions; `deps = []` explicitly asserts no dependencies.
 Contract consumption (`consumes`) remains separate and may cross processes.
+
+`rest_planes` (GDL 1.3) says which authentication planes the gear's REST operations use:
+`"tenant"` (a tenant bearer token) and `"platform"` (the platform token,
+`.platform()`). Anonymous operations need no validator and are not a plane.
+`rest_planes = []` is a gear whose REST capability serves only probes, as
+cluster's does. Absent is not empty: it is read as `["tenant"]`, because the
+runtime refuses to start a process that serves tenant operations with no tenant
+authenticator, and an undeclared gear may. An application whose REST gears are
+tenant (declared or not) and that links no `authn-resolver` is **GBX0417**. The
+field is an authored claim; the runtime's start check is what verifies it.
 
 These fields are accepted only to be refused by name (**GBX0210**). They live in Rust:
 
@@ -999,8 +1010,12 @@ product(
                              schema = "cluster", secret_ref = "env:PG_PASSWORD"),
         ),
     ],
-    applications = [application("audit", anchor = "api-contracts-consumer", replicas = 2,
-                         profiles = ["prod"])],
+    applications = [
+        application("api-contracts", anchor = "api-contracts", include = ["authn-resolver"],
+                    profiles = ["local", "prod"]),
+        application("audit", anchor = "api-contracts-consumer", include = ["authn-resolver"],
+                    replicas = 2, profiles = ["prod"]),
+    ],
     preferences = [prefer.existing_infrastructure(), prefer.fewer_applications()],
 )
 ```

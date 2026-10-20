@@ -15,7 +15,7 @@ remedy at the point it is raised
 (`cpt-gearbox-nfr-actionable-diagnostics`), which is per-occurrence and
 so is not listed here.
 
-Codes: **111**.
+Codes: **117**.
 
 ## `GBX01xx` — Parsing and evaluating GDL
 
@@ -825,6 +825,12 @@ available, not for new products.
 | [GBX0410](#gbx0410) | warning | preference is recorded but not honoured |
 | [GBX0411](#gbx0411) | error | declared endpoint is not honoured |
 | [GBX0412](#gbx0412) | error | the endpoint override key names a different provider than the consumer declared |
+| [GBX0413](#gbx0413) | error | binding mode contradicted by the placement the description forces |
+| [GBX0414](#gbx0414) | error | a separately placed gear is linked into another application by `deps` |
+| [GBX0415](#gbx0415) | error | a remote cluster binding needs a Kubernetes profile |
+| [GBX0416](#gbx0416) | error | the `cluster` gear is in several applications of a Kubernetes profile |
+| [GBX0417](#gbx0417) | error | an application serving REST has no tenant authenticator |
+| [GBX0418](#gbx0418) | error | a remote cluster contract is not provided over gRPC |
 
 ### GBX0401
 
@@ -967,6 +973,93 @@ fallback that produces it is deliberately tolerant, because a gear
 rename should not make a product unresolvable; refusing to *generate*
 from it is a narrower claim than refusing to resolve it, and the remedy
 is one string in one attribute.
+
+### GBX0413
+
+**binding mode contradicted by the placement the description forces**
+
+A `bind(mode = ...)` asks for a placement the description forbids
+(ADR `cpt-gearbox-adr-product-placement` section 2).
+
+`mode = local` is honoured by placing the provider with the consumer --
+unless an `application(...)` pins the provider elsewhere, which is two
+statements that cannot both hold. `mode = remote` is honoured by leaving
+them apart -- unless a `deps` chain or an `include` puts the provider in
+the consumer's process, where the client hub finds the local instance
+and the remote client is never used. Both name what forces the
+contradiction. An embedded profile is one process by definition, so a
+mode there is inapplicable rather than contradicted (GBX0407).
+
+### GBX0414
+
+**a separately placed gear is linked into another application by `deps`**
+
+A gear given its own application is also linked into another one by a
+`deps` chain (ADR `cpt-gearbox-adr-product-placement` section 3).
+
+The second copy is not a reference to the first: it is another
+instance, with its own state, serving that process's in-process
+callers. The description reads as "this runs separately" and the
+product runs it twice. `deps` is link-time, so only the gear's source can
+sever the edge (`#[toolkit::consumes]` plus `consume(...)`). Gears
+replicated into every process by design -- `types-registry`,
+`authn-resolver` (ADR `cpt-gearbox-adr-referenced-gears`) -- are exempt;
+a duplicate directory *registration* is GBX0320.
+
+### GBX0415
+
+**a remote cluster binding needs a Kubernetes profile**
+
+A requester of a cluster primitive sits in an application without the
+`cluster` gear, and the profile is not Kubernetes
+(ADR `cpt-gearbox-adr-product-placement` section 4).
+
+The cluster SDK reaches a remote cluster at
+`cluster.<POD_NAMESPACE>.svc.cluster.local:50051` and has no other way
+to find it: no directory lookup, no configured endpoint. Outside
+Kubernetes there is no such name, so the requester would start and fail
+its first coordination call.
+
+*Asserts a limitation of the runtime, so every occurrence cites the source that proves it.*
+
+*Prevents `ClusterError::InvalidConfig` in `cf-gears-cluster-sdk`. The reference is resolved against the `gears-rust` checkout by `gearbox-project`'s corpus test.*
+
+### GBX0416
+
+**the `cluster` gear is in several applications of a Kubernetes profile**
+
+More than one application of a Kubernetes profile links the `cluster`
+gear (ADR `cpt-gearbox-adr-product-placement` section 4).
+
+Every process that links cluster gets a Service named `cluster`, which is
+what the SDK addresses; two such processes need two Services under one
+name, and the chart cannot install. Remote requesters would also split
+between unrelated coordination state.
+
+### GBX0417
+
+**an application serving REST has no tenant authenticator**
+
+An application serves REST and links no tenant authenticator
+(ADR `cpt-gearbox-adr-product-placement` section 8).
+
+The runtime refuses to start a process that serves tenant-authenticated
+operations without a tenant authenticator, rather than serving them
+unauthenticated (gears-rust ADR-0011 section 3). A replicated Types
+Registry alone is enough to trip it. Reported before generation, naming
+the gears whose routes need it.
+
+### GBX0418
+
+**a remote cluster contract is not provided over gRPC**
+
+A requester reaches `cluster` remotely, and the cluster gear does not
+provide the contract it needs over gRPC
+(ADR `cpt-gearbox-adr-product-placement` section 4).
+
+The SDK's remote client speaks gRPC to the primitive's service and to the
+profile service it resolves the scope through; a provider that does not
+declare them is a binding the runtime cannot make.
 
 ## `GBX05xx` — Cluster capabilities, providers and plugins
 

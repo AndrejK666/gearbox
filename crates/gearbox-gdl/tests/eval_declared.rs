@@ -60,6 +60,38 @@ fn explicit_dependencies_preserve_omission_and_reject_invalid_lists() {
     }
 }
 
+#[test]
+fn rest_planes_distinguish_undeclared_from_none() {
+    use gearbox_ir::RestPlane;
+    let planes = |list: &str| {
+        let (decl, codes) = eval(&format!(
+            "gear(maturity = \"preview\", {PKG}, rest_planes = {list})"
+        ));
+        assert!(codes.is_empty(), "{list}: {codes:?}");
+        decl.unwrap().rest_planes.unwrap()
+    };
+    // Probes only: declared, and empty.
+    assert!(planes("[]").is_empty());
+    assert_eq!(
+        planes("[\"platform\", \"tenant\"]"),
+        [RestPlane::Platform, RestPlane::Tenant]
+            .into_iter()
+            .collect()
+    );
+    let (decl, _) = eval(&format!("gear(maturity = \"preview\", {PKG})"));
+    assert!(
+        decl.unwrap().rest_planes.is_none(),
+        "unwritten is not empty"
+    );
+    // Anonymous needs no validator, so it is not a plane.
+    assert!(
+        !diagnostics_of(&format!(
+            "gear(maturity = \"preview\", {PKG}, rest_planes = [\"anonymous\"])"
+        ))
+        .is_empty()
+    );
+}
+
 fn eval(src: &str) -> (Option<GearDecl>, Vec<DiagnosticCode>) {
     let out = GdlEngine::new().eval_gear(&identity(), src);
     let codes = out.diagnostics.iter().map(|d| d.code).collect();
@@ -162,6 +194,28 @@ gear(
     // Whether it gates readiness is a product judgement and stays here. Which
     // gear supplies it is not: `#[toolkit::consumes(from = ...)]` owns that.
     assert!(decl.consumes[0].critical);
+}
+
+#[test]
+fn consume_is_critical_unless_it_says_otherwise() {
+    // G11 (ADR-0026 section 5): the default matches the runtime, which gates
+    // every consumed dependency when nothing says otherwise.
+    let src = r#"
+SDK = cargo(crate_name = "s", lib = "s")
+gear(
+    maturity = "stable",
+    package = cargo(crate_name = "c", lib = "c"),
+    consumes = [
+        consume(contract = "PaymentApi", rust = "s::PaymentApi", sdk = SDK),
+        consume(contract = "AuditApi", rust = "s::AuditApi", sdk = SDK, critical = False),
+    ],
+)
+"#;
+    let (value, codes) = eval(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    let decl = value.unwrap();
+    assert!(decl.consumes[0].critical, "absent means critical");
+    assert!(!decl.consumes[1].critical);
 }
 
 #[test]
@@ -731,7 +785,7 @@ fn a_newer_minor_is_read_and_says_so_only_if_it_fails() {
     ));
     let help = diagnostics[0].help.as_deref().unwrap_or_default();
     assert!(
-        help.contains("written for GDL 1.7, and this Gearbox reads GDL 1.2"),
+        help.contains("written for GDL 1.7, and this Gearbox reads GDL 1.3"),
         "{diagnostics:?}"
     );
 }
@@ -766,7 +820,7 @@ fn a_version_is_major_and_minor() {
             diagnostics[0]
                 .help
                 .as_deref()
-                .is_some_and(|h| h.contains("gdl_version = \"1.2\"")),
+                .is_some_and(|h| h.contains("gdl_version = \"1.3\"")),
             "{bad}: {diagnostics:?}"
         );
     }

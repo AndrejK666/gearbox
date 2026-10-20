@@ -129,7 +129,13 @@ product(
     ],
 
     applications = [
-        application("audit", anchor = "api-contracts-consumer", replicas = 2, profiles = ["prod"]),
+        # A worker that serves REST validates tenant tokens itself, so each one
+        # links the tenant authenticator (GBX0417). `api-contracts` is the
+        # provider side of the remote PaymentApi binding.
+        application("api-contracts", anchor = "api-contracts", include = ["authn-resolver"],
+                    profiles = ["local", "prod"]),
+        application("audit", anchor = "api-contracts-consumer", include = ["authn-resolver"],
+                    replicas = 2, profiles = ["prod"]),
     ],
 
     preferences = [prefer.existing_infrastructure(), prefer.fewer_applications()],

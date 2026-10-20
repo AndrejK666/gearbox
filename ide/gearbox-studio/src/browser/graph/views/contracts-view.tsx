@@ -56,6 +56,9 @@ interface ContractEdge extends Edge {
   readonly remote: boolean;
   readonly transports: string[];
   readonly critical: boolean;
+  /** Whether a critical binding actually holds the consumer's readiness: only a
+   * remote one resolved at run time does; a static endpoint does not. */
+  readonly gating: boolean;
   readonly blockedBy: string | undefined;
 }
 
@@ -225,6 +228,7 @@ function mergeEdges(
         remote: existing.remote || remote,
         transports: [...new Set([...existing.transports, binding.transport])].sort(),
         critical: existing.critical || binding.critical,
+        gating: existing.gating || gates(binding),
       });
     } else {
       merged.set(id, {
@@ -234,6 +238,7 @@ function mergeEdges(
         remote,
         transports: [binding.transport],
         critical: binding.critical,
+        gating: gates(binding),
         blockedBy: undefined,
       });
     }
@@ -252,6 +257,7 @@ function mergeEdges(
         remote: false,
         transports: [],
         critical: false,
+        gating: false,
         blockedBy: candidate.blocked_by,
       });
     }
@@ -274,13 +280,20 @@ function shortContract(contract: string): string {
   return slash === -1 ? contract : contract.slice(slash + 1);
 }
 
+/** The resolver's verdict, printed rather than derived (`cpt-gearbox-fr-studio`). */
+function gates(binding: { gates_readiness: boolean }): boolean {
+  return binding.gates_readiness;
+}
+
 function describe(edge: ContractEdge): string {
   const parts = [
     `${edge.from} to ${edge.to}`,
     edge.contracts.length === 0 ? "no declared contract" : edge.contracts.join(", "),
     edge.remote ? `severed, over ${edge.transports.join(", ")}` : "local: a function call",
   ];
-  if (edge.critical) parts.push("critical: the consumer cannot serve without it");
+  if (edge.gating) parts.push("critical: the consumer is not ready until it is reachable");
+  else if (edge.critical && edge.remote)
+    parts.push("critical, but a static endpoint does not hold readiness");
   if (edge.blockedBy) parts.push(`would be severable but for: ${edge.blockedBy}`);
   return parts.join("\n");
 }

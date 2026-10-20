@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 111, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 117, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -566,6 +566,55 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "error",
     domain: "binding",
     docs: "The endpoint override key names the provider the resolver selected, and\nthe runtime reads the one the consumer declared.\n\nThe key is built out of the provider the resolver chose, while\n`#[toolkit::consumes]` emits its last segment verbatim from its own\n`from`. The two agree in every well-formed product and diverge in\nexactly one place: when [`BindingNoProvider`] found the declared\nprovider does not provide the contract and fell back to the only other\ngear that does. The generated configuration then looks right, the\noperator's override lands where nothing looks for it, and the consumer\nresolves nothing at run time.\n\n**An error, and scoped so that is defensible.** Only a statically\ndiscovered remote binding consults this key at all -- directory\ndiscovery names a lookup instead and is silent here -- so the report is\nconfined to the one configuration where the key is load-bearing. The\nfallback that produces it is deliberately tolerant, because a gear\nrename should not make a product unresolvable; refusing to *generate*\nfrom it is a narrower claim than refusing to resolve it, and the remedy\nis one string in one attribute.",
+    requiresEvidence: false,
+  },
+  GBX0413: {
+    code: "GBX0413",
+    title: "binding mode contradicted by the placement the description forces",
+    severity: "error",
+    domain: "binding",
+    docs: "A `bind(mode = ...)` asks for a placement the description forbids\n(ADR `cpt-gearbox-adr-product-placement` section 2).\n\n`mode = local` is honoured by placing the provider with the consumer --\nunless an `application(...)` pins the provider elsewhere, which is two\nstatements that cannot both hold. `mode = remote` is honoured by leaving\nthem apart -- unless a `deps` chain or an `include` puts the provider in\nthe consumer's process, where the client hub finds the local instance\nand the remote client is never used. Both name what forces the\ncontradiction. An embedded profile is one process by definition, so a\nmode there is inapplicable rather than contradicted (GBX0407).",
+    requiresEvidence: false,
+  },
+  GBX0414: {
+    code: "GBX0414",
+    title: "a separately placed gear is linked into another application by `deps`",
+    severity: "error",
+    domain: "binding",
+    docs: "A gear given its own application is also linked into another one by a\n`deps` chain (ADR `cpt-gearbox-adr-product-placement` section 3).\n\nThe second copy is not a reference to the first: it is another\ninstance, with its own state, serving that process's in-process\ncallers. The description reads as \"this runs separately\" and the\nproduct runs it twice. `deps` is link-time, so only the gear's source can\nsever the edge (`#[toolkit::consumes]` plus `consume(...)`). Gears\nreplicated into every process by design -- `types-registry`,\n`authn-resolver` (ADR `cpt-gearbox-adr-referenced-gears`) -- are exempt;\na duplicate directory *registration* is GBX0320.",
+    requiresEvidence: false,
+  },
+  GBX0415: {
+    code: "GBX0415",
+    title: "a remote cluster binding needs a Kubernetes profile",
+    severity: "error",
+    domain: "binding",
+    docs: "A requester of a cluster primitive sits in an application without the\n`cluster` gear, and the profile is not Kubernetes\n(ADR `cpt-gearbox-adr-product-placement` section 4).\n\nThe cluster SDK reaches a remote cluster at\n`cluster.<POD_NAMESPACE>.svc.cluster.local:50051` and has no other way\nto find it: no directory lookup, no configured endpoint. Outside\nKubernetes there is no such name, so the requester would start and fail\nits first coordination call.",
+    requiresEvidence: true,
+    prevents: "ClusterError::InvalidConfig in cf-gears-cluster-sdk",
+  },
+  GBX0416: {
+    code: "GBX0416",
+    title: "the `cluster` gear is in several applications of a Kubernetes profile",
+    severity: "error",
+    domain: "binding",
+    docs: "More than one application of a Kubernetes profile links the `cluster`\ngear (ADR `cpt-gearbox-adr-product-placement` section 4).\n\nEvery process that links cluster gets a Service named `cluster`, which is\nwhat the SDK addresses; two such processes need two Services under one\nname, and the chart cannot install. Remote requesters would also split\nbetween unrelated coordination state.",
+    requiresEvidence: false,
+  },
+  GBX0417: {
+    code: "GBX0417",
+    title: "an application serving REST has no tenant authenticator",
+    severity: "error",
+    domain: "binding",
+    docs: "An application serves REST and links no tenant authenticator\n(ADR `cpt-gearbox-adr-product-placement` section 8).\n\nThe runtime refuses to start a process that serves tenant-authenticated\noperations without a tenant authenticator, rather than serving them\nunauthenticated (gears-rust ADR-0011 section 3). A replicated Types\nRegistry alone is enough to trip it. Reported before generation, naming\nthe gears whose routes need it.",
+    requiresEvidence: false,
+  },
+  GBX0418: {
+    code: "GBX0418",
+    title: "a remote cluster contract is not provided over gRPC",
+    severity: "error",
+    domain: "binding",
+    docs: "A requester reaches `cluster` remotely, and the cluster gear does not\nprovide the contract it needs over gRPC\n(ADR `cpt-gearbox-adr-product-placement` section 4).\n\nThe SDK's remote client speaks gRPC to the primitive's service and to the\nprofile service it resolves the scope through; a provider that does not\ndeclare them is a binding the runtime cannot make.",
     requiresEvidence: false,
   },
   GBX0501: {

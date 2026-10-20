@@ -1,0 +1,7 @@
+!!! GBX0306 gear `event-broker` needs a database, but profile `prod` declares none
+!!! GBX0306 gear `types-registry` needs a database, but profile `prod` declares none
+!!! GBX0404 `event-broker` consumes `authz-resolver/AuthZResolverApi@v1`, which nothing in the product provides
+!!! GBX0506 `postgres` answers `cache` in scope `event-broker` and needs credentials, which the scope names no source for
+!!! GBX0506 `postgres` answers `leader_election` in scope `event-broker` and needs credentials, which the scope names no source for
+!!! GBX0506 `postgres` answers `lock` in scope `event-broker` and needs credentials, which the scope names no source for
+!!! generation failed: invalid database configuration: database-backed gears have no database; configure the profile and run gearbox resolve

@@ -256,6 +256,7 @@ mod tests {
     fn fixture() -> ResolvedProduct {
         let gears = ["zeta-gear", "alpha-gear"].map(|id| gear(id, &["types-registry", "cluster"]));
         ResolvedProduct {
+            ui: None,
             database: None,
             sqlite_databases: BTreeMap::new(),
             schema_version: LOCK_SCHEMA_VERSION,

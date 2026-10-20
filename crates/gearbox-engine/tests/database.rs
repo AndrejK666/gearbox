@@ -248,9 +248,13 @@ fn resolve(profile: &str, db: &str) -> ResolvedProduct {
             .unwrap();
         host.runtime_caps.insert(RuntimeCap::RestHost);
         host.colocated_deps.insert(fixtures::gid("hosted-api"));
+        // A process serving REST needs a tenant authenticator (GBX0417).
+        host.colocated_deps.insert(fixtures::gid("authn-resolver"));
         let mut api = fixtures::descriptor("hosted-api");
         api.runtime_caps.insert(RuntimeCap::Rest);
         catalogue.gears.insert(api.id.clone(), api);
+        let authn = fixtures::descriptor("authn-resolver");
+        catalogue.gears.insert(authn.id.clone(), authn);
     }
     let intent = intent(profile, db);
     let resolution =

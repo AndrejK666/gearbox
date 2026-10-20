@@ -57,7 +57,7 @@
 //! - `helm/deployment.yaml`: `name`, `process`, `config_filename`, `http_port`,
 //!   `liveness_path`, `readiness_path`, `home_dir`, `container_ports`, `directory_endpoint`, `bin_name`
 //! - `helm/service.yaml`: `name`, `service_name`, `ports`, `cluster_service`,
-//!   `cluster_port`
+//!   `cluster_port`, `cluster_target_port`
 //! - `helm/configmap.yaml`: `name`, `config_filename`
 //! - `helm/serviceaccount.yaml`: `name`
 //!
@@ -104,6 +104,7 @@ const HELM_CONTEXT_DOC: &[(&str, &[&str])] = &[
             "ports",
             "cluster_service",
             "cluster_port",
+            "cluster_target_port",
         ],
     ),
     ("helm/configmap.yaml", &["name", "config_filename"]),

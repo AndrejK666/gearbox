@@ -612,3 +612,83 @@ fn under_an_embedded_profile_none_of_this_can_fire() {
         codes(&r)
     );
 }
+
+#[test]
+fn an_application_serving_rest_without_a_tenant_authenticator_is_refused() {
+    // G17: the runtime refuses to start it (gears-rust ADR-0011 section 3).
+    let cat = support::catalogue_of(vec![
+        support::gear_with_caps("api", &[RuntimeCap::Rest, RuntimeCap::RestHost], &[]),
+        support::gear_with_caps("worker-api", &[RuntimeCap::Rest], &[]),
+        support::gear_with_caps("authn-resolver", &[], &[]),
+    ]);
+    let mut intent = support::self_hosted(
+        &["api", "worker-api", "authn-resolver"],
+        Discovery::Static,
+        Some("t"),
+    );
+    support::pin(&mut intent, "worker", "worker-api", 1);
+    let r = resolve(&cat, &intent, &pid("local"));
+    let found: Vec<&str> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == DiagnosticCode::ApplicationWithoutAuthenticator)
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(found.len(), 1, "only the worker lacks one: {found:?}");
+    assert!(
+        found[0].contains("`worker`") && found[0].contains("worker-api"),
+        "{}",
+        found[0]
+    );
+
+    intent
+        .application_pins
+        .iter_mut()
+        .find(|p| p.name.as_str() == "worker")
+        .unwrap()
+        .include = [support::gid("authn-resolver")].into_iter().collect();
+    // The include moves authn-resolver into the worker (and so out of the
+    // host, which is then reported instead -- the check follows placement).
+    let r = resolve(&cat, &intent, &pid("local"));
+    assert!(
+        r.diagnostics
+            .iter()
+            .filter(|d| d.code == DiagnosticCode::ApplicationWithoutAuthenticator)
+            .all(|d| !d.message.contains("`worker`")),
+        "{:?}",
+        r.diagnostics
+    );
+}
+
+#[test]
+fn a_gear_whose_rest_serves_no_tenant_plane_needs_no_authenticator() {
+    // Cluster's REST capability serves only probes (`rest_planes = []`); a
+    // platform-only gear validates the platform token, not a tenant's. Neither
+    // makes the runtime ask for a tenant authenticator. Undeclared still does.
+    for (planes, refused) in [
+        (Some(vec![]), false),
+        (Some(vec![gearbox_ir::RestPlane::Platform]), false),
+        (Some(vec![gearbox_ir::RestPlane::Tenant]), true),
+        (None, true),
+    ] {
+        let mut worker = support::gear_with_caps("worker-api", &[RuntimeCap::Rest], &[]);
+        worker.rest_planes = planes.clone().map(|p| p.into_iter().collect());
+        let cat = support::catalogue_of(vec![
+            support::gear_with_caps("api", &[RuntimeCap::Rest, RuntimeCap::RestHost], &[]),
+            worker,
+            support::gear_with_caps("authn-resolver", &[], &[]),
+        ]);
+        let mut intent = support::self_hosted(
+            &["api", "worker-api", "authn-resolver"],
+            Discovery::Static,
+            Some("t"),
+        );
+        support::pin(&mut intent, "worker", "worker-api", 1);
+        let r = resolve(&cat, &intent, &pid("local"));
+        let reported = r.diagnostics.iter().any(|d| {
+            d.code == DiagnosticCode::ApplicationWithoutAuthenticator
+                && d.message.contains("`worker`")
+        });
+        assert_eq!(reported, refused, "rest_planes = {planes:?}");
+    }
+}

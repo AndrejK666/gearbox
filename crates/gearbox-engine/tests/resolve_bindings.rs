@@ -112,7 +112,7 @@ fn a_local_binding_carries_no_endpoint() {
         assert!(binding.endpoint_source.is_none(), "{binding:?}");
         assert!(binding.endpoint.is_none(), "{binding:?}");
         assert!(
-            !binding.gates_readiness(),
+            !binding.gates_readiness,
             "a co-located binding has nothing to wait for"
         );
     }
@@ -163,9 +163,12 @@ fn two_majors_collapse_to_the_provider_gear_key() {
     // way to address the two majors independently through this mechanism.
     require!(cat, prod);
     let r = resolve(&cat, &prod, &pid("prod"));
+    // The cluster SDK's own bindings are addressed by the SDK, not by a
+    // consumer_wiring key; this is about the contract edge.
     let keys: Vec<&str> = r
         .bindings
         .iter()
+        .filter(|b| b.provider.as_str() == "api-contracts")
         .filter_map(|b| b.endpoint_source.as_deref())
         .collect();
     assert_eq!(keys.len(), 2, "two severed majors, two bindings: {keys:?}");
@@ -239,6 +242,7 @@ fn a_declared_endpoint_is_refused_rather_than_dropped() {
         endpoint: Some("http://payments.internal:8080".to_owned()),
         profiles: std::collections::BTreeSet::new(),
         declared_at: None,
+        critical: None,
     });
 
     let r = resolve(&cat, &intent, &pid("dev"));
@@ -284,6 +288,7 @@ fn asking_for_remote_in_a_single_process_profile_is_recorded_as_a_downgrade() {
         endpoint: None,
         profiles: std::collections::BTreeSet::new(),
         declared_at: None,
+        critical: None,
     });
 
     let r = resolve(&cat, &intent, &pid("dev"));
@@ -325,6 +330,7 @@ fn asking_for_grpc_across_a_boundary_is_downgraded_to_rest() {
         endpoint: None,
         profiles: std::collections::BTreeSet::new(),
         declared_at: None,
+        critical: None,
     });
 
     let r = resolve(&cat, &intent, &pid("local"));
@@ -399,35 +405,41 @@ fn a_single_segment_provider_is_expressible_as_an_environment_variable() {
 
 #[test]
 fn readiness_gating_follows_criticality_and_placement_together() {
-    // `critical` defaults to false and the slice's consumer does not set it, so
-    // nothing in the real product gates readiness. Asserting that keeps the
-    // default visible: a change to it would show up here rather than as a
-    // product that suddenly refuses to become ready.
+    // `critical` defaults to true (ADR-0026 section 5), so the slice's remote
+    // bindings are critical -- but `prod` pins endpoints statically, and the
+    // runtime marks a static endpoint resolved without contacting the provider,
+    // so none of them gates readiness. Both halves are asserted, so neither the
+    // default nor the static exception can change unnoticed.
     require!(cat, prod);
     let r = resolve(&cat, &prod, &pid("prod"));
     assert!(
-        r.bindings.iter().all(|b| !b.gates_readiness()),
-        "no consumed contract in the slice is declared critical: {:?}",
+        r.bindings
+            .iter()
+            .filter(|b| b.is_remote())
+            .all(|b| b.critical),
+        "the default is critical: {:?}",
+        r.bindings
+    );
+    assert!(
+        r.bindings.iter().all(|b| !b.gates_readiness),
+        "a static endpoint never gates readiness: {:?}",
         r.bindings
     );
 
     // A critical remote binding does gate; a critical *local* one does not,
     // because there is nothing to wait for.
     let cat = support::catalogue_with_declared_edge();
-    let mut intent = support::self_hosted(&["host", "provider"], Discovery::Static, Some("t"));
+    let mut intent = support::self_hosted(&["host", "provider"], Discovery::Directory, Some("t"));
     support::pin(&mut intent, "worker", "provider", 1);
     let remote = resolve(&cat, &intent, &pid("local"));
     assert!(
-        remote
-            .bindings
-            .iter()
-            .all(gearbox_ir::ResolvedBinding::gates_readiness),
+        remote.bindings.iter().all(|b| b.gates_readiness),
         "{:?}",
         remote.bindings
     );
 
     let local = resolve(&cat, &support::intent(&["host", "provider"]), &pid("dev"));
-    assert!(local.bindings.iter().all(|b| !b.gates_readiness()));
+    assert!(local.bindings.iter().all(|b| !b.gates_readiness));
 }
 
 #[test]
@@ -505,5 +517,194 @@ fn the_declared_provider_being_the_selected_one_is_silent() {
         !codes(&r).contains(&DiagnosticCode::BindingWiringKeySkew),
         "the ordinary product must stay quiet: {:?}",
         codes(&r)
+    );
+}
+
+#[test]
+fn a_product_overrides_a_consumes_criticality_per_binding() {
+    // G10: `bind(critical = False)` makes a remote binding optional; without it
+    // the gear's `consume(critical = ...)` stands (true in the fixtures).
+    let cat = support::catalogue_with_declared_edge();
+    let mut intent = support::self_hosted(&["host", "provider"], Discovery::Directory, Some("t"));
+    support::pin(&mut intent, "worker", "provider", 1);
+    let gating = resolve(&cat, &intent, &pid("local"));
+    assert!(
+        gating
+            .bindings
+            .iter()
+            .all(|b| b.critical && b.gates_readiness)
+    );
+
+    intent.bindings.push(gearbox_ir::BindingIntent {
+        consumer: gid("host"),
+        contract: gearbox_ir::ContractId::new("provider/Thing@v1").unwrap(),
+        mode: BindingMode::Auto,
+        transport: None,
+        endpoint: None,
+        profiles: std::collections::BTreeSet::new(),
+        declared_at: None,
+        critical: Some(false),
+    });
+    let optional = resolve(&cat, &intent, &pid("local"));
+    let binding = &optional.bindings[0];
+    assert!(binding.is_remote());
+    assert!(!binding.critical);
+    assert!(!binding.gates_readiness);
+    assert!(
+        matches!(
+            &binding.selected.selected,
+            gearbox_ir::Choice::Explicit { value } if value.critical == Some(false)
+        ),
+        "the lock records what was asked: {:?}",
+        binding.selected
+    );
+}
+
+fn bind_mode(intent: &mut gearbox_ir::ProductIntent, mode: BindingMode) {
+    intent.bindings.push(gearbox_ir::BindingIntent {
+        consumer: gid("host"),
+        contract: gearbox_ir::ContractId::new("provider/Thing@v1").unwrap(),
+        mode,
+        transport: None,
+        endpoint: None,
+        profiles: std::collections::BTreeSet::new(),
+        declared_at: None,
+        critical: None,
+    });
+}
+
+fn contradicted(r: &gearbox_engine::resolve::Resolution) -> Vec<&str> {
+    r.diagnostics
+        .iter()
+        .filter(|d| d.code == DiagnosticCode::BindingModeContradicted)
+        .map(|d| d.message.as_str())
+        .collect()
+}
+
+#[test]
+fn bind_local_places_the_provider_with_its_consumer() {
+    // G1: left alone the resolver gives the provider its own worker; `mode =
+    // local` puts it in the consumer's process instead, and the request is
+    // honoured rather than recorded and ignored.
+    let cat = support::catalogue_with_declared_edge();
+    let intent = support::self_hosted(&["host", "provider"], Discovery::Directory, Some("t"));
+    let apart = resolve(&cat, &intent, &pid("local"));
+    assert!(apart.bindings[0].is_remote(), "{:?}", apart.bindings);
+
+    let mut intent = intent;
+    bind_mode(&mut intent, BindingMode::Local);
+    let together = resolve(&cat, &intent, &pid("local"));
+    let binding = &together.bindings[0];
+    assert!(!binding.is_remote(), "{binding:?}");
+    assert!(binding.selected.downgraded_by.is_none(), "{binding:?}");
+    assert!(contradicted(&together).is_empty());
+    assert_eq!(
+        together.partition.applications.len(),
+        1,
+        "no worker is left for the provider"
+    );
+}
+
+#[test]
+fn bind_local_follows_a_chain_into_every_process_of_its_consumer() {
+    // Review 2B, finding 1: `lab` runs in its own worker; it asks for
+    // `settings` locally, and `settings` asks for `authz` locally. One pass put
+    // `settings` in the worker and `authz` only in the host, so the worker's
+    // copy of `settings` had no `authz` beside it and no wiring to one either.
+    let cat = support::catalogue_with_contract_chain();
+    let mut intent = support::self_hosted(
+        &["host", "lab", "settings", "authz"],
+        Discovery::Directory,
+        Some("t"),
+    );
+    support::pin(&mut intent, "lab-worker", "lab", 1);
+    for (consumer, contract) in [
+        ("lab", "settings/Settings@v1"),
+        ("settings", "authz/Authz@v1"),
+    ] {
+        intent.bindings.push(gearbox_ir::BindingIntent {
+            consumer: gid(consumer),
+            contract: gearbox_ir::ContractId::new(contract).unwrap(),
+            mode: BindingMode::Local,
+            transport: None,
+            endpoint: None,
+            profiles: std::collections::BTreeSet::new(),
+            declared_at: None,
+            critical: None,
+        });
+    }
+    let r = resolve(&cat, &intent, &pid("local"));
+    assert!(contradicted(&r).is_empty(), "{:?}", r.diagnostics);
+    let worker = r
+        .partition
+        .applications
+        .iter()
+        .find(|a| a.name.as_str() == "lab-worker")
+        .expect("the pinned worker");
+    for gear in ["lab", "settings", "authz"] {
+        assert!(worker.contains(&gid(gear)), "{gear} in {:?}", worker.gears);
+    }
+    // Every binding of every copy is local: nothing is left to a process that
+    // has no wiring for it.
+    assert!(
+        r.bindings.iter().all(|b| !b.is_remote()),
+        "{:?}",
+        r.bindings
+    );
+    assert!(
+        r.bindings.iter().any(|b| b.consumer.as_str() == "settings"
+            && b.consumer_application.as_str() == "lab-worker"),
+        "the worker's copy of settings has its own binding: {:?}",
+        r.bindings
+    );
+}
+
+#[test]
+fn bind_local_against_a_pin_is_a_contradiction() {
+    // G2: the provider is pinned to its own application, so it cannot also be
+    // local to its consumer.
+    let cat = support::catalogue_with_declared_edge();
+    let mut intent = support::self_hosted(&["host", "provider"], Discovery::Directory, Some("t"));
+    support::pin(&mut intent, "provider-app", "provider", 1);
+    bind_mode(&mut intent, BindingMode::Local);
+    let r = resolve(&cat, &intent, &pid("local"));
+    let messages = contradicted(&r);
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("provider-app") && m.contains("pins it")),
+        "{messages:?}"
+    );
+    let binding = &r.bindings[0];
+    assert!(binding.is_remote());
+    assert_eq!(
+        binding.selected.downgraded_by,
+        Some(DiagnosticCode::BindingModeContradicted)
+    );
+}
+
+#[test]
+fn bind_remote_forced_together_by_deps_is_a_contradiction_except_when_embedded() {
+    // G3: a `deps` chain links the provider into the consumer's binary, where
+    // the hub finds it before any remote client runs. An error naming the chain
+    // outside an embedded profile; inapplicable (GBX0407) inside one.
+    let cat = support::catalogue_with_declared_edge_and_dep();
+    let mut intent = support::self_hosted(&["host", "provider"], Discovery::Directory, Some("t"));
+    bind_mode(&mut intent, BindingMode::Remote);
+    let r = resolve(&cat, &intent, &pid("local"));
+    let messages = contradicted(&r);
+    assert!(
+        messages.iter().any(|m| m.contains("host -> provider")),
+        "{messages:?}"
+    );
+
+    let mut embedded = support::intent(&["host", "provider"]);
+    bind_mode(&mut embedded, BindingMode::Remote);
+    let r = resolve(&cat, &embedded, &pid("dev"));
+    assert!(contradicted(&r).is_empty());
+    assert!(
+        r.diagnostics
+            .iter()
+            .any(|d| d.code == DiagnosticCode::BindingForcedLocal)
     );
 }

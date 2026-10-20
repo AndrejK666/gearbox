@@ -5,4 +5,8 @@ import type { Transport } from "./Transport";
 /**
  * What was requested for a binding, as one value.
  */
-export type BindingRequest = { mode: BindingMode, transport?: Transport | null, };
+export type BindingRequest = { mode: BindingMode, transport?: Transport | null, 
+/**
+ * The product's `bind(critical = ...)`, when it overrides the gear.
+ */
+critical?: boolean | null, };

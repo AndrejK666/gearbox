@@ -110,8 +110,12 @@ fn nothing_in_the_slice_is_severable_if_declared_and_that_is_the_finding() {
     // anything -- `api-contracts` -- which nothing pulls in by co-location",
     // and that a platform gear growing a declared contract would end the
     // emptiness. `authz-resolver` grew one: it provides `AuthZResolverApi` over
-    // REST, and `account-management`, `resource-group` and `credstore` each
-    // reach it through `deps`.
+    // REST, and `account-management` reaches it through `deps`
+    // (`resource-group`, `credstore`, `oagw` and `event-broker` consume it as a
+    // contract since the service-deployment roadmap's Phase 2A). `cluster` now
+    // provides its four coordination contracts over gRPC and `settings-service`
+    // its read contract; `event-broker`'s `deps = [cluster]` is reported by
+    // GBX0607 rather than as a cut.
     //
     // The work list is still empty only because the demo product selects none
     // of those three. So the corpus can now *demonstrate* a severable-if-
@@ -137,7 +141,12 @@ fn nothing_in_the_slice_is_severable_if_declared_and_that_is_the_finding() {
         .collect();
     assert_eq!(
         providers,
-        vec![&gid("api-contracts"), &gid("authz-resolver")],
+        vec![
+            &gid("api-contracts"),
+            &gid("authz-resolver"),
+            &gid("cluster"),
+            &gid("settings-service"),
+        ],
         "the emptiness above depends on which gears provide anything at all"
     );
 }

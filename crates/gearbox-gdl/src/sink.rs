@@ -85,6 +85,9 @@ pub struct GearDecl {
     pub consumes: Vec<ConsumeRecord>,
     pub requires: Vec<crate::records::ClusterRequireRecord>,
     pub serves: Vec<crate::records::EndpointRecord>,
+    /// `rest_planes = [...]`: the planes the gear's REST operations use. `None`
+    /// when not written, which the resolver reads as tenant.
+    pub rest_planes: Option<std::collections::BTreeSet<gearbox_ir::RestPlane>>,
     /// Where the cluster backend plugin crates live, so their `PROVIDER_NAME`
     /// consts and capability declarations can be projected.
     ///

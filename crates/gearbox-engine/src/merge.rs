@@ -290,6 +290,44 @@ pub fn merge(
         }
     }
 
+    // The reverse direction (ADR `cpt-gearbox-adr-product-placement` section 8):
+    // a Rust consumption the description does not declare. The runtime wires
+    // it, but edges are built from `consume(...)` records only, so the resolver
+    // never sees it -- it can neither place it nor report it.
+    for consumed in &projected.consumes {
+        let declared = decl.consumes.iter().any(|record| {
+            contracts_by_trait
+                .get(&record.contract)
+                .is_some_and(|c| c.trait_ident == consumed.contract_ident)
+                || record.contract == consumed.contract_ident
+        });
+        if declared {
+            continue;
+        }
+        diagnostics.push(
+            Diagnostic::error(
+                DiagnosticCode::ValidateConsumerWiringMismatch,
+                format!(
+                    "gear `{id}` carries `#[toolkit::consumes(contract = {}, from = \"{}\")]`, \
+                     and its description declares no `consume(contract = \"{}\")`. The runtime \
+                     wires the edge, but the resolver builds edges from `consume(...)` only, so \
+                     it cannot place or report this one.",
+                    consumed.contract_ident, consumed.from, consumed.contract_ident
+                ),
+                format!(
+                    "add `consume(contract = \"{}\", rust = \"...\", sdk = ...)` to the gear's \
+                     `consumes`, or remove the attribute",
+                    consumed.contract_ident
+                ),
+            )
+            .at(Location::file(uri.to_owned()))
+            .with_evidence(
+                "libs/toolkit-contract-macros/src/consumes.rs \
+                 (the attribute emits the registration the wiring phase replays)",
+            ),
+        );
+    }
+
     let mut requires = Vec::new();
     for (ordinal, record) in decl.requires.iter().enumerate() {
         match cluster_requirement(&id, record, ordinal) {
@@ -403,6 +441,8 @@ pub fn merge(
                 via: e.via.clone(),
             })
             .collect(),
+        // Declared; the runtime's start check is what verifies it.
+        rest_planes: decl.rest_planes.clone(),
         // Projected.
         client_trait: projected.client_trait.clone(),
         // Projected from `provider_registry()` plus the plugin crates

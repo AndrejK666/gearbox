@@ -163,6 +163,7 @@ pub fn partition(
     assign_builtin_hosts(catalogue, declaration, &mut applications);
     assign_chart_fields(declaration, product_version, &mut applications);
     report_orphans(closure, &applications, uri, diagnostics);
+    report_duplicated_by_deps(input, &applications, uri, diagnostics);
     Partition { applications }
 }
 
@@ -352,6 +353,12 @@ fn bind_host(declaration: &DeploymentProfileDecl) -> &'static str {
     }
 }
 
+/// The gRPC hub, whose listener an embedded profile leaves unbound.
+const GRPC_HUB: &str = "grpc-hub";
+
+/// The hub's listen address for "serve in-process, bind nothing".
+const UNBOUND: &str = "none";
+
 fn allows_loopback(declaration: &DeploymentProfileDecl) -> bool {
     !matches!(declaration, DeploymentProfileDecl::Kubernetes { .. })
 }
@@ -377,6 +384,7 @@ fn assign_endpoints(
     let mut taken: BTreeSet<u16> = BTreeSet::new();
     let host = bind_host(declaration);
     let loopback = allows_loopback(declaration);
+    let embedded = matches!(declaration, DeploymentProfileDecl::Embedded { .. });
 
     // By process name, not by construction order: the lock is written in name
     // order, so assigning in any other order would let a resolver refactor that
@@ -400,6 +408,20 @@ fn assign_endpoints(
                 else {
                     continue;
                 };
+                // One process has no caller for the hub: every gRPC service is
+                // reached in-process. `none` registers them and binds nothing
+                // (gears-rust ADR-0011 section 1; Gearbox ADR-0026 section 6).
+                if embedded && gear.as_str() == GRPC_HUB {
+                    listens.push(ResolvedEndpoint {
+                        name: served.name.clone(),
+                        gear: gear.clone(),
+                        config_key: config_key.clone(),
+                        address: UNBOUND.to_owned(),
+                        advertise_uri: None,
+                        allow_loopback_advertise: loopback,
+                    });
+                    continue;
+                }
                 let Some(port) = next_free_port(default_port, &taken) else {
                     continue;
                 };
@@ -539,6 +561,42 @@ fn split(
         worker_anchors.remove(&pin.anchor);
     }
 
+    // `bind(mode = local)`: the provider joins the consumer's process
+    // (ADR `cpt-gearbox-adr-product-placement` section 2). It stops being a
+    // worker of its own only when nothing else sends it out -- another
+    // consumer's severable edge, a pin or an isolate -- and a provider pinned
+    // elsewhere is left where the pin puts it: that contradiction is GBX0413,
+    // reported with the binding.
+    let forced_out: BTreeSet<&GearId> = scoped
+        .application_pins
+        .iter()
+        .map(|p| &p.anchor)
+        .chain(isolates.iter())
+        .collect();
+    let wants_local = |edge: &super::cuts::CuttableEdge| {
+        scoped.bindings.iter().any(|b| {
+            b.consumer == edge.consumer
+                && b.contract == edge.contract
+                && b.mode == gearbox_ir::BindingMode::Local
+        })
+    };
+    let local_requests: Vec<(&GearId, &GearId)> = cuts
+        .cuttable
+        .iter()
+        .filter(|e| wants_local(e))
+        .filter(|e| !forced_out.contains(&e.provider))
+        .map(|e| (&e.consumer, &e.provider))
+        .collect();
+    for (_, provider) in &local_requests {
+        let still_cut = cuts
+            .cuttable
+            .iter()
+            .any(|e| e.provider == **provider && !wants_local(e));
+        if !still_cut {
+            worker_anchors.remove(*provider);
+        }
+    }
+
     // Explicit worker contributions are placed with that worker rather than
     // seeded in the default host as well. A host dependency (or explicit host
     // include) can still reach them, preserving legitimate overlapping closures.
@@ -571,8 +629,59 @@ fn split(
                 .cloned(),
         );
     }
-    let host_gears = topo_sort(catalogue, closure, &host_seeds);
-    worker_anchors.retain(|a| !host_gears.contains(a) || is_forced_out(scoped, isolates, a));
+    // A provider asked to be local follows its consumer into *every* process
+    // the consumer is in -- the consumer may be linked into several -- and
+    // the provider's own local requests follow it in turn. So placement is
+    // repeated until nothing moves: one pass would leave a provider that a
+    // local request brought into a worker without the providers it asked for
+    // locally itself.
+    let worker_seeds = |anchor: &GearId, extra: &BTreeMap<GearId, Vec<GearId>>| -> Vec<GearId> {
+        let pin = scoped.application_pins.iter().find(|p| p.anchor == *anchor);
+        std::iter::once(anchor.clone())
+            .chain(
+                pin.into_iter()
+                    .flat_map(|p| p.include.iter())
+                    .filter(|id| closure.contains(id))
+                    .cloned(),
+            )
+            .chain(extra.get(anchor).into_iter().flatten().cloned())
+            .collect()
+    };
+    let mut worker_extra: BTreeMap<GearId, Vec<GearId>> = BTreeMap::new();
+    let mut host_gears;
+    let mut worker_gears: BTreeMap<GearId, Vec<GearId>>;
+    loop {
+        host_gears = topo_sort(catalogue, closure, &host_seeds);
+        worker_anchors.retain(|a| !host_gears.contains(a) || is_forced_out(scoped, isolates, a));
+        worker_gears = worker_anchors
+            .iter()
+            .map(|a| {
+                (
+                    a.clone(),
+                    topo_sort(catalogue, closure, &worker_seeds(a, &worker_extra)),
+                )
+            })
+            .collect();
+        let mut moved = false;
+        for (consumer, provider) in &local_requests {
+            if host_gears.contains(consumer) && !host_gears.contains(provider) {
+                host_seeds.push((*provider).clone());
+                moved = true;
+            }
+            for (anchor, gears) in &worker_gears {
+                if gears.contains(consumer) && !gears.contains(provider) {
+                    worker_extra
+                        .entry(anchor.clone())
+                        .or_default()
+                        .push((*provider).clone());
+                    moved = true;
+                }
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
 
     let mut applications = Vec::new();
     if let Some(anchor) = pick_anchor(catalogue, &host_gears) {
@@ -595,15 +704,7 @@ fn split(
     }
     for anchor in &worker_anchors {
         let pin = scoped.application_pins.iter().find(|p| p.anchor == *anchor);
-        let seeds: Vec<GearId> = std::iter::once(anchor.clone())
-            .chain(
-                pin.into_iter()
-                    .flat_map(|p| p.include.iter())
-                    .filter(|id| closure.contains(id))
-                    .cloned(),
-            )
-            .collect();
-        let gears = topo_sort(catalogue, closure, &seeds);
+        let gears = worker_gears.remove(anchor).unwrap_or_default();
         let name = pin
             .map(|p| p.name.clone())
             .or_else(|| derive_name(anchor, used_names));
@@ -970,6 +1071,74 @@ fn features(catalogue: &Catalogue, gears: &[GearId]) -> BTreeSet<String> {
 /// Only possible when a gear is selected and nothing anchors a closure reaching
 /// it -- which means it would be silently dropped from every binary. Reported
 /// rather than tolerated: the operator asked for it.
+/// Gears replicated into every process by design, so a second copy is the
+/// point rather than a defect (ADR `cpt-gearbox-adr-referenced-gears`, "a third
+/// category").
+const REPLICATED_BY_DESIGN: &[&str] = &["types-registry", "authn-resolver"];
+
+/// GBX0414: a gear the description sends to its own application -- a pin or an
+/// isolate -- that another application also links through `deps`.
+fn report_duplicated_by_deps(
+    input: &Inputs<'_>,
+    applications: &[ResolvedApplication],
+    uri: &str,
+    diagnostics: &mut Diagnostics,
+) {
+    let separated = input
+        .scoped
+        .application_pins
+        .iter()
+        .map(|pin| (&pin.anchor, pin.declared_at.as_ref()))
+        .chain(input.isolates.iter().map(|gear| (gear, None)));
+    for (gear, declared_at) in separated {
+        if REPLICATED_BY_DESIGN.contains(&gear.as_str()) {
+            continue;
+        }
+        for application in applications.iter().filter(|a| a.anchor != *gear) {
+            if !application.gears.contains(gear) {
+                continue;
+            }
+            // Brought in on purpose by an include of that application.
+            let included = input
+                .scoped
+                .application_pins
+                .iter()
+                .any(|pin| pin.name == application.name && pin.include.contains(gear));
+            if included {
+                continue;
+            }
+            let linker = application.gears.iter().find(|g| {
+                *g != gear
+                    && input
+                        .catalogue
+                        .gears
+                        .get(g)
+                        .is_some_and(|d| d.colocated_deps.contains(gear))
+            });
+            let chain = linker.map_or_else(
+                || format!("a `deps` chain in `{}`", application.name),
+                |linker| format!("{linker} -> {gear}"),
+            );
+            diagnostics.push(
+                Diagnostic::error(
+                    DiagnosticCode::PlacementDuplicatedByDeps,
+                    format!(
+                        "`{gear}` has its own application, but `{}` also links it through \
+                         `deps` ({chain}): the product would run two instances",
+                        application.name
+                    ),
+                    format!(
+                        "make the edge severable at its source -- `#[toolkit::consumes]` plus \
+                         `consume(...)` in place of the `deps` entry{} -- or drop the pin",
+                        linker.map_or_else(String::new, |l| format!(" of `{l}`"))
+                    ),
+                )
+                .at(Location::or_file(declared_at, uri)),
+            );
+        }
+    }
+}
+
 fn report_orphans(
     closure: &Closure,
     applications: &[ResolvedApplication],

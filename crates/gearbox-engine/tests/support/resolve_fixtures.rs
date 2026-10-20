@@ -66,6 +66,7 @@ pub fn descriptor(id: &str) -> GearDescriptor {
         requires: Vec::new(),
         serves: Vec::new(),
         client_trait: None,
+        rest_planes: None,
         cluster_providers: Vec::new(),
         extension_points: Vec::new(),
         implements: None,
@@ -591,4 +592,83 @@ pub fn bind_cluster(
         declared_at: None,
         entry_index: intent.cluster_scopes.len(),
     });
+}
+
+/// `cluster_catalogue` with the requester free to live apart: no `deps` on
+/// cluster, cluster serving its cache contract over gRPC, and a gRPC hub.
+pub fn remote_cluster_catalogue() -> Catalogue {
+    let mut catalogue = cluster_catalogue(vec![(ClusterPrimitive::Cache, "app", &[])]);
+    catalogue
+        .gears
+        .get_mut(&gid("app"))
+        .unwrap()
+        .colocated_deps
+        .clear();
+    catalogue
+        .gears
+        .get_mut(&gid("cluster"))
+        .unwrap()
+        .runtime_caps
+        .insert(RuntimeCap::Grpc);
+    catalogue.gears.insert(
+        gid("grpc-hub"),
+        gear_with_caps("grpc-hub", &[RuntimeCap::GrpcHub], &[]),
+    );
+    catalogue.gears.insert(gid("other"), descriptor("other"));
+    // What the SDK's remote client needs: the primitive's service and the
+    // profile service, both over gRPC.
+    for base in ["ClusterCacheApi", "ClusterProfileApi"] {
+        let mut c = contract(base, 1, ContractKind::Api);
+        c.id = cid(&format!("cluster/{base}@v1"));
+        c.owner = gid("cluster");
+        let mut p = provides(&c, &[Transport::Local, Transport::Grpc]);
+        p.provider_gear = gid("cluster");
+        catalogue
+            .gears
+            .get_mut(&gid("cluster"))
+            .unwrap()
+            .provides
+            .push(p);
+        catalogue.contracts.insert(c.id.clone(), c);
+    }
+    catalogue
+}
+
+/// `lab -> settings -> authz`, each edge a declared contract: the chain
+/// `bind(mode = local)` has to follow from one process into the next.
+pub fn catalogue_with_contract_chain() -> Catalogue {
+    let mut catalogue = Catalogue::default();
+    catalogue
+        .gears
+        .insert(gid("host"), gear_with_caps("host", &[], &[]));
+    for (consumer, provider, base) in [
+        ("lab", "settings", "Settings"),
+        ("settings", "authz", "Authz"),
+    ] {
+        let mut c = contract(base, 1, ContractKind::Api);
+        c.id = cid(&format!("{provider}/{base}@v1"));
+        c.owner = gid(provider);
+        let mut p = provides(&c, &[Transport::Local, Transport::Rest]);
+        p.provider_gear = gid(provider);
+        let mut r = consumes(&c.id);
+        r.id = RequirementId::new(format!("{consumer}#contract.consumes[0]")).unwrap();
+        r.requester = gid(consumer);
+        if let RequirementKind::Contract { from, .. } = &mut r.kind {
+            *from = gid(provider);
+        }
+        catalogue
+            .gears
+            .entry(gid(provider))
+            .or_insert_with(|| descriptor(provider))
+            .provides
+            .push(p);
+        catalogue
+            .gears
+            .entry(gid(consumer))
+            .or_insert_with(|| descriptor(consumer))
+            .consumes
+            .push(r);
+        catalogue.contracts.insert(c.id.clone(), c);
+    }
+    catalogue
 }

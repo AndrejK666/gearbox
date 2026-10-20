@@ -40,7 +40,8 @@ self_hosted?: SelfHostedSettings | null, sources: { [key in SourceId]: ResolvedS
  */
 applications: Array<ResolvedApplication>, 
 /**
- * Ordered by consumer then contract.
+ * Ordered by consumer, contract, then consumer application: a gear linked
+ * into several processes has a binding in each.
  */
 bindings?: Array<ResolvedBinding>, 
 /**

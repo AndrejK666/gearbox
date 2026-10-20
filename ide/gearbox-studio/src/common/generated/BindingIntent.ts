@@ -23,6 +23,11 @@ transport?: Transport | null,
  */
 endpoint?: string | null, 
 /**
+ * Whether readiness waits for the provider, overriding the gear's
+ * `consume(critical = ...)`.
+ */
+critical?: boolean | null, 
+/**
  * Profiles this applies to. Empty means all of them.
  */
 profiles?: Array<ProfileId>, 

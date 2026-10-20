@@ -417,7 +417,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
             {this.impact?.applicationsAdded.map(a => <p key={`+${a}`} data-add-gear-impact-applications={a}>+ Application {a}</p>)}
             {this.impact?.applicationsRemoved.map(a => <p key={`-${a}`}>− Application {a}</p>)}
             {this.impact?.moved.map(m => <p key={m.gear}>{m.gear}: {m.from} → {m.to}</p>)}
-            {this.impact && [...this.impact.bindingsAdded, ...this.impact.bindingsChanged].map(b => <p key={`${b.consumer}:${b.contract}`} data-add-gear-impact-bindings={`${b.consumer}:${b.contract}`}>{b.consumer} / {b.contract}: {b.before} → {b.after}</p>)}
+            {this.impact && [...this.impact.bindingsAdded, ...this.impact.bindingsChanged].map(b => <p key={`${b.consumer}@${b.application}:${b.contract}`} data-add-gear-impact-bindings={`${b.consumer}@${b.application}:${b.contract}`}>{b.consumer} in {b.application} / {b.contract}: {b.before} → {b.after}</p>)}
             {this.impact && <span data-add-gear-impact-diagnostics={this.impact.newDiagnostics.length}><DiagnosticsList diagnostics={this.impact.newDiagnostics} density="compact" /></span>}
           </section>
           {/* `gbx-edit-preview` is the class the old panel's preview carried:

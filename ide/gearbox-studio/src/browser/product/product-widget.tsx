@@ -1846,7 +1846,7 @@ export class ProductWidget extends ReactWidget {
     return (
       <div
         className={`gbx-row gbx-binding ${selected ? "gbx-selected" : ""}`}
-        key={`${binding.consumer}/${binding.contract}`}
+        key={`${binding.consumer}/${binding.contract}/${binding.consumer_application}`}
         data-binding={`${binding.consumer}/${binding.contract}`}
         role="option"
         aria-selected={selected}
@@ -1886,7 +1886,24 @@ export class ProductWidget extends ReactWidget {
         <span className="gbx-badge" data-mechanism={binding.mechanism}>
           {binding.mechanism}
         </span>
-        {binding.critical && <span className="gbx-badge">critical</span>}
+        {/* A static endpoint is marked resolved at wiring, so `critical` is
+            recorded but cannot hold the consumer back (ADR-0026 section 5).
+            Whether it does is the resolver's verdict, `gates_readiness`; the
+            view prints it and decides nothing. */}
+        {binding.critical &&
+          (binding.mode === "remote" && !binding.gates_readiness ? (
+            <span
+              className="gbx-badge"
+              data-critical="not-gating"
+              title="critical, but a static endpoint is marked resolved at wiring, so readiness does not wait for it; use directory discovery for that"
+            >
+              critical, not gating
+            </span>
+          ) : (
+            <span className="gbx-badge" data-critical="gating">
+              critical
+            </span>
+          ))}
         {/* "You asked for X and got Y, because GBXnnnn." The request lives beside
             the outcome precisely so this is an explanation rather than a
             surprise; the full narrative is Explain's job. */}

@@ -21,6 +21,7 @@ import type { PluginImpl } from "./PluginImpl";
 import type { ProviderDescriptor } from "./ProviderDescriptor";
 import type { RelPath } from "./RelPath";
 import type { Requirement } from "./Requirement";
+import type { RestPlane } from "./RestPlane";
 import type { RuntimeCap } from "./RuntimeCap";
 import type { Scenario } from "./Scenario";
 import type { SourceId } from "./SourceId";
@@ -99,6 +100,14 @@ consumes?: Array<Requirement>,
  * Non-contract requirements, which today means cluster primitives.
  */
 requires?: Array<Requirement>, serves?: Array<EndpointDecl>, 
+/**
+ * The planes the gear's REST operations use, when its description says
+ * (`rest_planes = [...]`). `None` is not "none": undeclared, the resolver
+ * assumes tenant operations, the fail-closed reading of the runtime's start
+ * check (GBX0417). `Some` of an empty set is a gear whose REST capability
+ * serves only probes. An authored claim: the runtime is what checks it.
+ */
+rest_planes?: Array<RestPlane> | null, 
 /**
  * The client trait the gear macro asserts is object-safe, if declared.
  */

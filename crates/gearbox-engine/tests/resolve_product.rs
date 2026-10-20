@@ -251,6 +251,7 @@ fn a_downgraded_binding_points_at_the_code_that_downgraded_it() {
         endpoint: None,
         profiles: std::collections::BTreeSet::new(),
         declared_at: None,
+        critical: None,
     });
 
     let r = resolve(&cat, &intent, &ProfileId::new("dev").unwrap());

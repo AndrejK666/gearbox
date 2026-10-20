@@ -135,6 +135,7 @@ export * from "./ResolvedRoot";
 export * from "./ResolvedSource";
 export * from "./ResolvedUi";
 export * from "./ResolvedUiModule";
+export * from "./RestPlane";
 export * from "./RestProjection";
 export * from "./RestVisibility";
 export * from "./RuntimeCap";

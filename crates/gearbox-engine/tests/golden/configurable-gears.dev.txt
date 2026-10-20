@@ -1,0 +1,4 @@
+!!! GBX0306 gear `event-broker` needs a database, but profile `dev` declares none
+!!! GBX0306 gear `types-registry` needs a database, but profile `dev` declares none
+!!! GBX0404 `event-broker` consumes `authz-resolver/AuthZResolverApi@v1`, which nothing in the product provides
+!!! generation failed: invalid database configuration: database-backed gears have no database; configure the profile and run gearbox resolve

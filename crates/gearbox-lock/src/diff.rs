@@ -18,11 +18,13 @@ use serde::Serialize;
 
 use crate::canonical::canonicalize_order;
 
-/// The `(consumer, contract)` pair that identifies one binding.
+/// The `(consumer, contract, consumer_application)` triple that identifies one
+/// binding: a gear linked into several processes has a binding in each.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct BindingKey {
     pub consumer: GearId,
     pub contract: ContractId,
+    pub consumer_application: ApplicationId,
 }
 
 /// The `(scope, primitive)` pair that identifies one cluster binding.
@@ -612,6 +614,7 @@ fn by_binding_key(product: &ResolvedProduct) -> BTreeMap<BindingKey, Vec<&Resolv
             BindingKey {
                 consumer: b.consumer.clone(),
                 contract: b.contract.clone(),
+                consumer_application: b.consumer_application.clone(),
             },
             b,
         )

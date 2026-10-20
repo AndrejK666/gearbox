@@ -254,9 +254,12 @@ fn bindings() -> Vec<ResolvedBinding> {
         endpoint_source: Some("directory:service-discovery/api-contracts".to_owned()),
         endpoint: None,
         critical: false,
+        // Decided once every binding is known; see `resolve::resolve_at`.
+        gates_readiness: false,
         selected: Selected::honoured(BindingRequest {
             mode: BindingMode::Remote,
             transport: Some(Transport::Rest),
+            critical: None,
         }),
     };
 

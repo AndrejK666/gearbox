@@ -722,3 +722,176 @@ fn a_gated_primitive_is_not_a_candidate_without_its_feature() {
         .expect("the remedy is named");
     assert!(help.contains("features = [\"k8s\"]"), "{help}");
 }
+
+fn remote_cluster_intent(kubernetes: bool) -> gearbox_ir::ProductIntent {
+    let gears = ["app", "cluster", "grpc-hub"];
+    let mut intent = if kubernetes {
+        support::kubernetes(&gears, gearbox_ir::Discovery::Static)
+    } else {
+        support::self_hosted(&gears, gearbox_ir::Discovery::Static, Some("t"))
+    };
+    support::pin(&mut intent, "cluster-app", "cluster", 1);
+    intent
+        .application_pins
+        .iter_mut()
+        .find(|p| p.name.as_str() == "cluster-app")
+        .unwrap()
+        .include = [support::gid("grpc-hub")].into_iter().collect();
+    support::bind_cluster(&mut intent, "app", "postgres", Some("existingSecret:pg"));
+    intent
+}
+
+fn messages_of(r: &gearbox_engine::resolve::Resolution, code: DiagnosticCode) -> Vec<&str> {
+    r.diagnostics
+        .iter()
+        .filter(|d| d.code == code)
+        .map(|d| d.message.as_str())
+        .collect()
+}
+
+#[test]
+fn a_requester_apart_from_cluster_gets_a_remote_grpc_binding() {
+    // G6: `cluster` in its own application, the requester elsewhere,
+    // Kubernetes: a gRPC binding the SDK addresses.
+    let cat = support::remote_cluster_catalogue();
+    let r = resolve(&cat, &remote_cluster_intent(true), &pid("prod"));
+    let binding = r
+        .bindings
+        .iter()
+        .find(|b| b.provider.as_str() == "cluster")
+        .unwrap_or_else(|| panic!("no cluster binding: {:?}", r.diagnostics));
+    assert_eq!(binding.consumer.as_str(), "app");
+    assert_eq!(binding.contract.as_str(), "cluster/ClusterCacheApi@v1");
+    assert!(binding.is_remote());
+    assert_eq!(binding.transport, gearbox_ir::Transport::Grpc);
+    assert_eq!(
+        binding.mechanism,
+        gearbox_ir::BindingMechanism::ProvidesClientWiring
+    );
+    assert_eq!(
+        binding.endpoint.as_deref(),
+        Some("http://cluster.default.svc.cluster.local:50051")
+    );
+    assert!(messages_of(&r, DiagnosticCode::RemoteClusterNeedsKubernetes).is_empty());
+    assert!(
+        messages_of(&r, DiagnosticCode::TopologyGrpcWithoutHub).is_empty(),
+        "{:?}",
+        r.diagnostics
+    );
+}
+
+#[test]
+fn a_remote_cluster_needs_its_contracts_provided_over_grpc() {
+    // Review 2B, finding 5: the binding used to need only that the contract
+    // existed somewhere. Without cluster providing it over gRPC -- and the
+    // profile contract the SDK resolves scopes through -- it is refused.
+    for drop in ["cluster/ClusterCacheApi@v1", "cluster/ClusterProfileApi@v1"] {
+        let mut cat = support::remote_cluster_catalogue();
+        for provided in &mut cat
+            .gears
+            .get_mut(&support::gid("cluster"))
+            .unwrap()
+            .provides
+        {
+            if provided.contract.as_str() == drop {
+                provided.transports.remove(&gearbox_ir::Transport::Grpc);
+            }
+        }
+        let r = resolve(&cat, &remote_cluster_intent(true), &pid("prod"));
+        let refused = messages_of(&r, DiagnosticCode::RemoteClusterWithoutGrpc);
+        assert!(
+            refused.iter().any(|m| m.contains(drop)),
+            "{drop}: {:?}",
+            r.diagnostics
+        );
+        assert!(r.bindings.iter().all(|b| b.provider.as_str() != "cluster"));
+    }
+}
+
+#[test]
+fn cluster_in_two_kubernetes_applications_is_refused_even_with_no_one_remote() {
+    // Review 2B, finding 3: each process linking cluster renders a Service
+    // named `cluster`, so two cannot install even when every requester has
+    // its own copy.
+    let cat = support::remote_cluster_catalogue();
+    let mut intent = remote_cluster_intent(true);
+    // The requester keeps a copy of its own, beside the cluster application.
+    support::pin(&mut intent, "app-own", "app", 1);
+    intent
+        .application_pins
+        .last_mut()
+        .unwrap()
+        .include
+        .insert(support::gid("cluster"));
+    let r = resolve(&cat, &intent, &pid("prod"));
+    let hosting = r
+        .partition
+        .applications
+        .iter()
+        .filter(|a| a.contains(&support::gid("cluster")))
+        .count();
+    assert!(hosting > 1, "{:?}", r.partition.applications);
+    assert!(
+        r.bindings.iter().all(|b| b.provider.as_str() != "cluster"),
+        "nobody is remote: {:?}",
+        r.bindings
+    );
+    assert!(
+        !messages_of(&r, DiagnosticCode::ClusterInSeveralApplications).is_empty(),
+        "{:?}",
+        r.diagnostics
+    );
+}
+
+#[test]
+fn a_remote_cluster_outside_kubernetes_is_refused() {
+    // G7: the SDK has only Kubernetes DNS to find cluster by.
+    let cat = support::remote_cluster_catalogue();
+    let r = resolve(&cat, &remote_cluster_intent(false), &pid("local"));
+    assert!(!messages_of(&r, DiagnosticCode::RemoteClusterNeedsKubernetes).is_empty());
+    assert!(r.bindings.iter().all(|b| b.provider.as_str() != "cluster"));
+}
+
+#[test]
+fn cluster_in_two_applications_while_reached_remotely_is_refused() {
+    // G8: two Services named `cluster` cannot exist.
+    let cat = support::remote_cluster_catalogue();
+    let mut intent = remote_cluster_intent(true);
+    intent.selected_gears.push(intent.selected_gears[0].clone());
+    intent.selected_gears.last_mut().unwrap().gear = support::gid("other");
+    support::pin(&mut intent, "other-app", "other", 1);
+    intent
+        .application_pins
+        .iter_mut()
+        .find(|p| p.name.as_str() == "other-app")
+        .unwrap()
+        .include = [support::gid("cluster")].into_iter().collect();
+    let r = resolve(&cat, &intent, &pid("prod"));
+    assert!(
+        !messages_of(&r, DiagnosticCode::ClusterInSeveralApplications).is_empty(),
+        "{:?}",
+        r.diagnostics
+    );
+}
+
+#[test]
+fn a_cluster_hub_off_the_network_is_refused() {
+    // G9: remote requesters dial TCP; a UDS hub serves nobody outside.
+    let cat = support::remote_cluster_catalogue();
+    let mut intent = remote_cluster_intent(true);
+    let hub = intent
+        .selected_gears
+        .iter_mut()
+        .find(|g| g.gear.as_str() == "grpc-hub")
+        .unwrap();
+    hub.config.insert(
+        "listen_addr".to_owned(),
+        serde_json::json!("uds:///run/hub.sock"),
+    );
+    let r = resolve(&cat, &intent, &pid("prod"));
+    let messages = messages_of(&r, DiagnosticCode::TopologyGrpcWithoutHub);
+    assert!(
+        messages.iter().any(|m| m.contains("uds://")),
+        "{messages:?}"
+    );
+}

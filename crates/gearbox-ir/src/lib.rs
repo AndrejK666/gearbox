@@ -22,7 +22,7 @@ pub use catalogue::{
     CargoFeature, Catalogue, ConfigFieldDecl, ConfigFieldType, ConfigSchema, DeclaredRole,
     DesignGear, DocUrls, EndpointDecl, ExtensionPointDecl, GearDescriptor, GearDocs, GitOrigin,
     GtsTypeDecl, Implementation, LifecycleDecl, LoadStage, Located, Maturity, PendingGear,
-    PluginImpl, ResolvedSource, RuntimeCap, Scenario, SourceKind, Visibility,
+    PluginImpl, ResolvedSource, RestPlane, RuntimeCap, Scenario, SourceKind, Visibility,
 };
 pub use contract::{
     CargoRef, ContractDescriptor, ContractKind, ContractVersion, Ecosystem, GrpcProjection,

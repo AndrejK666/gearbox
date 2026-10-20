@@ -79,13 +79,16 @@ fn the_slice_loads_without_unexpected_diagnostics() {
     // plain services, chat-engine, and mini-chat's three -- plus
     // settings-service, described when `gear.toml` was retired -- plus the
     // four that arrived upstream: bss-approvals, bss-products, graph-storage
-    // and the clickhouse usage-collector plugin.
+    // and the clickhouse usage-collector plugin -- plus the six demo gears
+    // under `gears/demo`: lab-ui-backend, family-labs-bootstrap,
+    // family-labs-outbound, and the demo-authn, demo-authz and firebase-authn
+    // plugins.
     //
     // The assertion above is the one that matters -- every description and
     // not one diagnostic between them. The count is here so that a corpus
     // moving underneath the suite is found in one place rather than inferred
     // from a stranger failure elsewhere.
-    assert_eq!(catalogue.gears.len(), 49, "the slice gears");
+    assert_eq!(catalogue.gears.len(), 55, "the slice gears");
 }
 
 #[test]
@@ -224,7 +227,10 @@ fn contract_identity_is_projected_from_the_contract_attribute() {
     // catalogue -- the two `PaymentApi` majors are the example pair. It arrived
     // with `authz-resolver`'s description and is what makes an installation's
     // surface projectable rather than restated: the contract is read out of the
-    // SDK, and the description only names the trait as a join key.
+    // SDK, and the description only names the trait as a join key. Cluster's
+    // four coordination contracts arrived when the gear published them as gRPC
+    // providers (gears-rust ADR-0010 section 4), and Settings' read contract
+    // with the demo gears.
     let catalogue = require_tree!();
     let ids: Vec<&str> = catalogue
         .contracts
@@ -237,6 +243,11 @@ fn contract_identity_is_projected_from_the_contract_attribute() {
             "api-contracts/PaymentApi@v1",
             "api-contracts/PaymentApi@v2",
             "authz-resolver/AuthZResolverApi@v1",
+            "cluster/ClusterCacheApi@v1",
+            "cluster/ClusterProfileApi@v1",
+            "cluster/DistributedLockApi@v1",
+            "cluster/LeaderElectionApi@v1",
+            "settings-service/SettingsReadApi@v1",
         ]
     );
 
