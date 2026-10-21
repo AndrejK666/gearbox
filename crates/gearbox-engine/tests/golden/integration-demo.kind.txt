@@ -206,7 +206,13 @@ gears:
       profiles:
         event-broker:
           cache:
-            provider: standalone
+            connection_string: >-
+              postgres://integration:${GEARS_PG_PASSWORD}@postgres.gearbox-p4.svc.cluster.local:5432/types_registry?sslmode=disable
+            pool_max_size: 5
+            provider: postgres
+            schema: cluster
+            secret_ref:
+              name: existingSecret:integration-db
   grpc-hub:
     config:
       internal_auth:
@@ -2674,8 +2680,15 @@ checkout:
   automountServiceAccountToken: true
   tokenReview: true
   custom: {}
+  existingSecret: integration-db
 cluster:
   enabled: true
+  replicas: 2
+  strategy: RollingUpdate
+  secretEnv:
+  - name: GEARS_PG_PASSWORD
+    secretName: integration-db
+    key: GEARS_PG_PASSWORD
   image:
     repository: cluster-oop
     tag: 0.1.0
@@ -2686,10 +2699,17 @@ cluster:
           profiles:
             event-broker:
               cache:
-                provider: standalone
+                connection_string: >-
+                  postgres://integration:${GEARS_PG_PASSWORD}@postgres.gearbox-p4.svc.cluster.local:5432/types_registry?sslmode=disable
+                pool_max_size: 5
+                provider: postgres
+                schema: cluster
+                secret_ref:
+                  name: existingSecret:integration-db
   directoryEndpoint: http://flight-control-grpc.gearbox-p4.svc.cluster.local:50051
 flight-control:
   enabled: true
+  replicas: 1
   secretEnv:
   - name: GEARS_PG_PASSWORD
     secretName: integration-db
@@ -3963,8 +3983,15 @@ checkout:
   automountServiceAccountToken: true
   tokenReview: true
   custom: {}
+  existingSecret: integration-db
 cluster:
   enabled: true
+  replicas: 2
+  strategy: RollingUpdate
+  secretEnv:
+  - name: GEARS_PG_PASSWORD
+    secretName: integration-db
+    key: GEARS_PG_PASSWORD
   image:
     repository: cluster-oop
     tag: 0.1.0
@@ -3975,10 +4002,17 @@ cluster:
           profiles:
             event-broker:
               cache:
-                provider: standalone
+                connection_string: >-
+                  postgres://integration:${GEARS_PG_PASSWORD}@postgres.gearbox-p4.svc.cluster.local:5432/types_registry?sslmode=disable
+                pool_max_size: 5
+                provider: postgres
+                schema: cluster
+                secret_ref:
+                  name: existingSecret:integration-db
   directoryEndpoint: http://flight-control-grpc.gearbox-p4.svc.cluster.local:50051
 flight-control:
   enabled: true
+  replicas: 1
   secretEnv:
   - name: GEARS_PG_PASSWORD
     secretName: integration-db
@@ -4452,7 +4486,7 @@ gears = [
     "cluster",
     "grpc-hub",
 ]
-replicas = 1
+replicas = 2
 entrypoint = "run_oop_with_options"
 bin_name = "gbx-cluster"
 crate_name = "gbx-cluster"
@@ -4652,14 +4686,22 @@ scope = "event-broker"
 primitive = "cache"
 required_capabilities = ["cluster.cache.linearizable"]
 requesters = ["api-contracts-consumer"]
+secret_ref = "existingSecret:integration-db"
 
 [cluster.selected.selected]
 choice = "explicit"
-value = "standalone"
+value = "postgres"
 
 [cluster.resolved]
 via = "provider"
-name = "standalone"
+name = "postgres"
+
+[cluster.options]
+connection_string = "postgres://integration:${GEARS_PG_PASSWORD}@postgres.gearbox-p4.svc.cluster.local:5432/types_registry?sslmode=disable"
+schema = "cluster"
+
+[cluster.options.pool_max_size]
+"$serde_json::private::Number" = "5"
 
 [[cluster]]
 scope = "event-broker"
@@ -4671,7 +4713,7 @@ choice = "auto"
 
 [cluster.resolved]
 via = "sdk-cas-default"
-over_cache = "standalone"
+over_cache = "postgres"
 
 [[provenance]]
 from = "application:checkout"
@@ -4725,7 +4767,7 @@ because = "the binding is remote because the consumer is in `checkout` and the p
 from = "cluster-provider:event-broker|cache"
 to = "profile:kind"
 kind = "declared"
-because = "the description names `standalone` for this scope"
+because = "the description names `postgres` for this scope"
 
 [[provenance]]
 from = "cluster-provider:event-broker|cache"
@@ -4743,7 +4785,7 @@ because = "`api-contracts-consumer` is why this scope is resolved at all: it req
 from = "cluster-provider:event-broker|leader-election"
 to = "profile:kind"
 kind = "preferred-over"
-because = "nothing named a provider, so the resolver ranked the registered ones and took `standalone`"
+because = "nothing named a provider, so the resolver ranked the registered ones and took `postgres`"
 
 [[provenance]]
 from = "gear:api-contracts"
@@ -4863,11 +4905,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 58
+line = 74
 character = 8
 
 [diagnostics.location.range.end]
-line = 58
+line = 74
 character = 65
 
 [[diagnostics]]
@@ -4880,11 +4922,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 57
+line = 73
 character = 8
 
 [diagnostics.location.range.end]
-line = 57
+line = 73
 character = 56
 
 [[diagnostics]]
@@ -4897,11 +4939,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 52
+line = 68
 character = 8
 
 [diagnostics.location.range.end]
-line = 52
+line = 68
 character = 86
 
 [[diagnostics]]
@@ -4914,11 +4956,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 59
+line = 75
 character = 8
 
 [diagnostics.location.range.end]
-line = 78
+line = 112
 character = 10
 
 [[diagnostics]]
@@ -4931,11 +4973,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 79
+line = 113
 character = 8
 
 [diagnostics.location.range.end]
-line = 81
+line = 115
 character = 10
 
 [[diagnostics]]
@@ -4948,11 +4990,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 56
+line = 72
 character = 8
 
 [diagnostics.location.range.end]
-line = 56
+line = 72
 character = 50
 
 [[diagnostics]]
@@ -4965,11 +5007,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 54
+line = 70
 character = 8
 
 [diagnostics.location.range.end]
-line = 54
+line = 70
 character = 51
 
 [[diagnostics]]
@@ -4982,11 +5024,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 59
+line = 75
 character = 8
 
 [diagnostics.location.range.end]
-line = 78
+line = 112
 character = 10
 
 [[diagnostics]]
@@ -4999,11 +5041,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 53
+line = 69
 character = 8
 
 [diagnostics.location.range.end]
-line = 53
+line = 69
 character = 60
 
 [[diagnostics]]
@@ -5016,11 +5058,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 79
+line = 113
 character = 8
 
 [diagnostics.location.range.end]
-line = 81
+line = 115
 character = 10
 
 [[diagnostics]]
@@ -5033,17 +5075,17 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 55
+line = 71
 character = 8
 
 [diagnostics.location.range.end]
-line = 55
+line = 71
 character = 57
 
 [[diagnostics]]
 code = "GBX0504"
 severity = "info"
-message = "`leader_election` in scope `event-broker` resolves to the SDK's compare-and-swap default over the `standalone` cache"
+message = "`leader_election` in scope `event-broker` resolves to the SDK's compare-and-swap default over the `postgres` cache"
 help = "no registered provider implements this primitive, so the SDK builds it from the cache's atomic operations; its guarantees are the cache's guarantees, which is a weaker promise than a purpose-built backend"
 evidence = "gears/system/cluster/cluster/src/defaults/leader.rs (CasBasedLeaderElectionBackend::features)"
 
@@ -5051,9 +5093,26 @@ evidence = "gears/system/cluster/cluster/src/defaults/leader.rs (CasBasedLeaderE
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 88
+line = 122
 character = 8
 
 [diagnostics.location.range.end]
-line = 88
-character = 78
+line = 132
+character = 9
+
+[[diagnostics]]
+code = "GBX0507"
+severity = "warning"
+message = "application `cluster` runs 2 copies of stateful gears with no leader election: cluster, grpc-hub"
+help = "every copy will do the work: a reconciliation loop runs N times, a scheduled job fires N times. Add a `leader_election` binding to the gear's cluster scope, or run one replica"
+
+[diagnostics.location]
+uri = "file://<repo>/products/integration-demo/product.gdl"
+
+[diagnostics.location.range.start]
+line = 0
+character = 0
+
+[diagnostics.location.range.end]
+line = 0
+character = 0

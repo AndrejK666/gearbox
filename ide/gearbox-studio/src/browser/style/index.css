@@ -238,6 +238,9 @@
 }
 .gbx-validation-head .gbx-kv { flex: 0 0 auto; gap: 6px; }
 
+/* The catalogue's diagnostics: a list inside the tree, not the Product view's
+   one-row summary (`gbx-diagnostics`), so it does not take that row's layout. */
+.gbx-catalogue-diagnostics { margin-top: 12px; }
 /* The catalogue's own heading for its diagnostics. Not `gbx-diagnostics-label`,
    which is the Product view's one-line summary: two panels wearing one class
    made an unscoped read of it pick whichever rendered first. */

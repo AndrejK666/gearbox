@@ -706,11 +706,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 58
+line = 74
 character = 8
 
 [diagnostics.location.range.end]
-line = 58
+line = 74
 character = 65
 
 [[diagnostics]]
@@ -723,11 +723,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 57
+line = 73
 character = 8
 
 [diagnostics.location.range.end]
-line = 57
+line = 73
 character = 56
 
 [[diagnostics]]
@@ -740,11 +740,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 52
+line = 68
 character = 8
 
 [diagnostics.location.range.end]
-line = 52
+line = 68
 character = 86
 
 [[diagnostics]]
@@ -757,11 +757,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 59
+line = 75
 character = 8
 
 [diagnostics.location.range.end]
-line = 78
+line = 112
 character = 10
 
 [[diagnostics]]
@@ -774,11 +774,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 79
+line = 113
 character = 8
 
 [diagnostics.location.range.end]
-line = 81
+line = 115
 character = 10
 
 [[diagnostics]]
@@ -791,11 +791,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 56
+line = 72
 character = 8
 
 [diagnostics.location.range.end]
-line = 56
+line = 72
 character = 50
 
 [[diagnostics]]
@@ -808,11 +808,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 54
+line = 70
 character = 8
 
 [diagnostics.location.range.end]
-line = 54
+line = 70
 character = 51
 
 [[diagnostics]]
@@ -825,11 +825,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 59
+line = 75
 character = 8
 
 [diagnostics.location.range.end]
-line = 78
+line = 112
 character = 10
 
 [[diagnostics]]
@@ -842,11 +842,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 53
+line = 69
 character = 8
 
 [diagnostics.location.range.end]
-line = 53
+line = 69
 character = 60
 
 [[diagnostics]]
@@ -859,11 +859,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 79
+line = 113
 character = 8
 
 [diagnostics.location.range.end]
-line = 81
+line = 115
 character = 10
 
 [[diagnostics]]
@@ -876,11 +876,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 55
+line = 71
 character = 8
 
 [diagnostics.location.range.end]
-line = 55
+line = 71
 character = 57
 
 [[diagnostics]]
@@ -894,9 +894,9 @@ evidence = "gears/system/cluster/cluster/src/defaults/leader.rs (CasBasedLeaderE
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 88
+line = 133
 character = 8
 
 [diagnostics.location.range.end]
-line = 88
-character = 78
+line = 134
+character = 59

@@ -21,6 +21,9 @@ use serde_json::{Value, json};
 
 const API_GATEWAY: &str = "api-gateway";
 const DIRECTORY: &str = "service-discovery";
+/// The variable every process of a `shared_secret` profile reads its platform
+/// secret from (`secret: "${TOOLKIT_PLATFORM_SECRET}"`).
+pub const PLATFORM_SECRET_ENV: &str = "TOOLKIT_PLATFORM_SECRET";
 
 /// The intent as `profile` sees it: each gear's `profile_config` for it merged
 /// over `config`, and the profile's `platform_auth` written into `api-gateway`'s
@@ -119,11 +122,15 @@ fn apply_platform_auth(
             "audiences": ["toolkit-internal"],
         }),
         // One secret, one identity: every holder authenticates under the
-        // product's label. The value comes from the environment (`APP__...`
-        // overrides); an empty one fails startup rather than authenticating.
+        // product's label, and every holder reads the same variable. The
+        // toolkit expands it when the configuration loads, so the host, its
+        // hub and every worker it spawns (they inherit its environment) share
+        // one value; an unset variable fails startup rather than
+        // authenticating. Per-section `APP__...` overrides could not do this:
+        // a worker inheriting the host's would get sections it does not have.
         PlatformAuth::SharedSecret => json!({
             "provider": "shared_secret",
-            "secret": "",
+            "secret": format!("${{{PLATFORM_SECRET_ENV}}}"),
             "peer_name": label,
         }),
     };

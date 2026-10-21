@@ -331,6 +331,8 @@ fn umbrella_values(
                 subchart_name(application).to_owned(),
                 SubchartBlock::Unit(UnitChartValues {
                     enabled: true,
+                    replicas: application.replicas,
+                    strategy: (application.replicas > 1).then_some("RollingUpdate"),
                     secret_env,
                     image: UnitImageValues {
                         repository: image.map_or_else(String::new, |i| {
@@ -853,6 +855,15 @@ enum SubchartBlock {
 #[serde(rename_all = "camelCase")]
 struct UnitChartValues {
     enabled: bool,
+    /// The application's `replicas`. The unit chart decides what it allows:
+    /// Flight Control's schema holds the directory to one, cluster's refuses
+    /// more than one on a standalone backend.
+    replicas: u32,
+    /// `RollingUpdate` once there is more than one replica: the charts default
+    /// to `Recreate`, which is right for one process holding state and would
+    /// take every replica down at once.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    strategy: Option<&'static str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     secret_env: Vec<UnitSecretEnv>,
     image: UnitImageValues,

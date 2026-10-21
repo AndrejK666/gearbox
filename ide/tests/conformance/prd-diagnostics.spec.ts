@@ -46,8 +46,13 @@ const GEAR_GDL = join(REPO, "../gears-rust/gears/system/api-gateway/gear.gdl");
  * same kind of round trip.
  */
 
-/** The line the fixture rewrites, and the text that must be there to rewrite. */
-const GOOD_PROFILE = 'embedded(id = "dev")';
+/**
+ * The token the fixture rewrites: the first profile constructor's name. The
+ * constructor, not a whole call, so the profile's arguments and their order
+ * (payments-demo's `dev` profile grew `development` and `database`) do not
+ * make the fixture stale.
+ */
+const GOOD_PROFILE = "embedded(";
 
 test.describe("diagnostics reach a person", () => {
   test("the Problems view is present to receive markers [PRD cpt-gearbox-fr-editor-diagnostics]", async ({
@@ -275,7 +280,7 @@ test.describe("diagnostics reach a person", () => {
     const line = original.split("\n").findIndex((text) => text.includes(GOOD_PROFILE)) + 1;
 
     try {
-      writeFileSync(broken.path, original.replace(GOOD_PROFILE, `${TYPO}(id = "dev")`));
+      writeFileSync(broken.path, original.replace(GOOD_PROFILE, `${TYPO}(`));
 
       // Broken *before* it is opened, deliberately. Opening reads the file, so
       // this exercises `didOpen` with no dependency on a file watcher noticing a

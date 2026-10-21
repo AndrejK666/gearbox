@@ -6,7 +6,7 @@
 # routing and both authentication planes on a real cluster: what the edge
 # publishes, tenant and platform calls with their negatives, calls that keep
 # working when the edge stops routing, Flight Control and provider
-# replacement, the AuthZ entrypoint from inside the cluster, and the embedded
+# replacement, two cluster replicas over one Postgres backend (R8), the AuthZ entrypoint from inside the cluster, and the embedded
 # all-in-one binary. The namespace is refused if it exists, and removed at the
 # end unless KEEP=1.
 #
@@ -352,13 +352,19 @@ h upgrade "$release" "$chart" -f "$work/values.yaml" >/dev/null
 eventually 60 200 "edge: routing again after its Service is restored" \
   POST "$edge/api-contracts-consumer/v1/charge" -H "$bearer" -H "$json" -d "$charge"
 
-echo "== Flight Control is replaced (Recreate: the directory restarts empty)"
-k rollout restart deploy/flight-control >/dev/null
-sleep 2
-# todo-issues 18: the directory is unreachable, and checkout reaches payments at
-# the address it last resolved.
-expect 200 "direct: a charge while Flight Control is down, at payments' last known address" \
+echo "== Flight Control is down, then replaced (the directory restarts empty)"
+# todo-issues 18: held down rather than restarted, so the charge below is made
+# while the directory is unreachable -- its pods gone, its Service answering
+# nothing -- and after checkout's fresh cache (1.5 s) has expired, so only the
+# last-known-address fallback can answer it.
+k scale deploy/flight-control --replicas=0 >/dev/null
+k wait --for=delete pod -l app.kubernetes.io/name=flight-control --timeout=120s >/dev/null 2>&1 || true
+[ -z "$(k get pod -l app.kubernetes.io/name=flight-control -o name)" ] || fail "Flight Control pods remain"
+expect 000 "the directory is unreachable" GET "$fc_internal/service-discovery/v1/gears" -H "$bearer"
+sleep 3
+expect 200 "direct: a charge while the directory is down, at payments' last known address" \
   POST $checkout_url/api-contracts-consumer/v1/charge -H "$bearer" -H "$json" -d "$charge"
+k scale deploy/flight-control --replicas=1 >/dev/null
 k rollout status deploy/flight-control --timeout=180s >/dev/null
 ok "Flight Control replaced"
 eventually 90 200 "edge: routes recovered after the replacement" \
@@ -375,6 +381,35 @@ while :; do
   sleep 1
 done
 ok "every worker re-registered with the new directory (after $(( $(date +%s) - start ))s)"
+
+echo "== cluster: two replicas on one shared backend (R8)"
+cluster_pods=$(k get pod -l app.kubernetes.io/name=cluster -o jsonpath='{.items[*].metadata.name}')
+[ "$(printf '%s\n' $cluster_pods | wc -l | tr -d ' ')" = 2 ] || fail "cluster runs [$cluster_pods], not two replicas"
+ok "cluster runs two replicas: $cluster_pods"
+version() {
+  body $checkout_url/api-contracts-consumer/v1/status -H "$bearer" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])'
+}
+last=$(version)
+for _ in 1 2 3 4 5; do
+  next=$(version)
+  [ "$next" -gt "$last" ] || fail "cluster: the cache version went $last -> $next"
+  last=$next
+done
+ok "cluster: the cache version only moves forward ($last after six writes)"
+# Each pod in turn: checkout's gRPC connection is to one of them, so deleting
+# both in sequence makes it reconnect through the Service at least once, and a
+# version that keeps counting is the backend both replicas share.
+for pod in $cluster_pods; do
+  k delete pod "$pod" --wait=true --timeout=120s >/dev/null
+  eventually 90 200 "direct: checkout's status recovers with cluster pod $pod deleted" \
+    GET $checkout_url/api-contracts-consumer/v1/status -H "$bearer"
+  next=$(version)
+  [ "$next" -gt "$last" ] || fail "cluster: the version went $last -> $next across $pod: state was per pod"
+  ok "cluster: the version continues past $pod ($last -> $next): one backend behind both replicas"
+  last=$next
+  k rollout status deploy/cluster --timeout=180s >/dev/null
+done
 
 echo "== providers are replaced"
 # replace <label> <deployment>: delete its pod, wait until the old one is gone

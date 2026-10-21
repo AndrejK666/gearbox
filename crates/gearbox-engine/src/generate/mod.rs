@@ -332,6 +332,9 @@ pub fn generate(input: &GenerateInput<'_>) -> Result<Generated, GenerateError> {
     )?;
     insert(&mut files, workspace::toolchain()?)?;
     insert(&mut files, workspace::lock_file(input.lock)?)?;
+    if let Some(cargo_lock) = workspace::cargo_lock(input.source_roots)? {
+        insert(&mut files, cargo_lock)?;
+    }
     if let Some(cargo_config) = workspace::cargo_config(input)? {
         insert(&mut files, cargo_config)?;
     }

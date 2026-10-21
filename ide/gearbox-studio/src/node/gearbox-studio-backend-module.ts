@@ -10,11 +10,18 @@ import { GEARBOX_SERVICE_PATH, GearboxClient } from "../common/protocol";
 import { GearboxServiceImpl } from "./gearbox-service-impl";
 import { LanguageModelProvider } from "@theia/ai-core";
 import { ConnectionContainerModule } from "@theia/core/lib/node/messaging/connection-container-module";
+import { HostedPluginSupport } from "@theia/plugin-ext/lib/hosted/node/hosted-plugin";
 import { claudeCodeModels } from "./claude-code-model";
+import { ClosedWindowHostedPluginSupport } from "./plugin-host-guard";
 
 export default new ContainerModule((bind) => {
-  bind(ConnectionContainerModule).toConstantValue(ConnectionContainerModule.create(({bind}) => {
+  bind(ConnectionContainerModule).toConstantValue(ConnectionContainerModule.create(({bind, isBound, rebind}) => {
     bind(LanguageModelProvider).toConstantValue(claudeCodeModels);
+    // See `plugin-host-guard.ts`. This module loads after plugin-ext's, so its
+    // binding is the one replaced.
+    if (isBound(HostedPluginSupport)) {
+      rebind(HostedPluginSupport).to(ClosedWindowHostedPluginSupport).inSingletonScope();
+    }
   }));
   bind(ConnectionHandler)
     .toDynamicValue(

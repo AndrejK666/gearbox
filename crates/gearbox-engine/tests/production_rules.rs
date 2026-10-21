@@ -452,7 +452,8 @@ fn a_shared_secret_is_one_trusted_registrar() {
     let label = format!("{}-platform", intent.id);
     assert_eq!(
         gear_config(&out, "api-gateway")["internal_auth"],
-        json!({"provider": "shared_secret", "secret": "", "peer_name": label})
+        // Every process reads one variable; a worker inherits it from its host.
+        json!({"provider": "shared_secret", "secret": "${TOOLKIT_PLATFORM_SECRET}", "peer_name": label})
     );
     assert_eq!(
         gear_config(&out, "service-discovery")["trusted_registrars"],

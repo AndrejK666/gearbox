@@ -962,3 +962,68 @@ test.describe("a host that arrived only as a dependency", () => {
     );
   });
 });
+
+/**
+ * **A binding's copies are compared copy by copy.** A gear linked into several
+ * applications has a binding in each, and the copies can be wired differently:
+ * here `api-contracts-consumer` runs beside `api-contracts` (local) and on its
+ * own in `audit` (remote over rest). The preview keyed bindings by consumer and
+ * contract, so one copy's wiring was set against the other's and an addition
+ * that touches neither showed "remote over rest → local" (2B review, follow-ups
+ * 1 and 2). No shipped product has copies wired differently, so this one is
+ * derived: `payments-demo` with the consumer also included in `api-contracts`
+ * and its explicit `remote` binding removed.
+ */
+test.describe("a binding linked into two applications", () => {
+  let derived: ProductCopy;
+
+  test.beforeEach(() => {
+    derived = copyProduct(REPO, "payments-demo", "binding-copies", (text) => {
+      const placed = text.replace(
+        'application("api-contracts", anchor = "api-contracts", include = ["authn-resolver"],',
+        'application("api-contracts", anchor = "api-contracts", include = ["authn-resolver", "api-contracts-consumer"],',
+      );
+      const unbound = placed.replace(/\n    bindings = \[\n        bind\([\s\S]*?\),\n    \],\n/, "\n");
+      if (placed === text || unbound === placed) {
+        throw new Error("payments-demo changed shape; this derivation no longer applies");
+      }
+      return unbound;
+    });
+  });
+
+  test.afterEach(() => {
+    derived?.dispose();
+  });
+
+  test("an addition that touches neither copy reports no binding change [ADR-0013 §the preview is the consequence]", async ({
+    freshStudio,
+  }) => {
+    test.slow();
+    const { page } = freshStudio;
+    await openProductById(page, derived.id, "prod");
+
+    // The premise, read from the product view: the consumer has a binding row
+    // in each application. Bindings are on the Topology stage.
+    await productSection(page, "topology");
+    await expect(
+      page.locator('[data-binding="api-contracts-consumer/api-contracts/PaymentApi@v1"]'),
+    ).toHaveCount(2, { timeout: 60_000 });
+
+    await page.locator("[data-add-gear]").click();
+    await expect(page.locator("[data-add-gear-flow]")).toBeVisible({ timeout: 30_000 });
+    await page.locator('[data-add-gear-select="tenant-resolver"]').click();
+
+    // The impact is computed once the closure names the gear that arrives.
+    await expect(page.locator('[data-impact-gear="tenant-resolver"]')).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.locator("[data-add-gear-impact-diagnostics]")).toHaveCount(1);
+    await expect(
+      page.locator('[data-add-gear-impact-bindings^="api-contracts-consumer@"]'),
+      "neither copy's wiring changes, so neither is a row",
+    ).toHaveCount(0);
+
+    await page.locator("[data-add-gear-cancel]").click();
+    expect(readFileSync(derived.path, "utf8")).not.toContain('use_gear("tenant-resolver"');
+  });
+});

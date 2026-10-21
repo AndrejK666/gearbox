@@ -314,6 +314,44 @@ fn features_asked_for_in_the_description_reach_the_resolution() {
 }
 
 #[test]
+fn a_plugin_listed_per_profile_gets_that_profiles_configuration() {
+    // One plugin, two entries: a laptop issuer and a cluster issuer. The first
+    // entry used to configure the plugin in every profile, so the cluster's
+    // plugin trusted the laptop's issuer (the integration product's `local`
+    // and `kind`).
+    let cat = support::catalogue_of(vec![
+        support::gear_with_caps("host", &[], &[]),
+        support::gear_with_caps("plug", &[], &[]),
+    ]);
+    let mut intent = support::intent(&["host"]);
+    let lab = ProfileId::new("lab").unwrap();
+    let mut lab_profile = intent.profiles[&intent.default_profile].clone();
+    if let gearbox_ir::DeploymentProfileDecl::Embedded { id, .. } = &mut lab_profile {
+        *id = lab.clone();
+    }
+    intent.profiles.insert(lab, lab_profile);
+    let entry = |profile: &str, index: usize| gearbox_ir::PluginSelection {
+        gear: support::gid("plug"),
+        config: [("issuer".to_owned(), serde_json::json!(profile))]
+            .into_iter()
+            .collect(),
+        profiles: [ProfileId::new(profile).unwrap()].into_iter().collect(),
+        entry_index: index,
+        declared_at: None,
+    };
+    intent.selected_gears[0].plugins = vec![entry("lab", 0), entry("dev", 1)];
+
+    for profile in ["dev", "lab"] {
+        let product = lock(&cat, &intent, profile);
+        assert_eq!(
+            product.gears[&support::gid("plug")].config["issuer"],
+            profile,
+            "{profile}"
+        );
+    }
+}
+
+#[test]
 fn a_gear_nobody_asked_for_carries_no_features() {
     // A gear the closure pulled in asked for nothing, and inheriting the
     // asker's features would build it differently for a reason nobody wrote.

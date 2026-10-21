@@ -161,6 +161,13 @@ fn render(product: &str) -> Option<BTreeMap<String, String>> {
                 files.sort_by_key(|(path, _)| *path);
                 for (path, entry) in files {
                     writeln!(text, "=== {path}").unwrap();
+                    // The source's lock, copied verbatim: its content is the
+                    // source's to change, and `the_generated_workspace_builds_the_sources_locked_versions`
+                    // checks the copy.
+                    if path == "Cargo.lock" {
+                        text.push_str("<the source's Cargo.lock>\n");
+                        continue;
+                    }
                     text.push_str(&normalize(
                         entry.as_text().unwrap_or("<binary>"),
                         &root,

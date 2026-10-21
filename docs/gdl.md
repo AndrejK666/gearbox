@@ -777,11 +777,14 @@ worker:
 - `"kube"`: `{provider = "kube", audiences = ["toolkit-internal"], token_path =
   "/var/run/secrets/tokens/<audience>"}`; the generated chart mounts that token in
   every unit and grants the validators TokenReview.
-- `"shared_secret"`: `{provider = "shared_secret", secret = "", peer_name =
-  "<product>-platform"}`, and that label joins `service-discovery`'s
-  `trusted_registrars`, since every holder of the secret is the same identity. The
-  secret itself comes from the environment (`APP__...` overrides); an empty one
-  fails startup.
+- `"shared_secret"`: `{provider = "shared_secret", secret =
+  "${TOOLKIT_PLATFORM_SECRET}", peer_name = "<product>-platform"}`, and that label
+  joins `service-discovery`'s `trusted_registrars`, since every holder of the secret
+  is the same identity. Every `internal_auth` block of every process names the same
+  variable, which the toolkit reads from the environment when the configuration
+  loads: a self-hosted host sets it once and the workers it spawns inherit it. An
+  unset variable fails startup. On Kubernetes a generated chart maps it from the
+  Secret its `existingSecret` value names, like any other `${VAR}`.
 
 Fields the gateway's own `internal_auth` sets (`audiences`, `peer_name`, ...) are
 kept over these defaults. A `provider` there that names another kind, or a

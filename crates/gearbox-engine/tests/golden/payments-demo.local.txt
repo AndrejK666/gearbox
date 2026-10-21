@@ -190,6 +190,9 @@ gears:
   api-gateway:
     config:
       bind_addr: 127.0.0.1:8087
+      gateway_proxy:
+        directory_endpoint: http://127.0.0.1:50051
+        enabled: true
   authn-resolver:
     config: {}
   cluster:

@@ -162,7 +162,7 @@ fn gears(
                     // and then dropped here -- the generated file carried
                     // `config: {}` and the plugin failed at startup on a field
                     // the description had supplied. Found by running the thing.
-                    config: declared_config(intent, id),
+                    config: declared_config(intent, id, &resolution.profile),
                     selected_features: declared_features(intent, id),
                 },
             ))
@@ -175,7 +175,16 @@ fn gears(
 /// A plugin is a gear the product selected *under* a host rather than on its own
 /// terms, so its configuration arrives on the `plugin(...)` call. Looking only at
 /// `selected_gears` misses it entirely.
-fn declared_config(intent: &ProductIntent, id: &GearId) -> BTreeMap<String, serde_json::Value> {
+///
+/// **The `plugin(...)` entry for this profile.** One plugin may be listed twice
+/// with different `profiles` and different configuration -- one issuer on a
+/// laptop, another in the cluster. The first entry used to win in every
+/// profile, so the cluster's plugin trusted the laptop's issuer.
+fn declared_config(
+    intent: &ProductIntent,
+    id: &GearId,
+    profile: &gearbox_ir::ProfileId,
+) -> BTreeMap<String, serde_json::Value> {
     if let Some(selection) = intent.selected_gears.iter().find(|s| &s.gear == id) {
         return selection.config.clone();
     }
@@ -183,7 +192,7 @@ fn declared_config(intent: &ProductIntent, id: &GearId) -> BTreeMap<String, serd
         .selected_gears
         .iter()
         .flat_map(|selection| &selection.plugins)
-        .find(|plugin| &plugin.gear == id)
+        .find(|plugin| &plugin.gear == id && ProductIntent::applies(&plugin.profiles, profile))
         .map(|plugin| plugin.config.clone())
         .unwrap_or_default()
 }

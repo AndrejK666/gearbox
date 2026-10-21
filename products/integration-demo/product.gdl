@@ -20,6 +20,8 @@ gdl_version = "1.3"
 # The issuer and audience are the mock IdP's (gears-rust
 # deploy/helm/mock-idp.sh); its CA is mounted at /app/oidc-ca by the install.
 
+# The `local` profile's issuer: `local.sh` serves a mock IdP here.
+LOCAL_ISSUER = "https://localhost:58443"
 ISSUER = "https://mock-idp.gearbox-p4.svc.cluster.local"
 
 product(
@@ -43,6 +45,20 @@ product(
                 params = {"sslmode": "disable"},
             ),
         ),
+        # A23: one machine, Flight Control spawning its workers as local
+        # processes, the hub on a Unix socket, one shared secret on the platform
+        # plane. Production rules apply; `local.sh` runs it.
+        self_hosted(
+            id = "local",
+            host = "flight-control",
+            worker_discovery = "directory",
+            platform_auth = "shared_secret",
+            target_dir = "../../../gears-rust/target",
+            database = postgres(
+                host = "127.0.0.1", port = 55442, user = "integration",
+                password = "${GEARS_PG_PASSWORD}", params = {"sslmode": "disable"},
+            ),
+        ),
         embedded(id = "all-in-one", sqlite_databases = {"types-registry": "types.sqlite3"}),
     ],
     default_profile = "kind",
@@ -58,7 +74,25 @@ product(
         use_gear("api-contracts", source = "gears-rust"),
         use_gear("api-contracts-consumer", source = "gears-rust"),
         use_gear("authn-resolver", source = "gears-rust", plugins = [
-            plugin("oidc-authn-plugin", config = {
+            # On `local` the CA is a path relative to the processes' working
+            # directory, where `local.sh` puts it.
+            plugin("oidc-authn-plugin", profiles = ["local"], config = {
+                "jwt": {
+                    "trusted_issuers": [{"issuer": LOCAL_ISSUER}],
+                    "expected_audience": ["integration-demo"],
+                    "claim_mapping": {
+                        "subject_id": "sub",
+                        "subject_tenant_id": "tenant_id",
+                        "token_scopes": "scope",
+                    },
+                },
+                "s2s_oauth": {
+                    "discovery_url": LOCAL_ISSUER,
+                    "default_subject_type": "gts.cf.core.security.subject_user.v1~",
+                },
+                "http_client": {"custom_ca_certificate_paths": ["oidc-ca/ca.crt"]},
+            }),
+            plugin("oidc-authn-plugin", profiles = ["kind", "all-in-one"], config = {
                 # `claim_mapping` has no default: which claims carry the
                 # subject, its tenant and its scopes.
                 "jwt": {
@@ -83,20 +117,37 @@ product(
     ],
 
     cluster_profiles = [
-        # One cluster replica: its in-memory backend coordinates every process
-        # that reaches it (R8, two replicas over a shared backend, is recorded
-        # as not delivered in phase-4.md).
-        cluster_profile(name = "event-broker", cache = provider("standalone")),
+        # R8: on `kind` two cluster replicas share one Postgres backend, so the
+        # coordination survives either pod. The other profiles run cluster in
+        # one process, where the in-memory backend is the whole truth.
+        cluster_profile(
+            name = "event-broker",
+            profiles = ["kind"],
+            cache = provider(
+                "postgres",
+                secret_ref = "existingSecret:integration-db",
+                connection_string = "postgres://integration:${GEARS_PG_PASSWORD}@postgres.gearbox-p4.svc.cluster.local:5432/types_registry?sslmode=disable",
+                schema = "cluster",
+                pool_max_size = 5,
+            ),
+        ),
+        cluster_profile(name = "event-broker", cache = provider("standalone"),
+                        profiles = ["local", "all-in-one"]),
     ],
 
     applications = [
         application("flight-control", anchor = "api-gateway",
                     include = ["service-discovery", "grpc-hub", "types-registry", "authn-resolver"],
+                    profiles = ["kind", "local"]),
+        application("cluster", anchor = "cluster", include = ["grpc-hub"], replicas = 2,
                     profiles = ["kind"]),
-        application("cluster", anchor = "cluster", include = ["grpc-hub"], profiles = ["kind"]),
         application("payments", anchor = "authz-resolver",
-                    include = ["api-contracts", "authn-resolver"], profiles = ["kind"]),
+                    include = ["api-contracts", "authn-resolver"], profiles = ["kind", "local"]),
         application("checkout", anchor = "api-contracts-consumer", include = ["authn-resolver"],
                     profiles = ["kind"]),
+        # Off Kubernetes the cluster SDK cannot address a remote cluster by DNS
+        # (GBX0415), so `local` links it, and a hub for its services, here.
+        application("checkout", anchor = "api-contracts-consumer",
+                    include = ["authn-resolver", "cluster", "grpc-hub"], profiles = ["local"]),
     ],
 )

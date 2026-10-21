@@ -581,8 +581,13 @@ test.describe("opening a product is one act", () => {
       timeout: 30_000,
     });
     await expect(page.locator(".gbx-start")).toBeVisible();
-    // And the way back is one click, named after the thing it returns to.
-    await expect(page.locator('[data-start-action="continue"]')).toContainText("payments-demo");
+    // And the way back is one click, named after the thing it returns to. The
+    // card shows the display name; the product it returns to is its path.
+    await expect(page.locator('[data-start-action="continue"]')).toBeVisible();
+    await expect(page.locator("[data-start-continue]")).toHaveAttribute(
+      "data-start-continue",
+      /payments-demo/,
+    );
   });
 
   test("opening a product leaves the Product workspace on screen [plan §9.1: Open Product is atomic]", async ({

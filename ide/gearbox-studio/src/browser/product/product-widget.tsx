@@ -1686,7 +1686,14 @@ export class ProductWidget extends ReactWidget {
                 // the row the message had just named. `data-config-field` is the
                 // same hook the suite addresses controls by, so this is reading
                 // an existing contract rather than adding a second one.
-                requestAnimationFrame(() => {
+                //
+                // **Until it is rendered, not one frame later.** Selecting a gear
+                // and showing the section are state changes; the form they render
+                // need not exist on the next frame, and a single
+                // `requestAnimationFrame` sometimes found the previous gear's form
+                // and fell back to the pane. Look again for a bounded number of
+                // frames, then settle for the pane.
+                const focusField = (framesLeft: number) => {
                   const pane = document.querySelector<HTMLElement>(".gbx-composition-settings");
                   const control =
                     field === undefined
@@ -1694,13 +1701,18 @@ export class ProductWidget extends ReactWidget {
                       : pane?.querySelector<HTMLElement>(
                           `[data-config-field="${field}"] input, [data-config-field="${field}"] select`,
                         ) ?? null;
-                  if (control === null) {
-                    pane?.focus();
+                  if (control !== null) {
+                    control.scrollIntoView({ block: "center" });
+                    control.focus();
                     return;
                   }
-                  control.scrollIntoView({ block: "center" });
-                  control.focus();
-                });
+                  if (field !== undefined && framesLeft > 0) {
+                    requestAnimationFrame(() => focusField(framesLeft - 1));
+                    return;
+                  }
+                  pane?.focus();
+                };
+                requestAnimationFrame(() => focusField(30));
               }}
             />
             <button

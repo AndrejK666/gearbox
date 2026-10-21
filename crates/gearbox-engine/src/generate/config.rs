@@ -271,6 +271,7 @@ pub fn app_config(
     write_cluster(input, &mut gears);
     write_spawns(input, application, &mut gears);
     write_public_listener(input, application, &mut gears);
+    write_gateway_proxy(input, &mut gears);
 
     // A production hub on a socket refuses a directory other local users can
     // reach, rather than warning about it (gears-rust ADR-0011 section 3).
@@ -292,9 +293,15 @@ pub fn app_config(
     // overrides; no credential value is needed during generation.
     // The directory admits registrars from the release's namespace only: an
     // empty allowlist would accept a same-named ServiceAccount from anywhere.
-    if !input.lock.product.development
-        && let (Some(kubernetes), Some(directory)) =
-            (&input.lock.kubernetes, gears.get_mut("service-discovery"))
+    //
+    // **On development profiles too.** This was production-only, and Family
+    // Labs -- `development = True` on a real cluster with `platform_auth =
+    // "kube"` -- got an empty list: any namespace's `settings-service`
+    // ServiceAccount could register that gear's endpoint and receive its
+    // traffic and forwarded credentials. A namespace is known on every
+    // Kubernetes profile, so there is no reason to leave it open.
+    if let (Some(kubernetes), Some(directory)) =
+        (&input.lock.kubernetes, gears.get_mut("service-discovery"))
     {
         directory
             .config
@@ -397,6 +404,46 @@ pub fn app_config(
 /// description's values; turning the filter off is GBX0325 on a production
 /// profile. A development multi-process profile keeps the gateway's single
 /// listener.
+/// A self-hosted host's edge proxies to its workers' routes, found in its own
+/// directory through its own hub.
+///
+/// On Kubernetes Flight Control's chart sets `gateway_proxy` itself. A generated
+/// self-hosted host had none, so its edge published nothing a worker served and
+/// answered 404 for every worker route (A23). The hub is addressed as it
+/// listens: `uds://~/...` (the gateway expands `~` as the hub does) or a TCP
+/// address. A `gateway_proxy` the description wrote is kept.
+fn write_gateway_proxy(input: &GenerateInput<'_>, gears: &mut BTreeMap<String, GearSection>) {
+    let directory = input
+        .lock
+        .self_hosted
+        .as_ref()
+        .is_some_and(|settings| settings.discovery == gearbox_ir::Discovery::Directory);
+    let hosts_directory = gears.contains_key("service-discovery");
+    if !directory || !hosts_directory || input.lock.applications.len() < 2 {
+        return;
+    }
+    let Some(endpoint) = gears
+        .get("grpc-hub")
+        .and_then(|hub| hub.config.get("listen_addr"))
+        .and_then(Value::as_str)
+        .filter(|addr| *addr != "none")
+        .map(|addr| {
+            if addr.contains("://") {
+                addr.to_owned()
+            } else {
+                format!("http://{addr}")
+            }
+        })
+    else {
+        return;
+    };
+    if let Some(gateway) = gears.get_mut(REST_HOST_GEAR) {
+        gateway.config.entry("gateway_proxy").or_insert_with(
+            || serde_json::json!({"enabled": true, "directory_endpoint": endpoint}),
+        );
+    }
+}
+
 fn write_public_listener(
     input: &GenerateInput<'_>,
     application: &ResolvedApplication,

@@ -180,6 +180,7 @@ fn the_embedded_profile_generates_the_documented_output_set() {
     assert_eq!(
         paths,
         [
+            "Cargo.lock",
             "Cargo.toml",
             "apps/payments-demo/Cargo.toml",
             "apps/payments-demo/src/main.rs",
@@ -189,7 +190,7 @@ fn the_embedded_profile_generates_the_documented_output_set() {
             "rust-toolchain.toml",
         ],
         "the embedded profile's output set is the plan's section 7 table minus the \
-         Docker and Helm rows, which are M7"
+         Docker and Helm rows, which are M7, plus the source's Cargo.lock (Phase 5)"
     );
 }
 
@@ -3113,6 +3114,105 @@ fn a_production_kubernetes_profile_gets_the_production_shape() {
         rendered.contains("audience: toolkit-internal"),
         "the projected token"
     );
+    assert_every_container_hardened(&rendered);
+}
+
+/// Phase 5: the generated workspace carries the source's `Cargo.lock`, so every
+/// build of it -- the Dockerfile's included -- uses the versions the source was
+/// tested with rather than whatever the registry holds that day.
+#[test]
+fn the_generated_workspace_builds_the_sources_locked_versions() {
+    let Some(root) = gears_rust() else {
+        return;
+    };
+    let opened = vec![SourceRoot::open(SourceId::new("gears-rust").unwrap(), &root).unwrap()];
+    let scan = load_catalogue(&opened);
+    let path = product_gdl();
+    let intent = load_product(&path, None)
+        .intent
+        .expect("the product evaluates");
+    let dev = ProfileId::new("dev").unwrap();
+    let resolution =
+        gearbox_engine::resolve::resolve_at(&scan.catalogue, &intent, &dev, Some(&path));
+    let sources = opened
+        .iter()
+        .map(|r| (r.id.clone(), r.to_resolved()))
+        .collect();
+    let lock =
+        gearbox_engine::resolve::product::assemble(&scan.catalogue, &intent, &resolution, sources);
+    let roots = opened
+        .iter()
+        .map(|r| (r.id.clone(), r.root.clone()))
+        .collect();
+    let files = generate_tree(&lock, &roots, &out_root()).files;
+    assert_eq!(
+        text(&files, "Cargo.lock"),
+        std::fs::read_to_string(root.join("Cargo.lock")).unwrap(),
+        "the source's lock, verbatim"
+    );
+}
+
+/// Phase 3 item 17, per container: every container of every workload the
+/// chart renders -- generated subcharts and the hand-written unit charts alike,
+/// init containers and hooks included -- runs as non-root on a read-only root
+/// with no privilege escalation and every capability dropped, and asks for
+/// resources; a long-running one is probed. `verify.sh` greps for the same
+/// words once per chart, which one hardened container satisfies.
+fn assert_every_container_hardened(rendered: &str) {
+    let mut checked = 0;
+    for doc in rendered.split("\n---") {
+        if doc
+            .lines()
+            .all(|l| l.trim().is_empty() || l.trim_start().starts_with('#'))
+        {
+            continue;
+        }
+        let doc: serde_json::Value = serde_saphyr::from_str(doc).expect("Helm renders YAML");
+        let kind = doc["kind"].as_str().unwrap_or_default();
+        let pod = match kind {
+            "Deployment" | "StatefulSet" | "DaemonSet" | "Job" => &doc["spec"]["template"]["spec"],
+            "CronJob" => &doc["spec"]["jobTemplate"]["spec"]["template"]["spec"],
+            "Pod" => &doc["spec"],
+            _ => continue,
+        };
+        let long_running = matches!(kind, "Deployment" | "StatefulSet" | "DaemonSet");
+        let workload = format!("{kind}/{}", doc["metadata"]["name"].as_str().unwrap_or("?"));
+        let pod_non_root = pod["securityContext"]["runAsNonRoot"] == true;
+        let groups = [("containers", long_running), ("initContainers", false)];
+        for (group, probed) in groups {
+            for container in pod[group].as_array().into_iter().flatten() {
+                let at = format!("{workload} {}", container["name"].as_str().unwrap_or("?"));
+                let sc = &container["securityContext"];
+                // A container's own setting overrides the pod's.
+                let non_root = sc
+                    .get("runAsNonRoot")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(pod_non_root);
+                assert!(non_root, "{at}: not runAsNonRoot");
+                assert_eq!(sc["readOnlyRootFilesystem"], true, "{at}: writable root");
+                assert_eq!(sc["allowPrivilegeEscalation"], false, "{at}: may escalate");
+                assert!(
+                    sc["capabilities"]["drop"]
+                        .as_array()
+                        .is_some_and(|drop| drop.iter().any(|c| c == "ALL")),
+                    "{at}: capabilities not dropped: {sc}"
+                );
+                assert!(
+                    container["resources"]["requests"]
+                        .as_object()
+                        .is_some_and(|r| !r.is_empty()),
+                    "{at}: no resource requests"
+                );
+                if probed {
+                    for probe in ["livenessProbe", "readinessProbe"] {
+                        assert!(container[probe].is_object(), "{at}: no {probe}");
+                    }
+                }
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 0, "the chart rendered no container:\n{rendered}");
 }
 
 /// With `GEARBOX_HELM` set, write `files` under `.gearbox/<dir>` and render the
@@ -3424,6 +3524,7 @@ fn flight_control_and_cluster_units_render_together() {
         "Flight Control's Services"
     );
     assert!(rendered.contains("name: cluster\n"), "cluster's Service");
+    assert_every_container_hardened(&rendered);
 }
 
 /// Review of Phase 3 follow-ups 2 and 3: two production self-hosted hubs never
