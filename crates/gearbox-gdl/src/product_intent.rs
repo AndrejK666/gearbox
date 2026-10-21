@@ -156,6 +156,7 @@ pub fn build(
         profiles,
         default_profile,
         ui,
+        permissions: decl.permissions.clone(),
     })
 }
 

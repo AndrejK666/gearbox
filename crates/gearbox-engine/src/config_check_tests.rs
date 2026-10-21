@@ -53,7 +53,7 @@ fn catalogue() -> Catalogue {
     catalogue
 }
 
-fn demo_descriptor() -> GearDescriptor {
+pub fn demo_descriptor() -> GearDescriptor {
     GearDescriptor {
         ui: None,
         maturity: gearbox_ir::Maturity::Stable,
@@ -99,6 +99,8 @@ fn demo_descriptor() -> GearDescriptor {
         docs: None,
         gts_types: Vec::new(),
         declared_at: None,
+        permissions: std::collections::BTreeSet::new(),
+        unreadable_permissions: Vec::new(),
     }
 }
 
@@ -144,6 +146,7 @@ fn intent(key: &str, value: serde_json::Value) -> ProductIntent {
         cluster_scopes: Vec::new(),
         application_pins: Vec::new(),
         preferences: Vec::new(),
+        permissions: std::collections::BTreeMap::new(),
     }
 }
 

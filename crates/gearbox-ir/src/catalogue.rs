@@ -492,6 +492,25 @@ pub struct ResolvedSource {
 // `PartialEq` without `Eq`: a descriptor now carries a projected config default,
 // which may be a float, and floats have no total equality. Nothing keys a map on
 // a descriptor -- `GearId` does that -- so the marker was never load-bearing.
+/// Whether `name` is a permission name as gears-rust
+/// `toolkit::api::operation_policy::is_valid_permission_name` reads one: at
+/// least two dot-separated segments of `[a-z0-9_-]`, each starting with a
+/// letter or a digit (`settings.values.write`).
+#[must_use]
+pub fn is_valid_permission_name(name: &str) -> bool {
+    let segments: Vec<&str> = name.split('.').collect();
+    segments.len() >= 2
+        && segments.iter().all(|segment| {
+            segment
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                && segment
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+        })
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct GearDescriptor {
     pub id: GearId,
@@ -636,6 +655,20 @@ pub struct GearDescriptor {
     /// refusal is this tool's (ADR `cpt-gearbox-adr-one-per-installation`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub one_per_installation: bool,
+
+    /// The abstract permissions the gear's operations declare, or that its
+    /// code asks for (gears-rust `cpt-cf-adr-operation-permissions` section 6):
+    /// string literals in `.permission("...")`, `#[permission("...")]` on its
+    /// SDK's `rest_contract` methods, and `PermissionMap::holds(_, "...")`.
+    /// A product maps each to the scopes that grant it.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub permissions: BTreeSet<String>,
+
+    /// Where the gear names a permission this tool could not read -- a
+    /// constant or a variable instead of a literal -- so [`Self::permissions`]
+    /// is known to be incomplete. Each entry is a `file:line` in the crate.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unreadable_permissions: Vec<String>,
 
     /// The Cargo features the gear's own crate declares.
     ///

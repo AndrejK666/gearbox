@@ -1124,6 +1124,8 @@ mod tests {
             docs: None,
             gts_types: Vec::new(),
             declared_at: None,
+            permissions: std::collections::BTreeSet::new(),
+            unreadable_permissions: Vec::new(),
         }
     }
 

@@ -28,9 +28,6 @@ import type { SourceId } from "./SourceId";
 import type { UnitChart } from "./UnitChart";
 import type { Visibility } from "./Visibility";
 
-/**
- * Everything known about one gear.
- */
 export type GearDescriptor = { id: GearId, 
 /**
  * Human-readable name. Free to change without breaking references, which is
@@ -157,6 +154,20 @@ declared_roles?: Array<DeclaredRole>,
  * refusal is this tool's (ADR `cpt-gearbox-adr-one-per-installation`).
  */
 one_per_installation?: boolean, 
+/**
+ * The abstract permissions the gear's operations declare, or that its
+ * code asks for (gears-rust `cpt-cf-adr-operation-permissions` section 6):
+ * string literals in `.permission("...")`, `#[permission("...")]` on its
+ * SDK's `rest_contract` methods, and `PermissionMap::holds(_, "...")`.
+ * A product maps each to the scopes that grant it.
+ */
+permissions?: Array<string>, 
+/**
+ * Where the gear names a permission this tool could not read -- a
+ * constant or a variable instead of a literal -- so [`Self::permissions`]
+ * is known to be incomplete. Each entry is a `file:line` in the crate.
+ */
+unreadable_permissions?: Array<string>, 
 /**
  * The Cargo features the gear's own crate declares.
  *

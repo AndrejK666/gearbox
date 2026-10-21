@@ -813,7 +813,7 @@ fn a_newer_minor_is_read_and_says_so_only_if_it_fails() {
     ));
     let help = diagnostics[0].help.as_deref().unwrap_or_default();
     assert!(
-        help.contains("written for GDL 1.7, and this Gearbox reads GDL 1.3"),
+        help.contains("written for GDL 1.7, and this Gearbox reads GDL 1.4"),
         "{diagnostics:?}"
     );
 }
@@ -848,7 +848,7 @@ fn a_version_is_major_and_minor() {
             diagnostics[0]
                 .help
                 .as_deref()
-                .is_some_and(|h| h.contains("gdl_version = \"1.3\"")),
+                .is_some_and(|h| h.contains("gdl_version = \"1.4\"")),
             "{bad}: {diagnostics:?}"
         );
     }

@@ -95,6 +95,8 @@ pub struct Projections<'a> {
     /// The description's curation of those, checked against them; see
     /// `features.rs`.
     pub cargo_features: Option<Vec<gearbox_ir::CargoFeature>>,
+    /// The permissions the gear's code and its SDK name.
+    pub permissions: gearbox_project::ProjectedPermissions,
 }
 
 #[allow(
@@ -119,6 +121,7 @@ pub fn merge(
         gts_types,
         available_features,
         cargo_features,
+        permissions,
     } = projections;
     let uri = identity.uri.as_str();
 
@@ -495,6 +498,9 @@ pub fn merge(
         gts_types,
         declared_at: decl.declared_at.clone(),
         ui,
+        // Projected from string literals; see `gearbox-project/src/permissions.rs`.
+        permissions: permissions.names,
+        unreadable_permissions: permissions.unreadable,
     };
 
     Some(MergedGear {

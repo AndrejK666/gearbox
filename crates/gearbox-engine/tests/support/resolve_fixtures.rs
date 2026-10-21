@@ -79,6 +79,8 @@ pub fn descriptor(id: &str) -> GearDescriptor {
         docs: None,
         gts_types: Vec::new(),
         declared_at: None,
+        permissions: std::collections::BTreeSet::new(),
+        unreadable_permissions: Vec::new(),
     }
 }
 
@@ -125,6 +127,7 @@ pub fn intent(gears: &[&str]) -> ProductIntent {
         cluster_scopes: Vec::new(),
         application_pins: Vec::new(),
         preferences: Vec::new(),
+        permissions: std::collections::BTreeMap::new(),
     }
 }
 

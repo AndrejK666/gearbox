@@ -49,4 +49,10 @@ layout?: string | null, profiles: { [key in ProfileId]: DeploymentProfileDecl },
 /**
  * The gears asked for directly. Their co-location closures bring in more.
  */
-selected_gears: Array<GearSelection>, bindings?: Array<BindingIntent>, cluster_scopes?: Array<ClusterScopeIntent>, application_pins?: Array<ApplicationPin>, preferences?: Array<Preference>, ui?: ProductUi | null, };
+selected_gears: Array<GearSelection>, bindings?: Array<BindingIntent>, cluster_scopes?: Array<ClusterScopeIntent>, application_pins?: Array<ApplicationPin>, preferences?: Array<Preference>, ui?: ProductUi | null, 
+/**
+ * Permission -> the token scopes that grant it, any of them
+ * (`product(permissions = {...})`, gears-rust
+ * `cpt-cf-adr-operation-permissions` section 2).
+ */
+permissions?: { [key in string]: Array<string> }, };

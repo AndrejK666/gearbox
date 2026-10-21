@@ -238,6 +238,15 @@ pub fn resolve_at(
             &mut diagnostics,
         );
         database::check_sqlite_placement(&partition, declaration, &uri, &mut diagnostics);
+        // The product's permission mapping against every gear it contains.
+        crate::permission_check::check(
+            catalogue,
+            closure.members.keys(),
+            intent,
+            declaration,
+            &uri,
+            &mut diagnostics,
+        );
         partition
     } else {
         diagnostics.push(unknown_profile(intent, profile, &uri));

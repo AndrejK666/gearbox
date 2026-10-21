@@ -15,7 +15,7 @@ remedy at the point it is raised
 (`cpt-gearbox-nfr-actionable-diagnostics`), which is per-occurrence and
 so is not listed here.
 
-Codes: **120**.
+Codes: **123**.
 
 ## `GBX01xx` — Parsing and evaluating GDL
 
@@ -44,6 +44,8 @@ Codes: **120**.
 | [GBX0121](#gbx0121) | warning | a gear's declared git source disagrees with its checkout |
 | [GBX0122](#gbx0122) | warning | a gear is declared done with scenarios still open |
 | [GBX0123](#gbx0123) | error | unreadable or unsupported gdl_version |
+| [GBX0124](#gbx0124) | error | a gear declares a permission the product does not map |
+| [GBX0125](#gbx0125) | warning | the product maps a permission no gear declares |
 
 ### GBX0101
 
@@ -328,6 +330,27 @@ this Gearbox does not read.
 
 Reported before evaluation: a different major may have removed or
 renamed what this reader knows, so its errors would be the wrong ones.
+
+### GBX0124
+
+**a gear declares a permission the product does not map**
+
+A gear in the product declares a permission the product does not map
+(`product(permissions = {...})`).
+
+The runtime refuses every call to such an operation with 403
+`PERMISSION_NOT_MAPPED` (gears-rust `cpt-cf-adr-operation-permissions`
+section 2). An error on a production profile, a warning under
+`development = True`.
+
+### GBX0125
+
+**the product maps a permission no gear declares**
+
+The product maps a permission no gear in it declares.
+
+A warning: most likely a typo, which would leave the permission it was
+meant for unmapped and its operations refused.
 
 ## `GBX02xx` — Cross-checking a description against Rust
 
@@ -1457,6 +1480,7 @@ and that one is worth a line.
 | [GBX0606](#gbx0606) | hint | deployment profile is not a runtime type |
 | [GBX0607](#gbx0607) | hint | `deps = [cluster]` pins a consumer that no longer needs pinning |
 | [GBX0608](#gbx0608) | warning | a gear attribute argument is not modelled by this tool |
+| [GBX0609](#gbx0609) | warning | a gear names a permission this tool cannot read |
 
 ### GBX0602
 
@@ -1558,6 +1582,17 @@ author's mistake: it is a claim about another repository -- that its
 macro takes an argument this tool drops -- and the range exists for
 claims of that kind, which is why every code in it must cite what it is
 reading.
+
+*Asserts a limitation of the runtime, so every occurrence cites the source that proves it.*
+
+### GBX0609
+
+**a gear names a permission this tool cannot read**
+
+A gear names a permission this tool cannot read: a constant, a variable
+or a helper instead of a string literal (gears-rust
+`cpt-cf-adr-operation-permissions` section 6). The gear's permission set is
+incomplete, so GBX0124 cannot tell whether the product maps all of it.
 
 *Asserts a limitation of the runtime, so every occurrence cites the source that proves it.*
 

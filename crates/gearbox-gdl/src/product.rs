@@ -153,6 +153,39 @@ fn config_map(
     }
 }
 
+/// `permissions = {...}`: each key a permission name, each value a list of
+/// non-empty scope strings. Refused here, at the call, rather than reported
+/// later: a malformed name maps nothing the runtime will ever look up.
+fn permission_map(
+    value: Option<Value<'_>>,
+) -> anyhow::Result<std::collections::BTreeMap<String, Vec<String>>> {
+    config_map("permissions", value)?
+        .into_iter()
+        .map(|(permission, scopes)| {
+            if !gearbox_ir::is_valid_permission_name(&permission) {
+                return Err(anyhow::anyhow!(
+                    "permissions: `{permission}` is not a permission name -- dot-separated \
+                     segments of [a-z0-9_-], at least two (`settings.values.write`)"
+                ));
+            }
+            let scopes = scopes
+                .as_array()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("permissions: `{permission}` must map to a list of scopes")
+                })?
+                .iter()
+                .map(|scope| match scope.as_str() {
+                    Some(scope) if !scope.trim().is_empty() => Ok(scope.to_owned()),
+                    _ => Err(anyhow::anyhow!(
+                        "permissions: `{permission}` lists `{scope}`, which is not a scope"
+                    )),
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            Ok((permission, scopes))
+        })
+        .collect()
+}
+
 fn string_map(
     what: &str,
     value: Option<Value<'_>>,
@@ -691,6 +724,9 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `cluster_profiles`: The cluster backends, as `cluster_profile(...)`.
     /// * `applications`: The applications, as `application(...)`.
     /// * `preferences`: What resolution prefers, as `prefer.*()`.
+    /// * `permissions`: Permission -> the token scopes that grant it, any of them
+    ///   (`{"settings.values.write": ["operator"]}`). `["*"]` grants it to every
+    ///   authenticated caller, `[]` to nobody. GDL 1.4.
 
     fn product<'v>(
         // `"MAJOR.MINOR"`; read before evaluation by `version.rs`, accepted
@@ -710,6 +746,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] cluster_profiles: Option<UnpackList<&'v ClusterProfileRecord>>,
         #[starlark(require = named)] applications: Option<UnpackList<&'v ApplicationRecord>>,
         #[starlark(require = named)] preferences: Option<UnpackList<&'v PreferenceRecord>>,
+        #[starlark(require = named)] permissions: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
         // Checked before evaluation; see `version.rs`.
@@ -726,6 +763,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
                  it must not be empty, start with a dot, or contain a path separator"
             ));
         }
+        let permissions = permission_map(permissions)?;
         sink(eval)?.set_product(ProductDecl {
             ui: ui.cloned(),
             id: id.to_owned(),
@@ -749,6 +787,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
             preferences: preferences
                 .map(|l| l.items.into_iter().cloned().collect())
                 .unwrap_or_default(),
+            permissions,
         });
         Ok(NoneType)
     }

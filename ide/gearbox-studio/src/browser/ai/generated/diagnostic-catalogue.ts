@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 120, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 123, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -208,6 +208,22 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "error",
     domain: "gdl",
     docs: "A file's `gdl_version` is not `MAJOR.MINOR`, or names a major version\nthis Gearbox does not read.\n\nReported before evaluation: a different major may have removed or\nrenamed what this reader knows, so its errors would be the wrong ones.",
+    requiresEvidence: false,
+  },
+  GBX0124: {
+    code: "GBX0124",
+    title: "a gear declares a permission the product does not map",
+    severity: "error",
+    domain: "gdl",
+    docs: "A gear in the product declares a permission the product does not map\n(`product(permissions = {...})`).\n\nThe runtime refuses every call to such an operation with 403\n`PERMISSION_NOT_MAPPED` (gears-rust `cpt-cf-adr-operation-permissions`\nsection 2). An error on a production profile, a warning under\n`development = True`.",
+    requiresEvidence: false,
+  },
+  GBX0125: {
+    code: "GBX0125",
+    title: "the product maps a permission no gear declares",
+    severity: "warning",
+    domain: "gdl",
+    docs: "The product maps a permission no gear in it declares.\n\nA warning: most likely a typo, which would leave the permission it was\nmeant for unmapped and its operations refused.",
     requiresEvidence: false,
   },
   GBX0206: {
@@ -902,6 +918,14 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "warning",
     domain: "runtime-gap",
     docs: "A gear attribute argument the platform accepts and this tool does not\nmodel.\n\n**A field promised this and showed it to nobody.**\n`ProjectedGear::unmodelled` says it records unknown arguments \"so a\nfuture macro argument surfaces as a known gap instead of a silent\nomission\", and it had one writer and no reader outside its own unit test,\nwhich said as much in a comment.\n\nIt is non-empty only in a skew window, and that window is real rather\nthan theoretical: `#[toolkit::gear]` refuses an argument it does not\nknow, so the platform necessarily lands a new one first and this parser\ncatches up after. That is exactly how `one_per_installation` arrived --\nADR `cpt-gearbox-adr-one-per-installation` leans on this field by name\nwhile doing it.\n\nIn this range rather than `Validate` because it is not the description\nauthor's mistake: it is a claim about another repository -- that its\nmacro takes an argument this tool drops -- and the range exists for\nclaims of that kind, which is why every code in it must cite what it is\nreading.",
+    requiresEvidence: true,
+  },
+  GBX0609: {
+    code: "GBX0609",
+    title: "a gear names a permission this tool cannot read",
+    severity: "warning",
+    domain: "runtime-gap",
+    docs: "A gear names a permission this tool cannot read: a constant, a variable\nor a helper instead of a string literal (gears-rust\n`cpt-cf-adr-operation-permissions` section 6). The gear's permission set is\nincomplete, so GBX0124 cannot tell whether the product maps all of it.",
     requiresEvidence: true,
   },
   GBX0701: {

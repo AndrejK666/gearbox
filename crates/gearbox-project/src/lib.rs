@@ -24,6 +24,7 @@ pub mod error_enum;
 pub mod gear;
 pub mod gts;
 pub mod manifest;
+pub mod permissions;
 pub mod plugin;
 pub mod profile;
 pub mod scan;
@@ -53,6 +54,7 @@ pub use error_enum::{ProjectedErrorEnum, ProjectedErrorVariant, project_error_en
 pub use gear::{ProjectedGear, ProjectedLifecycle, project_gear};
 pub use gts::{GtsError, GtsType, gts_type_from_schema, project_gts_types};
 pub use manifest::{CrateManifest, ManifestError, project_manifest};
+pub use permissions::{ProjectedPermissions, project_permissions};
 pub use plugin::{
     VendorDefault, implemented_traits, project_field_str_default, project_vendor_default,
     public_traits,

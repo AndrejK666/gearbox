@@ -1008,3 +1008,38 @@ fn profile_config_for_an_undeclared_profile_is_reported() {
     assert!(messages.contains("must be a map"), "{messages}");
     assert!(intent.is_none());
 }
+
+/// GDL 1.4: `permissions` maps each permission a gear declares to the scopes
+/// that grant it (gears-rust `cpt-cf-adr-operation-permissions` §2).
+#[test]
+fn permissions_map_to_scopes() {
+    let (intent, codes, messages) = eval(&product(
+        r#"permissions = {"settings.values.write": ["operator", "bootstrap"], "lab.view": ["*"], "lab.none": []},"#,
+    ));
+    assert!(codes.is_empty(), "{codes:?} {messages}");
+    let permissions = intent.unwrap().permissions;
+    assert_eq!(
+        permissions["settings.values.write"],
+        ["operator", "bootstrap"]
+    );
+    assert_eq!(permissions["lab.view"], ["*"]);
+    assert!(permissions["lab.none"].is_empty());
+}
+
+/// A malformed name maps nothing the runtime will look up, so it is refused at
+/// the call, as is a scope that is not a string.
+#[test]
+fn a_malformed_permission_mapping_is_refused() {
+    for (extra, named) in [
+        (r#"permissions = {"Settings": ["operator"]},"#, "Settings"),
+        (
+            r#"permissions = {"settings.write": "operator"},"#,
+            "list of scopes",
+        ),
+        (r#"permissions = {"settings.write": [""]},"#, "not a scope"),
+    ] {
+        let (intent, codes, messages) = eval(&product(extra));
+        assert!(intent.is_none() || !codes.is_empty(), "{extra}");
+        assert!(messages.contains(named), "{extra}: {messages}");
+    }
+}

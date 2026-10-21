@@ -55,4 +55,9 @@ cuttable_if_declared?: Array<CutCandidate>,
 /**
  * Ordered by source, kind, then target.
  */
-provenance?: Array<ProvenanceEdge>, diagnostics?: Diagnostics, ui?: ResolvedUi | null, };
+provenance?: Array<ProvenanceEdge>, 
+/**
+ * The product's permission mapping, written into every process's
+ * configuration (gears-rust `cpt-cf-adr-operation-permissions` section 2).
+ */
+permissions?: { [key in string]: Array<string> }, diagnostics?: Diagnostics, ui?: ResolvedUi | null, };

@@ -309,6 +309,7 @@ mod tests {
             cuttable_if_declared: Vec::new(),
             provenance: Vec::new(),
             diagnostics: gearbox_ir::Diagnostics::new(),
+            permissions: std::collections::BTreeMap::new(),
         }
     }
 

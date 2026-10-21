@@ -77,6 +77,7 @@ pub fn assemble(
         provenance: explain(catalogue, intent, resolution).edges,
         diagnostics: resolution.diagnostics.clone(),
         ui: resolution.ui.clone(),
+        permissions: intent.permissions.clone(),
     };
 
     gearbox_lock::canonicalize_order(&mut product);

@@ -317,6 +317,7 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
         cuttable_if_declared: _,
         provenance: _,
         diagnostics: _,
+        permissions: before_permissions,
     } = before;
     let gearbox_ir::ResolvedProduct {
         ui: after_ui,
@@ -334,6 +335,7 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
         cuttable_if_declared: _,
         provenance: _,
         diagnostics: _,
+        permissions: after_permissions,
     } = after;
 
     let mut before_database = database_fields(before_db.as_ref());
@@ -360,6 +362,22 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
     }
 
     compare("ui", format!("{before_ui:?}"), format!("{after_ui:?}"));
+    // One line per permission: a changed grant names what it grants.
+    let mut permission_keys = std::collections::BTreeSet::new();
+    permission_keys.extend(before_permissions.keys());
+    permission_keys.extend(after_permissions.keys());
+    for permission in permission_keys {
+        let scopes = |map: &std::collections::BTreeMap<String, Vec<String>>| {
+            map.get(permission)
+                .map(|s| s.join(", "))
+                .unwrap_or_default()
+        };
+        compare(
+            &format!("permissions.{permission}"),
+            scopes(before_permissions),
+            scopes(after_permissions),
+        );
+    }
     compare(
         "schema_version",
         before_schema.to_string(),

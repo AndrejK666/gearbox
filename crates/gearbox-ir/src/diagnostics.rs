@@ -545,6 +545,21 @@ diagnostic_codes! {
     /// renamed what this reader knows, so its errors would be the wrong ones.
     GdlVersionUnsupported = "GBX0123", Gdl, Error, false, "unreadable or unsupported gdl_version";
 
+    /// A gear in the product declares a permission the product does not map
+    /// (`product(permissions = {...})`).
+    ///
+    /// The runtime refuses every call to such an operation with 403
+    /// `PERMISSION_NOT_MAPPED` (gears-rust `cpt-cf-adr-operation-permissions`
+    /// section 2). An error on a production profile, a warning under
+    /// `development = True`.
+    GdlPermissionUnmapped = "GBX0124", Gdl, Error, false, "a gear declares a permission the product does not map";
+
+    /// The product maps a permission no gear in it declares.
+    ///
+    /// A warning: most likely a typo, which would leave the permission it was
+    /// meant for unmapped and its operations refused.
+    GdlPermissionMappingUnused = "GBX0125", Gdl, Warning, false, "the product maps a permission no gear declares";
+
     // ---------------------------------------------------------------- GBX02xx
     // GBX0201-GBX0205 are deliberately absent. They compared a `gear.gdl`
     // restatement of the gear id, co-location dependencies, runtime
@@ -1420,6 +1435,12 @@ diagnostic_codes! {
     /// claims of that kind, which is why every code in it must cite what it is
     /// reading.
     GapUnmodelledGearArgument = "GBX0608", RuntimeGap, Warning, true, "a gear attribute argument is not modelled by this tool";
+
+    /// A gear names a permission this tool cannot read: a constant, a variable
+    /// or a helper instead of a string literal (gears-rust
+    /// `cpt-cf-adr-operation-permissions` section 6). The gear's permission set is
+    /// incomplete, so GBX0124 cannot tell whether the product maps all of it.
+    GapPermissionUnreadable = "GBX0609", RuntimeGap, Warning, true, "a gear names a permission this tool cannot read";
 
     // ---------------------------------------------------------------- GBX07xx
     /// Generation would overwrite an operator-owned file whose edits cannot be

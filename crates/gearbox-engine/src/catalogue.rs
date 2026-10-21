@@ -828,6 +828,9 @@ fn project_and_merge(
                 &available_features,
                 diagnostics,
             ),
+            // Its own files, as config and plugins read them: a crate that
+            // declares several gears gives each the permissions it names.
+            permissions: gearbox_project::project_permissions(own_files, &sdk_files),
         },
         diagnostics,
     )

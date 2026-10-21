@@ -3637,3 +3637,30 @@ fn a_rest_provider_beside_the_anchor_registers_under_its_own_name() {
         serde_json::json!(["beside-the-anchor"]),
     );
 }
+
+/// gears-rust `cpt-cf-adr-operation-permissions` §2: the product's permission
+/// mapping is written into every process's configuration, so each enforces the
+/// permissions its operations declare against the same map.
+#[test]
+fn the_permission_mapping_reaches_every_process() {
+    let Some((mut lock, source_roots)) = resolve("local") else {
+        return;
+    };
+    lock.permissions = [(
+        "payments.charge".to_owned(),
+        vec!["operator".to_owned(), "*".to_owned()],
+    )]
+    .into_iter()
+    .collect();
+    let files = generate_tree(&lock, &source_roots, &out_root()).files;
+    assert!(lock.applications.len() > 1, "a host and a worker");
+    for application in &lock.applications {
+        let config = yaml(text(&files, &format!("config/{}.yaml", application.name)));
+        assert_eq!(
+            config["permissions"]["payments.charge"],
+            serde_json::json!(["operator", "*"]),
+            "{}",
+            application.name
+        );
+    }
+}

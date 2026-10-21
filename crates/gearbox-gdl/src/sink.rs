@@ -151,6 +151,8 @@ pub struct ProductDecl {
     pub cluster_profiles: Vec<crate::records::ClusterProfileRecord>,
     pub applications: Vec<crate::records::ApplicationRecord>,
     pub preferences: Vec<crate::records::PreferenceRecord>,
+    /// `permissions = {...}`: permission -> the scopes that grant it.
+    pub permissions: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// Collects one file's declaration and any diagnostics raised while evaluating it.

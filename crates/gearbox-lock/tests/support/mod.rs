@@ -440,6 +440,7 @@ pub fn fixture() -> ResolvedProduct {
         cuttable_if_declared: cuttable_candidates(),
         provenance: provenance(),
         diagnostics: diagnostics(),
+        permissions: std::collections::BTreeMap::new(),
     }
 }
 

@@ -23,6 +23,7 @@ pub mod generate;
 pub mod manifest_check;
 pub mod merge;
 pub mod origin;
+pub mod permission_check;
 pub mod plugin;
 pub mod plugin_select;
 pub mod product;

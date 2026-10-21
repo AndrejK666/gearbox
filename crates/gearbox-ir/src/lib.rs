@@ -23,6 +23,7 @@ pub use catalogue::{
     DesignGear, DocUrls, EndpointDecl, ExtensionPointDecl, GearDescriptor, GearDocs, GitOrigin,
     GtsTypeDecl, Implementation, LifecycleDecl, LoadStage, Located, Maturity, PendingGear,
     PluginImpl, ResolvedSource, RestPlane, RuntimeCap, Scenario, SourceKind, UnitChart, Visibility,
+    is_valid_permission_name,
 };
 pub use contract::{
     CargoRef, ContractDescriptor, ContractKind, ContractVersion, Ecosystem, GrpcProjection,

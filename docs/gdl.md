@@ -244,7 +244,7 @@ gdl_version = "1.2"
 gear(...)  # or product(...)
 ```
 
-The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.3. The legacy `gear(gdl_version=...)` and `product(gdl_version=...)` arguments remain accepted; conflicting declarations are rejected.
+The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.4. The legacy `gear(gdl_version=...)` and `product(gdl_version=...)` arguments remain accepted; conflicting declarations are rejected.
 
 - A minor version only adds: optional fields, constructors and values. A file for an older minor version reads with no change.
 - A major version can remove a field, rename a field or change what a field means.
@@ -870,10 +870,25 @@ product(
   cluster_profiles = [],
   applications = [],
   preferences = [],
+  permissions = {},                 # GDL 1.4: permission -> scopes that grant it
 )
 ```
 
 Omit `templates` to use a `templates/` directory beside the file.
+
+`permissions` (GDL 1.4) maps each abstract permission a gear's operations declare
+(`.permission("settings.values.write")`, gears-rust `cpt-cf-adr-operation-permissions`)
+to the token scopes that grant it, any of them:
+`permissions = {"settings.values.write": ["operator", "bootstrap"], "lab.view": ["*"]}`.
+`["*"]` grants the permission to every authenticated caller, `[]` to nobody. The
+generator writes the map into every process's configuration, and the runtime refuses
+a call to an operation whose permission is not in it. A gear in the product that
+declares a permission the map does not name is **GBX0124** (an error on a production
+profile, a warning under `development = True`); a mapped permission no gear declares
+is **GBX0125**; a gear that names a permission other than as a string literal is
+**GBX0609**, because its set cannot be read. A name is dot-separated segments of
+`[a-z0-9_-]`, at least two; a malformed name, or a scope that is not a non-empty
+string, is refused when the file is evaluated.
 
 `layout` names the directory the generated application crates go under, one
 path segment: `apps/<name>/Cargo.toml` by default, `layout = "processes"` for a
@@ -936,6 +951,8 @@ This table is the authoring subset, curated and hand-written, because the stage 
 | GBX0210 | restates a fact Rust already owns | evaluating the file |
 | GBX0108 | `category` is not one the platform uses (warning) | building the catalogue |
 | GBX0123 | `gdl_version` is not `MAJOR.MINOR`, or has a different major version | evaluating the file |
+| GBX0124 | a gear in the product declares a permission `product(permissions = ...)` does not map (warning under `development = True`) | resolving |
+| GBX0125 | `product(permissions = ...)` maps a permission no gear in the product declares (warning) | resolving |
 | GBX0109 | a `docs(...)` or `tests` path does not exist, and no `source = git(...)` | building the catalogue |
 | GBX0121 | `source = git(...)` is different from the checkout (warning) | building the catalogue |
 | GBX0122 | `implementation = "done"` with a scenario that is not done (warning) | building the catalogue |

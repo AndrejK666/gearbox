@@ -57,6 +57,11 @@ struct AppConfig {
     /// `AuthZ` plane in its own unit). A worker carries it in `oop_http` instead.
     #[serde(skip_serializing_if = "Option::is_none")]
     internal_auth: Option<Value>,
+    /// The product's permission mapping: every process enforces the
+    /// permissions its operations declare against it (gears-rust
+    /// `cpt-cf-adr-operation-permissions` §2).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    permissions: BTreeMap<String, Vec<String>>,
     gears: BTreeMap<String, GearSection>,
 }
 
@@ -364,6 +369,7 @@ pub fn app_config(
                 public: PublicSection { exposed_only: true },
             }),
         internal_auth: internal_auth.filter(|_| !application.is_worker()),
+        permissions: input.lock.permissions.clone(),
         gears,
     };
 
@@ -482,6 +488,10 @@ pub(super) fn unit_chart_overlay(
     }
     let mut overlay = Map::new();
     overlay.insert("gears".to_owned(), Value::Object(gear_sections));
+    // A hand-written unit enforces the product's permissions like a generated one.
+    if !input.lock.permissions.is_empty() {
+        overlay.insert("permissions".to_owned(), to_json(&input.lock.permissions)?);
+    }
     if let Some(database) = &database {
         overlay.insert("database".to_owned(), to_json(database)?);
     }

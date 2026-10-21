@@ -444,4 +444,4 @@ fn location(selection: &gearbox_ir::GearSelection, uri: &str) -> Location {
 
 #[cfg(test)]
 #[path = "config_check_tests.rs"]
-mod config_check_tests;
+pub(crate) mod config_check_tests;

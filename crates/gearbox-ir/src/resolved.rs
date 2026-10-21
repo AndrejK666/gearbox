@@ -998,6 +998,11 @@ pub struct ResolvedProduct {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provenance: Vec<ProvenanceEdge>,
 
+    /// The product's permission mapping, written into every process's
+    /// configuration (gears-rust `cpt-cf-adr-operation-permissions` section 2).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub permissions: BTreeMap<String, Vec<String>>,
+
     #[serde(default, skip_serializing_if = "Diagnostics::is_empty")]
     pub diagnostics: Diagnostics,
     #[serde(default, skip_serializing_if = "Option::is_none")]
