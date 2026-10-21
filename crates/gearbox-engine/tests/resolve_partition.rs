@@ -325,10 +325,12 @@ fn kubernetes_fills_the_chart_fields_and_binds_every_interface() {
         "registry.example.com/payments/gbx-api-gateway:0.1.0"
     );
     assert_eq!(gateway.subchart.as_deref(), Some(gateway.name.as_str()));
+    // `prod` is a production profile: neighbours dial the gateway's internal
+    // REST listener -- not the gRPC hub, and not the exposed-only public one.
     assert_eq!(
         gateway.service_port,
-        Some(8087),
-        "neighbours dial REST, not the gRPC hub: listens={:?}",
+        Some(8088),
+        "neighbours dial internal REST: listens={:?}",
         gateway.listens
     );
     for endpoint in &gateway.listens {

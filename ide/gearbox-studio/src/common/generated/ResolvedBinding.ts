@@ -2,6 +2,7 @@
 import type { ApplicationId } from "./ApplicationId";
 import type { BindingMechanism } from "./BindingMechanism";
 import type { BindingRequest } from "./BindingRequest";
+import type { CargoRef } from "./CargoRef";
 import type { ContractId } from "./ContractId";
 import type { GearId } from "./GearId";
 import type { ResolvedBindingMode } from "./ResolvedBindingMode";
@@ -33,4 +34,14 @@ critical: boolean,
  * logic). A critical binding under static discovery is `false`: the runtime
  * marks a pinned endpoint resolved at wiring (ADR-0026 section 5).
  */
-gates_readiness: boolean, selected: Selected<BindingRequest>, };
+gates_readiness: boolean, 
+/**
+ * The client the consuming *process* has to link for this binding, when
+ * its consumer's own crate does not: the cluster SDK with its gRPC client
+ * (`ProvidesClientWiring`). A `consumes-*` binding leaves it `None` -- the
+ * consumer gear's crate depends on its contract's SDK with the client it
+ * needs. Without it the generated process links the SDK without its
+ * remote half, registers no client, and every call reports the profile
+ * unbound.
+ */
+client_sdk?: CargoRef | null, selected: Selected<BindingRequest>, };

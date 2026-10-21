@@ -593,11 +593,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 50
+line = 52
 character = 8
 
 [diagnostics.location.range.end]
-line = 50
+line = 52
 character = 65
 
 [[diagnostics]]
@@ -610,11 +610,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 49
+line = 51
 character = 8
 
 [diagnostics.location.range.end]
-line = 49
+line = 51
 character = 56
 
 [[diagnostics]]
@@ -627,11 +627,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 47
+line = 49
 character = 8
 
 [diagnostics.location.range.end]
-line = 47
+line = 49
 character = 54
 
 [[diagnostics]]
@@ -644,11 +644,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 72
+line = 74
 character = 8
 
 [diagnostics.location.range.end]
-line = 86
+line = 99
 character = 9
 
 [[diagnostics]]
@@ -661,11 +661,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 60
+line = 62
 character = 8
 
 [diagnostics.location.range.end]
-line = 60
+line = 62
 character = 50
 
 [[diagnostics]]
@@ -695,11 +695,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 48
+line = 50
 character = 8
 
 [diagnostics.location.range.end]
-line = 48
+line = 50
 character = 60
 
 [[diagnostics]]
@@ -712,11 +712,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 72
+line = 74
 character = 8
 
 [diagnostics.location.range.end]
-line = 86
+line = 99
 character = 9
 
 [[diagnostics]]
@@ -764,9 +764,9 @@ evidence = "gears/system/cluster/cluster/src/defaults/leader.rs (CasBasedLeaderE
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 109
+line = 122
 character = 8
 
 [diagnostics.location.range.end]
-line = 113
+line = 126
 character = 9

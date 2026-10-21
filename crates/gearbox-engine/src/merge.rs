@@ -51,6 +51,10 @@ pub struct MergedGear {
     /// declared `implements` against once every host is known (GBX0526), and nothing
     /// a client should read a role from.
     pub implemented_traits: std::collections::BTreeSet<String>,
+    /// The contract traits this gear's own code resolves from the `ClientHub`
+    /// (`get::<dyn Trait>()`), checked against its declarations once every
+    /// contract is known (GBX0215).
+    pub client_uses: std::collections::BTreeSet<String>,
 }
 
 /// An error attributable to the description, naming the file and no position.
@@ -498,6 +502,7 @@ pub fn merge(
         provided: provided_contracts,
         consumed: consumed_contracts,
         implemented_traits: plugin.implemented.clone(),
+        client_uses: std::collections::BTreeSet::new(),
     })
 }
 

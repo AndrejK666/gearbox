@@ -905,3 +905,106 @@ fn ui_entry_points_are_named_same_origin_paths() {
         assert!(!codes.is_empty());
     }
 }
+
+/// A product with these profiles and one gear, for the per-profile arguments.
+fn profiles_product(profiles: &str, gear: &str) -> String {
+    format!(
+        r#"
+product(
+    id = "demo", version = "0.1.0",
+    sources = [source(id = "gears-rust", at = path("../gears-rust"))],
+    profiles = [embedded(id = "dev"), {profiles}],
+    default_profile = "dev",
+    gears = [{gear}],
+)
+"#
+    )
+}
+
+#[test]
+fn platform_auth_is_recorded_on_the_profile() {
+    let src = profiles_product(
+        r#"kubernetes(id = "prod", discovery = "static", platform_auth = "kube"),
+        self_hosted(id = "local", host = "gateway", worker_discovery = "directory",
+                    platform_auth = "shared_secret")"#,
+        r#"use_gear("api-gateway", source = "gears-rust")"#,
+    );
+    let (intent, codes, messages) = eval(&src);
+    assert!(codes.is_empty(), "{codes:?} {messages}");
+    let intent = intent.unwrap();
+    let auth = |id: &str| intent.profiles[&ProfileId::new(id).unwrap()].platform_auth();
+    assert_eq!(auth("prod"), Some(gearbox_ir::PlatformAuth::Kube));
+    assert_eq!(auth("local"), Some(gearbox_ir::PlatformAuth::SharedSecret));
+    assert_eq!(auth("dev"), None);
+}
+
+#[test]
+fn a_kube_token_off_a_cluster_is_refused() {
+    let src = profiles_product(
+        r#"self_hosted(id = "local", host = "gateway", worker_discovery = "directory",
+                    platform_auth = "kube")"#,
+        r#"use_gear("api-gateway", source = "gears-rust")"#,
+    );
+    let (_, _, messages) = eval(&src);
+    assert!(
+        messages.contains(r#"`platform_auth = "kube"`"#) && messages.contains("self-hosted"),
+        "{messages}"
+    );
+
+    let src = profiles_product(
+        r#"kubernetes(id = "prod", discovery = "static", platform_auth = "mtls")"#,
+        r#"use_gear("api-gateway", source = "gears-rust")"#,
+    );
+    let (_, _, messages) = eval(&src);
+    assert!(messages.contains("mtls"), "{messages}");
+}
+
+#[test]
+fn profile_config_is_recorded_per_declared_profile() {
+    let src = profiles_product(
+        r#"kubernetes(id = "prod", discovery = "static")"#,
+        r#"use_gear("api-gateway", source = "gears-rust",
+                    config = {"public": {"exposed_only": True}},
+                    profile_config = {"prod": {"auth_disabled": False}})"#,
+    );
+    let (intent, codes, messages) = eval(&src);
+    assert!(codes.is_empty(), "{codes:?} {messages}");
+    let intent = intent.unwrap();
+    let gateway = &intent.selected_gears[0];
+    let prod = &gateway.profile_config[&ProfileId::new("prod").unwrap()];
+    assert_eq!(prod["auth_disabled"], serde_json::json!(false));
+    assert_eq!(gateway.profile_config.len(), 1);
+}
+
+#[test]
+fn profile_config_for_an_undeclared_profile_is_reported() {
+    let src = profiles_product(
+        r#"kubernetes(id = "prod", discovery = "static")"#,
+        r#"use_gear("api-gateway", source = "gears-rust", profile_config = {"staging": {}})"#,
+    );
+    let out = GdlEngine::new().eval_product(&identity(), &src);
+    let reported = out
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains("staging"))
+        .expect("the undeclared profile is reported");
+    assert!(
+        reported.message.contains("not declared"),
+        "{}",
+        reported.message
+    );
+    assert_ne!(
+        reported.location.as_ref().map(|l| l.range),
+        Some(gearbox_ir::Range::whole_file()),
+        "at the use_gear call, not the whole file"
+    );
+    assert!(reported.location.is_some());
+
+    let src = profiles_product(
+        r#"kubernetes(id = "prod", discovery = "static")"#,
+        r#"use_gear("api-gateway", source = "gears-rust", profile_config = {"prod": 1})"#,
+    );
+    let (intent, _, messages) = eval(&src);
+    assert!(messages.contains("must be a map"), "{messages}");
+    assert!(intent.is_none());
+}

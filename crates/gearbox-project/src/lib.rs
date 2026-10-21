@@ -16,6 +16,7 @@
 //! testable against a fixture tree and keeps the merge rule in one place.
 
 pub mod attribute;
+pub mod client_uses;
 pub mod cluster;
 pub mod config;
 pub mod contract;
@@ -35,6 +36,7 @@ mod test_corpus;
 pub use attribute::{
     AttributeSite, LocateError, files_owned_by, gear_attribute_sites, locate_gear_attribute,
 };
+pub use client_uses::project_client_uses;
 pub use cluster::{
     ClusterProjectionError, FeatureGate, ProjectedClusterProvider, SdkDefaultRule,
     project_backend_capabilities, project_provider_name, project_provider_registry,

@@ -93,6 +93,7 @@ export * from "./NodeKind";
 export * from "./Ownership";
 export * from "./PackageRef";
 export * from "./PendingGear";
+export * from "./PlatformAuth";
 export * from "./PluginImpl";
 export * from "./PluginScaffold";
 export * from "./PluginSelection";

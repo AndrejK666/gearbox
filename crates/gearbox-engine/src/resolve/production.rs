@@ -81,13 +81,10 @@ pub fn check(
         {
             broken.push((
                 format!(
-                    "a {} profile needs platform auth `internal_auth.provider = \"{wanted}\"` on \
-                     `api-gateway`, which {}",
+                    "a {} profile needs platform auth `{wanted}` (`platform_auth = \"{wanted}\"` \
+                     on the profile), and its `api-gateway` {}",
                     declaration.kind(),
-                    provider.map_or_else(
-                        || "configures none".to_owned(),
-                        |p| format!("sets to `{p}`")
-                    )
+                    provider.map_or_else(|| "has none".to_owned(), |p| format!("has `{p}`"))
                 ),
                 "ADR-0011 section 3",
             ));

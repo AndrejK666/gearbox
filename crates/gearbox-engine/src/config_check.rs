@@ -161,7 +161,7 @@ pub fn check(
 
         report_unset_required(gear, schema, selection, uri, diagnostics);
 
-        check_plugin_secrets(catalogue, selection, uri, diagnostics);
+        check_plugin_config(catalogue, selection, uri, diagnostics);
     }
 }
 
@@ -246,19 +246,19 @@ fn report_unset_required(
     }
 }
 
-/// A plugin's configuration, checked for credentials and for nothing else.
+/// A plugin's configuration: credentials, and keys its schema does not declare.
 ///
-/// **Deliberately narrower than the check above.** A plugin is where a
-/// `client_secret` would go, so the credential rule has to reach it. The
-/// unknown-key rule cannot follow yet: `oidc-authn-plugin` exposes only `vendor`
-/// and `priority`, while the demo product sets `issuer` on it, so extending
-/// `GBX0115` here would turn the shipped product red until the corpus declares
-/// that field. That is a change to `gears-rust`, not to this check.
+/// The unknown-key rule matters more here than anywhere: the generator writes a
+/// plugin's configuration through the same schema filter as a gear's
+/// (`generate::config::drop_unknown_keys`), so an undeclared key -- a CA path, a
+/// field a schema does not expose yet -- would vanish from the generated file
+/// without a word. It used to stop at credentials while the demo product set an
+/// undeclared `issuer`; the corpus declares the plugin's real surface now.
 ///
-/// A plugin's configuration also never reaches the lock -- `resolve::product`
-/// reads `selected_gears` and does not descend -- so this rule serves the
-/// description, which is the file a credential would be committed in.
-fn check_plugin_secrets(
+/// A plugin's configuration never reaches the lock as its own entry --
+/// `resolve::product` merges it into the implementing gear's -- so the rule
+/// serves the description, which is where the key was typed.
+fn check_plugin_config(
     catalogue: &Catalogue,
     selection: &GearSelection,
     uri: &str,
@@ -273,13 +273,53 @@ fn check_plugin_secrets(
             continue;
         };
         for (key, value) in &plugin.config {
-            let secret = schema
-                .fields
-                .iter()
-                .any(|field| &field.name == key && field.secret);
-            if secret && !literal_secret_is_allowed(value) {
+            let Some(field) = schema.fields.iter().find(|field| &field.name == key) else {
+                diagnostics.push(
+                    Diagnostic::error(
+                        DiagnosticCode::GdlUnknownConfigKey,
+                        format!(
+                            "plugin `{}` config key `{key}` is not declared by `{}`",
+                            plugin.gear, schema.rust
+                        ),
+                        format!(
+                            "remove `{key}`, or add it to the plugin's configuration schema \
+                             (`config_schema = config(exposes = [...])` in its gear.gdl); the \
+                             generator writes only declared keys, so this one would be dropped"
+                        ),
+                    )
+                    .at(Location::or_file(plugin.declared_at.as_ref(), uri))
+                    .about_config(key.clone()),
+                );
+                continue;
+            };
+            if field.secret && !literal_secret_is_allowed(value) {
                 diagnostics.push(literal_secret(&plugin.gear, key, selection, uri));
             }
+        }
+        // A required field the plugin's loader refuses without: the generated
+        // file carries only what the description sets.
+        for field in &schema.fields {
+            if !field.required || field.default.is_some() || plugin.config.contains_key(&field.name)
+            {
+                continue;
+            }
+            diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::GdlRequiredConfigUnset,
+                    format!(
+                        "plugin `{}` requires `{}` and `{}` declares no default for it, and this \
+                         description sets no value",
+                        plugin.gear, field.name, schema.rust
+                    ),
+                )
+                .with_help(format!(
+                    "set `{}` in the plugin's `config = {{...}}`, or the generated file will be \
+                     missing a field the plugin's loader refuses at startup",
+                    field.name
+                ))
+                .at(Location::or_file(plugin.declared_at.as_ref(), uri))
+                .about_config(field.name.clone()),
+            );
         }
     }
 }

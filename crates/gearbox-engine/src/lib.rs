@@ -11,6 +11,7 @@
 //! `gearbox-gdl` names `starlark`. Both are asserted in `tests/boundaries.rs`.
 
 pub mod catalogue;
+pub mod client_use_check;
 pub mod cluster;
 pub mod config;
 pub mod config_check;

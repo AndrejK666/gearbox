@@ -44,8 +44,8 @@ pub use ids::{
 };
 pub use intent::{
     ApplicationPin, BindingIntent, BindingMode, ClusterScopeIntent, ConfigValue,
-    DeploymentProfileDecl, Discovery, GearSelection, PluginSelection, Preference, ProductIntent,
-    ProviderBinding, SourceDecl,
+    DeploymentProfileDecl, Discovery, GearSelection, PlatformAuth, PluginSelection, Preference,
+    ProductIntent, ProviderBinding, SourceDecl,
 };
 pub use requirement::{
     Capability, ClusterPrimitive, ClusterProviderDecl, FeatureGate, Requirement, RequirementKind,

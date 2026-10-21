@@ -166,6 +166,11 @@ pub fn registered_gears(
             idents.insert(ident);
         }
     }
+    // A client SDK carries the registration that wires its remote client; it
+    // stays linked by its own line.
+    for (sdk, _) in super::manifest::client_sdks(input, application) {
+        idents.insert(sdk.lib_ident.as_str());
+    }
 
     let body = templates::render(
         "registered_gears.rs",

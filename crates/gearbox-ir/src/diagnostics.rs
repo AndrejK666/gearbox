@@ -664,6 +664,14 @@ diagnostic_codes! {
     /// Explicit GDL dependencies must match the co-location edges in Rust.
     ValidateDependencyMismatch = "GBX0214", Validate, Error, false, "GDL dependencies differ from Rust";
 
+    /// A gear's code resolves a contract from the `ClientHub` --
+    /// `hub.get::<dyn Trait>()` -- that it neither consumes nor provides, and
+    /// links no provider of through `deps`. The call compiles and finds nothing
+    /// at run time, or finds a client the composition never planned: whether it
+    /// can be remote, and where its provider runs, are decided from declarations
+    /// this call does not have (test case G16). Read from syntax, so a warning.
+    ValidateUndeclaredClientUse = "GBX0215", Validate, Warning, false, "code resolves a contract it does not declare";
+
     // ---------------------------------------------------------------- GBX03xx
     /// A selected or depended-upon gear is not in the catalogue.
     TopologyUnknownGear = "GBX0301", Topology, Error, false, "unknown gear",
@@ -889,6 +897,12 @@ diagnostic_codes! {
     /// `AuthN` accepts everyone. Every profile is a production target unless it
     /// says `development = True`, which reports the same findings as warnings.
     TopologyNotProductionReady = "GBX0325", Topology, Error, false, "a production profile breaks a production rule";
+
+    /// A profile's `platform_auth` cannot be applied as written: `api-gateway`,
+    /// which carries the platform credential to the hubs and workers, is not
+    /// selected, or its `internal_auth` names another provider. Two answers to
+    /// one question are not merged; the description keeps one.
+    TopologyPlatformAuthUnapplied = "GBX0326", Topology, Error, false, "a profile's platform auth cannot be applied";
 
     /// A product selects a gear that is described but has no code yet.
     ///

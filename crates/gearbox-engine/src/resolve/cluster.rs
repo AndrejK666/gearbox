@@ -338,6 +338,7 @@ pub fn remote_bindings(
         .into_iter()
         .filter_map(|(requester, application, contract)| {
             let contract = gearbox_ir::ContractId::new(contract).ok()?;
+            let client_sdk = catalogue.contracts.get(&contract).map(|c| c.sdk.clone());
             catalogue
                 .contracts
                 .contains_key(&contract)
@@ -359,6 +360,9 @@ pub fn remote_bindings(
                     critical: true,
                     // Decided once every binding is known; see `resolve::resolve_at`.
                     gates_readiness: false,
+                    // The SDK's remote half: the process links it so the
+                    // SDK's `ConsumerRegistration` exists to wire the client.
+                    client_sdk,
                     selected: Selected::auto(),
                 })
         })
@@ -489,8 +493,22 @@ fn in_this_build(
     out
 }
 
-/// Whether the topology can put two things in different memory.
+/// Whether the cluster backends' state can be split across memories.
+///
+/// Process-local backends live in the process that hosts `cluster`. When exactly
+/// one unreplicated application hosts it, there is one copy of that state, and
+/// every other process reaches it over gRPC (ADR-0026 §4) -- or, on a profile
+/// that cannot, is refused before this matters (GBX0415, GBX0418). Otherwise a
+/// topology with more than one application or any replication spreads it.
 fn is_spread(partition: &Partition) -> bool {
+    let hosts: Vec<_> = partition
+        .applications
+        .iter()
+        .filter(|a| a.gears.iter().any(|g| g.as_str() == CLUSTER_GEAR))
+        .collect();
+    if let [host] = hosts.as_slice() {
+        return host.is_replicated();
+    }
     partition.applications.len() > 1
         || partition
             .applications

@@ -493,6 +493,8 @@ gdl_record! {
         pub cargo_profile: Option<String>,
         pub namespace: Option<String>,
         pub image_registry: Option<String>,
+        /// `platform_auth = "kube" | "shared_secret"`, as written.
+        pub platform_auth: Option<String>,
         /// `development = True`: production rules become warnings.
         pub development: bool,
         /// Where this profile constructor was written.
@@ -514,6 +516,8 @@ gdl_record! {
         pub features: Vec<String>,
         /// Opaque per-gear configuration, carried through to the generator.
         pub config: Vec<(String, serde_json::Value)>,
+        /// `profile_config = {"<profile>": {...}}`: merged over `config` in that profile.
+        pub profile_config: Vec<(String, Vec<(String, serde_json::Value)>)>,
         /// Implementations chosen for this gear's plugin extension points.
         pub plugins: Vec<PluginRecord>,
         /// Where this `use_gear(...)` call was written.

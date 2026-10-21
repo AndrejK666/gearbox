@@ -162,8 +162,7 @@ It requires:
   loopback), which is the port neighbours' static endpoints name; a production hub with platform auth gets
   `internal_auth_enforcement: required`; with `kube` platform auth every generated unit mounts the projected token for
   its audience and is granted TokenReview. The embedded hub is `listen_addr: none`. A development multi-process profile
-  keeps the single listener. Platform auth is gear configuration and cannot yet differ per profile
-  (`tasks/service-deployment/todo-issues.md` item 15). The cross-target invariant is checked over the repository's
+  keeps the single listener. The cross-target invariant is checked over the repository's
   products (`crates/gearbox-engine/tests/cross_target.rs`, G13); a cluster edge is compared by its request, because it
   is recorded as a binding only where the requester runs apart from `cluster` (§4).
 * **As implemented (Phase 3).** A unit with a hand-written chart (gears-rust ADR-0004 amendment: Flight Control,
@@ -171,6 +170,13 @@ It requires:
   application that is exactly that unit ships the chart and the unit's image instead of a generated subchart and crate;
   the description supplies only its gears' configuration (`configOverlay`) and Secret-backed placeholders
   (`secretEnv`). Every other application keeps a generated chart.
+* **As implemented (after Phase 3).** Platform auth is a property of the profile: `kubernetes(platform_auth = "kube"
+  | "shared_secret")`, `self_hosted(platform_auth = "shared_secret")` (GDL 1.3). Resolution writes it into
+  `api-gateway`'s `internal_auth` (fields the description set there are kept; another `provider`, or no gateway to
+  carry it, is **GBX0326**), and the generator carries that to every hub and worker, so one description holds
+  production profiles of different kinds. Any other per-profile difference in a gear's configuration is
+  `use_gear(profile_config = {"<profile>": {...}})`, merged over `config` for that profile; the production rules, the
+  config checks and the lock read the merged result.
 
 ### 7. Installation references are deferred
 

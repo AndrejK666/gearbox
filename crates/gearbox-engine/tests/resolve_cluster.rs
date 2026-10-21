@@ -895,3 +895,77 @@ fn a_cluster_hub_off_the_network_is_refused() {
         "{messages:?}"
     );
 }
+
+/// Phase 4: a process-local backend in its own unreplicated cluster unit is one
+/// copy of the state -- every requester reaches it over gRPC -- so it is not
+/// GBX0503. The same unit replicated is.
+#[test]
+fn one_unreplicated_cluster_unit_holds_the_only_copy() {
+    let mut cat = support::cluster_catalogue(vec![(
+        ClusterPrimitive::Cache,
+        "main",
+        &["cluster.cache.linearizable"],
+    )]);
+    // The requester reaches cluster as a capability, not a `deps` edge, so it
+    // links no copy of its own.
+    cat.gears
+        .get_mut(&support::gid("app"))
+        .unwrap()
+        .colocated_deps
+        .clear();
+    let mut intent = support::kubernetes(&["app", "cluster"], Discovery::Directory);
+    support::bind_cluster(&mut intent, "main", "standalone", None);
+    support::pin(&mut intent, "coordination", "cluster", 1);
+    let profile = intent
+        .profiles
+        .keys()
+        .find(|p| p.as_str() != "dev")
+        .unwrap()
+        .clone();
+
+    let r = resolve(&cat, &intent, &profile);
+    let apps: Vec<_> = r
+        .partition
+        .applications
+        .iter()
+        .map(|a| (a.name.to_string(), a.gears.clone()))
+        .collect();
+    assert_eq!(apps.len(), 2, "requester and cluster unit apart: {apps:?}");
+    assert!(
+        codes(&r).contains(&DiagnosticCode::ClusterAutoSelected)
+            || r.cluster
+                .iter()
+                .any(|b| b.resolved.effective_provider() == Some("standalone")),
+        "the scope resolved onto standalone: {:?}",
+        r.diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !codes(&r).contains(&DiagnosticCode::ClusterProcessLocalInMultiProcess),
+        "{:?}",
+        r.diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+
+    intent
+        .application_pins
+        .iter_mut()
+        .find(|p| p.name.as_str() == "coordination")
+        .unwrap()
+        .replicas = 2;
+    let r = resolve(&cat, &intent, &profile);
+    assert!(
+        codes(&r).contains(&DiagnosticCode::ClusterProcessLocalInMultiProcess),
+        "{:?} {:?}",
+        r.partition
+            .applications
+            .iter()
+            .map(|a| (a.name.as_str(), a.replicas, a.gears.clone()))
+            .collect::<Vec<_>>(),
+        r.diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}

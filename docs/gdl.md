@@ -754,19 +754,40 @@ A `registry` source is the registry itself rather than one package, so a product
 
 ```
 embedded(id, database?, development = False)
-self_hosted(id, host, worker_discovery, target_dir?, cargo_profile?, database?, development = False)
-kubernetes(id, discovery, namespace?, image_registry?, database?, development = False)
+self_hosted(id, host, worker_discovery, target_dir?, cargo_profile?, database?, platform_auth?, development = False)
+kubernetes(id, discovery, namespace?, image_registry?, database?, platform_auth?, development = False)
 ```
 
 Every profile is a **production** target unless it says `development = True`
 (GDL 1.3). A production profile is held to the production rules before anything
 is generated (**GBX0325**, gears-rust ADR-0011 §1/§3): the gateway's public listener
-stays exposed-only, a multi-process profile has its kind's platform auth on
-`api-gateway` (`internal_auth.provider = "kube"` on `kubernetes`, `"shared_secret"`
-on `self_hosted`), an `embedded` hub binds no TCP, a hub socket is not in `/tmp`,
+stays exposed-only, a multi-process profile has its kind's platform auth
+(`"kube"` on `kubernetes`, `"shared_secret"` on `self_hosted`), an `embedded` hub binds no TCP, a hub socket is not in `/tmp`,
 a hub enforces platform auth, and tenant AuthN is not `static-authn-plugin` in
 `accept_all` mode. `development = True` reports the same findings as warnings and
 keeps the generator's development defaults.
+
+`platform_auth` (GDL 1.3) is how the processes of a multi-process profile
+authenticate each other on the platform plane: `"kube"` (a projected
+ServiceAccount token validated through TokenReview; `kubernetes` only) or
+`"shared_secret"` (one secret, one identity). Gearbox writes it into
+`api-gateway`'s `internal_auth`, which the generator carries to every hub and
+worker:
+
+- `"kube"`: `{provider = "kube", audiences = ["toolkit-internal"], token_path =
+  "/var/run/secrets/tokens/<audience>"}`; the generated chart mounts that token in
+  every unit and grants the validators TokenReview.
+- `"shared_secret"`: `{provider = "shared_secret", secret = "", peer_name =
+  "<product>-platform"}`, and that label joins `service-discovery`'s
+  `trusted_registrars`, since every holder of the secret is the same identity. The
+  secret itself comes from the environment (`APP__...` overrides); an empty one
+  fails startup.
+
+Fields the gateway's own `internal_auth` sets (`audiences`, `peer_name`, ...) are
+kept over these defaults. A `provider` there that names another kind, or a
+product without `api-gateway`, is **GBX0326**: the description gives one answer.
+A profile without `platform_auth` keeps whatever the gateway's configuration
+says, as before.
 
 `id` is kebab-case. Duplicate ids are **GBX0110**. `worker_discovery` / `discovery` is `"static"` or `"directory"`, and nothing else. `host` is an application name, kebab-case. `cargo_profile` is a single path segment: `dev`, `release`, or a custom Cargo profile. `dev` writes under `target/debug`. `target_dir` is the Cargo target directory the host spawns workers out of, **as written** and relative to the description; a `self_hosted` profile without one cannot say where a worker binary is, which is **GBX0310**. On `kubernetes`, `namespace` and `image_registry` prefix what the chart deploys and where it pulls from; both are optional, recorded in the lock and used to derive the generated deployment artifacts.
 
@@ -774,10 +795,12 @@ keeps the generator's development defaults.
 
 ```
 plugin("gear-id", config = {}, profiles = [])
-use_gear("gear-id", source, version?, package?, features = [], config = {}, plugins = [])
+use_gear("gear-id", source, version?, package?, features = [], config = {}, profile_config = {}, plugins = [])
 ```
 
 Only the gear id is positional: `use_gear("api-gateway", source = "gears-rust")`. `source` names a `source(id = ...)`. `version` and `package` are registry-only; on `path`/`git` they are an error. `config` is a map of JSON-shaped values (string, number, bool, list, map; no `None`, no records; nesting ≤ 32). Keys must be fields the gear actually declares (**GBX0115**) and types must match (**GBX0113**). Both are checked against `config_schema`, so a gear that declares none has no field list to check against. A field Rust declares secret (`secrecy::SecretString`) may hold only `"${UPPER_NAME}"`, naming an environment variable the generator reads; a literal is **GBX0116**, and so is `"${VAR:-default}"`, because the default half is a live value.
+
+`profile_config` (GDL 1.3) maps a declared profile id to configuration merged over `config` when that profile is resolved: maps merge key by key, any other value (a list included) replaces. `use_gear("api-gateway", config = {"public": {...}}, profile_config = {"prod": {"internal_auth": {"audiences": ["payments"]}}})`. The merged result is what the production rules, the config checks and the lock see; an id that is not a declared profile is reported like any other undeclared profile.
 
 `plugin` names an implementing gear. Which extension point it fills comes from the catalogue. The same implementation twice for one host in one profile is **GBX0110**.
 
@@ -999,9 +1022,9 @@ product(
     version = "0.1.0",
     layout = "apps",
     sources = [source(id = "gears-rust", at = path("../../../gears-rust"))],
-    # Development profiles: accept-all AuthN and no platform auth are allowed
-    # (GBX0325 as warnings). A production profile needs its kind's platform auth
-    # on api-gateway -- see "Deployment profiles".
+    # `dev` and `local` are development profiles: accept-all AuthN and no
+    # platform auth are allowed (GBX0325 as warnings). `prod` is a production
+    # profile, its platform auth given by the profile -- see "Deployment profiles".
     profiles = [
         embedded(id = "dev", development = True,
                  database = postgres(host = "127.0.0.1", user = "postgres",
@@ -1010,7 +1033,7 @@ product(
                     target_dir = "../../../gears-rust/target",
                     database = postgres(host = "127.0.0.1", user = "postgres",
                         password = "${GEARS_PG_PASSWORD}", params = {"sslmode": "disable"})),
-        kubernetes(id = "prod", development = True, discovery = "static", namespace = "payments",
+        kubernetes(id = "prod", platform_auth = "kube", discovery = "static", namespace = "payments",
                     database = postgres(host = "postgres.example.com", user = "payments",
                         password = "${GEARS_PG_PASSWORD}", existing_secret = "payments-db")),
     ],
@@ -1025,7 +1048,13 @@ product(
             plugin("static-authn-plugin", profiles = ["dev", "local"],
                    config = {"mode": "accept_all"}),
             plugin("oidc-authn-plugin", profiles = ["prod"],
-                   config = {"issuer": "https://id.example.com"}),
+                   config = {"jwt": {"trusted_issuers": [{"issuer": "https://id.example.com"}],
+                                     "expected_audience": ["payments"],
+                                     "claim_mapping": {"subject_id": "sub",
+                                                       "subject_tenant_id": "tenant_id",
+                                                       "token_scopes": "scope"}},
+                             "s2s_oauth": {"discovery_url": "https://id.example.com",
+                                           "default_subject_type": "gts.cf.core.security.subject_user.v1~"}}),
         ]),
     ],
     bindings = [

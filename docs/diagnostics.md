@@ -15,7 +15,7 @@ remedy at the point it is raised
 (`cpt-gearbox-nfr-actionable-diagnostics`), which is per-occurrence and
 so is not listed here.
 
-Codes: **118**.
+Codes: **120**.
 
 ## `GBX01xx` — Parsing and evaluating GDL
 
@@ -341,6 +341,7 @@ renamed what this reader knows, so its errors would be the wrong ones.
 | [GBX0212](#gbx0212) | error | exposed config field is not declared by the gear |
 | [GBX0213](#gbx0213) | error | offered Cargo feature is not declared by the crate |
 | [GBX0214](#gbx0214) | error | GDL dependencies differ from Rust |
+| [GBX0215](#gbx0215) | warning | code resolves a contract it does not declare |
 
 ### GBX0206
 
@@ -451,6 +452,17 @@ nothing pointing back at the description.
 
 Explicit GDL dependencies must match the co-location edges in Rust.
 
+### GBX0215
+
+**code resolves a contract it does not declare**
+
+A gear's code resolves a contract from the `ClientHub` --
+`hub.get::<dyn Trait>()` -- that it neither consumes nor provides, and
+links no provider of through `deps`. The call compiles and finds nothing
+at run time, or finds a client the composition never planned: whether it
+can be remote, and where its provider runs, are decided from declarations
+this call does not have (test case G16). Read from syntax, so a warning.
+
 ## `GBX03xx` — Process topology and structural constraints
 
 | Code | Severity | Summary |
@@ -476,6 +488,7 @@ Explicit GDL dependencies must match the co-location edges in Rust.
 | [GBX0319](#gbx0319) | error | an application names a role its anchor does not declare |
 | [GBX0320](#gbx0320) | warning | two applications register the same directory name |
 | [GBX0325](#gbx0325) | error | a production profile breaks a production rule |
+| [GBX0326](#gbx0326) | error | a profile's platform auth cannot be applied |
 | [GBX0321](#gbx0321) | error | gear is at design maturity |
 | [GBX0322](#gbx0322) | warning | gear is experimental |
 | [GBX0323](#gbx0323) | info | gear is at preview |
@@ -788,6 +801,15 @@ self-hosted), an embedded hub binds TCP, a hub socket sits in a shared
 temporary directory, a hub does not enforce platform auth, or tenant
 `AuthN` accepts everyone. Every profile is a production target unless it
 says `development = True`, which reports the same findings as warnings.
+
+### GBX0326
+
+**a profile's platform auth cannot be applied**
+
+A profile's `platform_auth` cannot be applied as written: `api-gateway`,
+which carries the platform credential to the hubs and workers, is not
+selected, or its `internal_auth` names another provider. Two answers to
+one question are not merged; the description keeps one.
 
 ### GBX0321
 

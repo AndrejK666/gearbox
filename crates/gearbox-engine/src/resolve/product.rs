@@ -36,6 +36,15 @@ pub fn assemble(
     resolution: &Resolution,
     sources: BTreeMap<SourceId, ResolvedSource>,
 ) -> ResolvedProduct {
+    // The configuration this profile runs, as the resolution saw it; what it
+    // reported about it is already in `resolution.diagnostics`.
+    let effective = super::profile::effective(
+        intent,
+        &resolution.profile,
+        "",
+        &mut gearbox_ir::Diagnostics::new(),
+    );
+    let intent: &ProductIntent = &effective;
     let declaration = intent.profiles.get(&resolution.profile);
 
     let mut product = ResolvedProduct {

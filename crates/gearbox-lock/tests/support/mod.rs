@@ -258,6 +258,7 @@ fn bindings() -> Vec<ResolvedBinding> {
         critical: false,
         // Decided once every binding is known; see `resolve::resolve_at`.
         gates_readiness: false,
+        client_sdk: None,
         selected: Selected::honoured(BindingRequest {
             mode: BindingMode::Remote,
             transport: Some(Transport::Rest),

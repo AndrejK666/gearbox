@@ -108,6 +108,16 @@ pub fn validate_at(
             // The other join that needs no resolver: a config value against the
             // type its gear declares for that field.
             crate::config_check::check(&scan.catalogue, intent, &uri, &mut diagnostics);
+            // Again for each profile that changes a gear's configuration: its
+            // `profile_config` values are config values too, and its
+            // `platform_auth` must land somewhere.
+            for profile in intent.profiles.keys() {
+                let effective =
+                    crate::resolve::profile::effective(intent, profile, &uri, &mut diagnostics);
+                if let std::borrow::Cow::Owned(effective) = &effective {
+                    crate::config_check::check(&scan.catalogue, effective, &uri, &mut diagnostics);
+                }
+            }
             // And the same join for features. Every declared profile, because
             // `use_gear` takes no `profiles`: a feature is selected for all of
             // them, so one that suits none is wrong wherever it is read.

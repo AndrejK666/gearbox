@@ -241,6 +241,7 @@ fn an_unknown_selected_gear_is_reported_and_the_rest_still_resolves() {
         package: None,
         features: Vec::new(),
         config: std::collections::BTreeMap::new(),
+        profile_config: std::collections::BTreeMap::new(),
         plugins: Vec::new(),
         declared_at: None,
     });

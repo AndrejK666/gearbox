@@ -348,3 +348,269 @@ fn a_self_hosted_hub_is_a_private_socket() {
     );
     assert_eq!(findings(&intent), vec![]);
 }
+
+fn set_platform_auth(intent: &mut ProductIntent, value: gearbox_ir::PlatformAuth) {
+    for declaration in intent.profiles.values_mut() {
+        match declaration {
+            DeploymentProfileDecl::SelfHosted { platform_auth, .. }
+            | DeploymentProfileDecl::Kubernetes { platform_auth, .. } => {
+                *platform_auth = Some(value);
+            }
+            DeploymentProfileDecl::Embedded { .. } => {}
+        }
+    }
+}
+
+/// The profile under test and its effective intent, with what deriving it
+/// reported.
+fn effective(intent: &ProductIntent) -> (ProductIntent, Vec<gearbox_ir::Diagnostic>) {
+    let profile = intent
+        .profiles
+        .keys()
+        .find(|p| p.as_str() != "dev")
+        .unwrap()
+        .clone();
+    let mut diagnostics = gearbox_ir::Diagnostics::new();
+    let out = gearbox_engine::resolve::profile::effective(
+        intent,
+        &profile,
+        "file:///p",
+        &mut diagnostics,
+    )
+    .into_owned();
+    (out, diagnostics.iter().cloned().collect())
+}
+
+fn gear_config<'a>(
+    intent: &'a ProductIntent,
+    gear: &str,
+) -> &'a std::collections::BTreeMap<String, serde_json::Value> {
+    &intent
+        .selected_gears
+        .iter()
+        .find(|s| s.gear.as_str() == gear)
+        .unwrap()
+        .config
+}
+
+#[test]
+fn platform_auth_on_the_profile_meets_the_rule() {
+    let mut intent = kubernetes(false);
+    set_platform_auth(&mut intent, gearbox_ir::PlatformAuth::Kube);
+    assert_eq!(findings(&intent), vec![], "conforming");
+    let (out, reported) = effective(&intent);
+    assert!(reported.is_empty(), "{reported:?}");
+    assert_eq!(
+        gear_config(&out, "api-gateway")["internal_auth"],
+        json!({
+            "provider": "kube",
+            "audiences": ["toolkit-internal"],
+            "token_path": "/var/run/secrets/tokens/toolkit-internal",
+        })
+    );
+}
+
+#[test]
+fn the_description_may_refine_the_profiles_platform_auth() {
+    let mut intent = kubernetes(false);
+    set_platform_auth(&mut intent, gearbox_ir::PlatformAuth::Kube);
+    configure(
+        &mut intent,
+        "api-gateway",
+        "internal_auth",
+        json!({"audiences": ["payments-platform"]}),
+    );
+    let (out, _) = effective(&intent);
+    assert_eq!(
+        gear_config(&out, "api-gateway")["internal_auth"],
+        json!({
+            "provider": "kube",
+            "audiences": ["payments-platform"],
+            "token_path": "/var/run/secrets/tokens/payments-platform",
+        }),
+        "the token path follows the audience"
+    );
+}
+
+#[test]
+fn a_shared_secret_is_one_trusted_registrar() {
+    let mut intent = support::self_hosted(
+        &[
+            "api-gateway",
+            "grpc-hub",
+            "worker-api",
+            "authn-resolver",
+            "service-discovery",
+        ],
+        Discovery::Directory,
+        Some("t"),
+    );
+    support::pin(&mut intent, "worker", "worker-api", 1);
+    set_platform_auth(&mut intent, gearbox_ir::PlatformAuth::SharedSecret);
+    assert_eq!(findings(&intent), vec![]);
+    let (out, _) = effective(&intent);
+    let label = format!("{}-platform", intent.id);
+    assert_eq!(
+        gear_config(&out, "api-gateway")["internal_auth"],
+        json!({"provider": "shared_secret", "secret": "", "peer_name": label})
+    );
+    assert_eq!(
+        gear_config(&out, "service-discovery")["trusted_registrars"],
+        json!([label])
+    );
+}
+
+#[test]
+fn a_contradicting_provider_or_no_gateway_is_gbx0326() {
+    let mut intent = kubernetes(false);
+    set_platform_auth(&mut intent, gearbox_ir::PlatformAuth::Kube);
+    configure(
+        &mut intent,
+        "api-gateway",
+        "internal_auth",
+        json!({"provider": "shared_secret"}),
+    );
+    let (_, reported) = effective(&intent);
+    assert!(
+        reported
+            .iter()
+            .any(|d| d.code == DiagnosticCode::TopologyPlatformAuthUnapplied
+                && d.severity == Severity::Error
+                && d.message.contains("`shared_secret`")),
+        "{reported:?}"
+    );
+
+    let mut intent = kubernetes(false);
+    set_platform_auth(&mut intent, gearbox_ir::PlatformAuth::Kube);
+    intent
+        .selected_gears
+        .retain(|s| s.gear.as_str() != "api-gateway");
+    let (_, reported) = effective(&intent);
+    assert!(
+        reported
+            .iter()
+            .any(|d| d.code == DiagnosticCode::TopologyPlatformAuthUnapplied
+                && d.message.contains("no `api-gateway`")),
+        "{reported:?}"
+    );
+}
+
+#[test]
+fn profile_config_merges_over_config_for_its_profile_only() {
+    let mut intent = kubernetes(false);
+    set_platform_auth(&mut intent, gearbox_ir::PlatformAuth::Kube);
+    configure(
+        &mut intent,
+        "api-gateway",
+        "public",
+        json!({"exposed_only": true, "cors": {"enabled": true}}),
+    );
+    let profile = intent
+        .profiles
+        .keys()
+        .find(|p| p.as_str() != "dev")
+        .unwrap()
+        .clone();
+    intent
+        .selected_gears
+        .iter_mut()
+        .find(|s| s.gear.as_str() == "api-gateway")
+        .unwrap()
+        .profile_config
+        .insert(
+            profile,
+            [("public".to_owned(), json!({"exposed_only": false}))]
+                .into_iter()
+                .collect(),
+        );
+    let (out, _) = effective(&intent);
+    assert_eq!(
+        gear_config(&out, "api-gateway")["public"],
+        json!({"exposed_only": false, "cors": {"enabled": true}}),
+        "maps merge key by key"
+    );
+    assert!(
+        findings(&intent)
+            .iter()
+            .any(|(_, m)| m.contains("exposed_only")),
+        "the rules read the merged configuration"
+    );
+    // The embedded `dev` profile is untouched.
+    let mut diagnostics = gearbox_ir::Diagnostics::new();
+    let dev =
+        gearbox_engine::resolve::profile::effective(&intent, &pid("dev"), "", &mut diagnostics);
+    assert_eq!(
+        gear_config(&dev, "api-gateway")["public"],
+        json!({"exposed_only": true, "cors": {"enabled": true}})
+    );
+}
+
+#[test]
+fn the_lock_records_the_profiles_configuration() {
+    let mut intent = kubernetes(false);
+    set_platform_auth(&mut intent, gearbox_ir::PlatformAuth::Kube);
+    let profile = intent
+        .profiles
+        .keys()
+        .find(|p| p.as_str() != "dev")
+        .unwrap()
+        .clone();
+    let resolution = resolve(&catalogue(), &intent, &profile);
+    let lock = gearbox_engine::resolve::product::assemble(
+        &catalogue(),
+        &intent,
+        &resolution,
+        std::collections::BTreeMap::new(),
+    );
+    let gateway = &lock.gears[&support::gid("api-gateway")];
+    assert_eq!(gateway.config["internal_auth"]["provider"], json!("kube"));
+}
+
+/// The lock carries `profile_config` too -- nested maps merged, lists replaced
+/// -- and only for its own profile.
+#[test]
+fn the_lock_records_profile_config_for_its_profile_only() {
+    let mut intent = kubernetes(false);
+    set_platform_auth(&mut intent, gearbox_ir::PlatformAuth::Kube);
+    configure(
+        &mut intent,
+        "worker-api",
+        "limits",
+        json!({"rps": 10, "burst": 20, "tags": ["a", "b"]}),
+    );
+    let prod = intent
+        .profiles
+        .keys()
+        .find(|p| p.as_str() != "dev")
+        .unwrap()
+        .clone();
+    intent
+        .selected_gears
+        .iter_mut()
+        .find(|s| s.gear.as_str() == "worker-api")
+        .unwrap()
+        .profile_config
+        .insert(
+            prod.clone(),
+            [("limits".to_owned(), json!({"rps": 50, "tags": ["c"]}))]
+                .into_iter()
+                .collect(),
+        );
+    let lock_for = |profile: &ProfileId| {
+        let resolution = resolve(&catalogue(), &intent, profile);
+        gearbox_engine::resolve::product::assemble(
+            &catalogue(),
+            &intent,
+            &resolution,
+            std::collections::BTreeMap::new(),
+        )
+    };
+    assert_eq!(
+        lock_for(&prod).gears[&support::gid("worker-api")].config["limits"],
+        json!({"rps": 50, "burst": 20, "tags": ["c"]})
+    );
+    assert_eq!(
+        lock_for(&pid("dev")).gears[&support::gid("worker-api")].config["limits"],
+        json!({"rps": 10, "burst": 20, "tags": ["a", "b"]})
+    );
+}

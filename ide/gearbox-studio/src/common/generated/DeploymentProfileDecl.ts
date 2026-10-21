@@ -3,6 +3,7 @@ import type { ApplicationId } from "./ApplicationId";
 import type { Discovery } from "./Discovery";
 import type { GearId } from "./GearId";
 import type { Location } from "./Location";
+import type { PlatformAuth } from "./PlatformAuth";
 import type { PostgresDatabase } from "./PostgresDatabase";
 import type { ProfileId } from "./ProfileId";
 import type { SqliteDatabase } from "./SqliteDatabase";
@@ -49,6 +50,10 @@ target_dir?: string | null,
  */
 cargo_profile?: string | null, 
 /**
+ * `platform_auth = "shared_secret"`: how the processes authenticate each other.
+ */
+platform_auth?: PlatformAuth | null, 
+/**
  * `development = True`: the production rules (gears-rust ADR-0011 sections 1 and 3,
  * Gearbox ADR-0026 section 6) are reported as warnings rather than errors, and
  * the generator keeps its development defaults. Absent means production.
@@ -62,6 +67,10 @@ declared_at?: Location | null, } | { "profile": "kubernetes", id: ProfileId, dat
  * Explicit per-gear SQLite files relative to the gear home.
  */
 sqlite_databases?: { [key in GearId]: SqliteDatabase }, discovery: Discovery, namespace?: string | null, image_registry?: string | null, 
+/**
+ * `platform_auth = "kube"` or `"shared_secret"`: how the units authenticate each other.
+ */
+platform_auth?: PlatformAuth | null, 
 /**
  * `development = True`: the production rules (gears-rust ADR-0011 sections 1 and 3,
  * Gearbox ADR-0026 section 6) are reported as warnings rather than errors, and

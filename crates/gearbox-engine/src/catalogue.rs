@@ -151,6 +151,10 @@ pub fn load_catalogue_staged(
     // evidence a declared `implements` is checked against, not part of the descriptor.
     let mut implemented: BTreeMap<gearbox_ir::GearId, std::collections::BTreeSet<String>> =
         BTreeMap::new();
+    // What each gear's code resolves from the ClientHub, kept aside the same
+    // way for GBX0215.
+    let mut client_uses: BTreeMap<gearbox_ir::GearId, std::collections::BTreeSet<String>> =
+        BTreeMap::new();
     let mut diagnostics = Diagnostics::new();
     // One cache per load: a crate named by several gears is parsed once.
     let mut scans = crate::scans::CrateScans::new();
@@ -289,6 +293,9 @@ pub fn load_catalogue_staged(
             implemented
                 .entry(id.clone())
                 .or_insert_with(|| merged.implemented_traits.clone());
+            client_uses
+                .entry(id.clone())
+                .or_insert_with(|| merged.client_uses.clone());
             // **The first declaration wins, and the second is an error.**
             //
             // This used to `insert` unconditionally, so the diagnostic below said
@@ -358,6 +365,13 @@ pub fn load_catalogue_staged(
     // so an owner described later than the description that pulls its contract
     // in would look absent.
     report_unknown_contract_owners(&catalogue, roots, &mut diagnostics);
+    // Same reason: the contract a call names may belong to a gear described later.
+    crate::client_use_check::check(
+        &catalogue,
+        &client_uses,
+        |gear| description_uri(roots, gear),
+        &mut diagnostics,
+    );
     // Same reason: a plugin's host may be described later in discovery order.
     // A stopped load has not reached every host, so an unjoined fill is only
     // reported when it had the chance to join.
@@ -788,6 +802,7 @@ fn project_and_merge(
         tests,
     } = beside(root, identity, decl, diagnostics);
 
+    let client_uses = gearbox_project::project_client_uses(&files);
     crate::merge::merge(
         identity,
         decl,
@@ -816,6 +831,10 @@ fn project_and_merge(
         },
         diagnostics,
     )
+    .map(|mut merged| {
+        merged.client_uses = client_uses;
+        merged
+    })
 }
 
 /// Report every contract whose owner names nothing the catalogue holds.

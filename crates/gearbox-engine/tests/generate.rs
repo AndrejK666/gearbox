@@ -2106,11 +2106,21 @@ fn the_chart_exposes_the_hatches_a_house_policy_needs() {
     );
 
     // Nothing in a generated topology talks to the API server -- the resolver set
-    // is Directory, Null and Static, which is what GBX0603 reports -- so the
-    // token would be an unused credential in every pod.
+    // is Directory, Null and Static, which is what GBX0603 reports -- except a
+    // validator of `kube` platform tokens, which calls TokenReview. Anywhere else
+    // the token would be an unused credential in every pod.
+    let kube = lock.gears.iter().any(|(id, gear)| {
+        id.as_str() == "api-gateway"
+            && gear
+                .config
+                .get("internal_auth")
+                .and_then(|auth| auth.get("provider"))
+                .and_then(serde_json::Value::as_str)
+                == Some("kube")
+    });
     let values = text(&files.files, &format!("helm/{product}/values.yaml"));
     assert!(
-        values.contains("automountServiceAccountToken: false"),
+        values.contains(&format!("automountServiceAccountToken: {kube}")),
         "{values}"
     );
 }
@@ -2852,6 +2862,18 @@ fn a_non_anchor_provider_is_looked_up_under_its_workers_directory_name() {
 /// every generated unit mounts the projected platform token and may call
 /// `TokenReview`. The repository's products are `development = True`, so this
 /// takes payments-demo `prod` and makes it production.
+/// Phase 4, found on a cluster: `kube` platform auth is compiled in, or the
+/// runtime refuses `internal_auth.provider = kube` at startup.
+fn assert_toolkit_compiles_in_k8s_auth(files: &FileSet, application: &str) {
+    let manifest = text(files, &format!("apps/{application}/Cargo.toml"));
+    let toolkit = manifest
+        .split("[dependencies.toolkit]")
+        .nth(1)
+        .and_then(|rest| rest.split("\n[").next())
+        .unwrap_or_else(|| panic!("no toolkit dependency in {manifest}"));
+    assert!(toolkit.contains("\"k8s-auth\""), "{toolkit}");
+}
+
 #[test]
 fn a_production_kubernetes_profile_gets_the_production_shape() {
     let Some(root) = gears_rust() else {
@@ -2994,6 +3016,7 @@ fn a_production_kubernetes_profile_gets_the_production_shape() {
             block["extraVolumeMounts"][0]["mountPath"],
             "/var/run/secrets/tokens"
         );
+        assert_toolkit_compiles_in_k8s_auth(&files, application.name.as_str());
     }
 
     // With GEARBOX_HELM set, the chart renders: the token volume and the
@@ -3438,4 +3461,36 @@ fn two_self_hosted_hubs_get_distinct_sockets() {
         authored["api-contracts"],
         "uds://~/.cf-gears/payments-demo/local/run/api-contracts/grpc-hub.sock"
     );
+}
+
+/// Phase 4, found on a cluster: a process that reaches `cluster` over gRPC links
+/// the SDK's remote half. Without `grpc-client` the SDK registers no client and
+/// every call reports its profile unbound; without the `use` line the linker
+/// may drop the registration.
+#[test]
+fn a_remote_cluster_requester_links_the_sdk_client() {
+    let Some((lock, files)) = generated("prod") else {
+        return;
+    };
+    let remote: BTreeSet<&str> = lock
+        .bindings
+        .iter()
+        .filter(|b| b.is_remote() && b.client_sdk.is_some())
+        .map(|b| b.consumer_application.as_str())
+        .collect();
+    assert!(!remote.is_empty(), "prod reaches cluster over gRPC");
+    for application in remote {
+        let manifest = text(&files.files, &format!("apps/{application}/Cargo.toml"));
+        let sdk = manifest
+            .split("[dependencies.cluster_sdk]")
+            .nth(1)
+            .and_then(|rest| rest.split("\n[").next())
+            .unwrap_or_else(|| panic!("{application} does not link cluster_sdk: {manifest}"));
+        assert!(sdk.contains("\"grpc-client\""), "{sdk}");
+        let registered = text(
+            &files.files,
+            &format!("apps/{application}/src/registered_gears.rs"),
+        );
+        assert!(registered.contains("use cluster_sdk as _;"), "{registered}");
+    }
 }

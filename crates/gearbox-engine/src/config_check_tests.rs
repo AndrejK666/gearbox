@@ -111,6 +111,7 @@ fn intent(key: &str, value: serde_json::Value) -> ProductIntent {
         package: None,
         features: Vec::new(),
         config: BTreeMap::default(),
+        profile_config: BTreeMap::default(),
         plugins: Vec::new(),
         declared_at: None,
     };
@@ -382,9 +383,7 @@ fn the_refusal_spells_the_environment_variable() {
 /// A plugin's configuration is checked for credentials too.
 ///
 /// It is the likeliest place for one -- an OIDC plugin's `client_secret` -- and
-/// until now nothing looked at plugin configuration at all. Only the credential
-/// rule reaches here; see `check_plugin_secrets` for why the unknown-key rule
-/// cannot follow yet.
+/// until now nothing looked at plugin configuration at all.
 #[test]
 fn a_credential_on_a_plugin_is_refused_as_well() {
     let mut catalogue = catalogue_with_a_secret();
@@ -409,6 +408,68 @@ fn a_credential_on_a_plugin_is_refused_as_well() {
     assert_eq!(
         codes_of(&catalogue, &intent),
         vec![DiagnosticCode::GdlLiteralSecret]
+    );
+}
+
+/// A plugin config key its schema does not declare is GBX0115, as for a gear:
+/// the generator writes only declared keys, so it would otherwise be dropped
+/// in silence (a private `IdP` CA path was, in the Phase 4 integration product).
+#[test]
+fn an_undeclared_plugin_config_key_is_refused() {
+    let mut catalogue = catalogue_with_a_secret();
+    let plugin_id = GearId::new("demo-plugin").unwrap();
+    let mut plugin = catalogue.gears[&GearId::new("demo").unwrap()].clone();
+    plugin.id = plugin_id.clone();
+    catalogue.gears.insert(plugin_id.clone(), plugin);
+
+    let mut intent = intent("bind_addr", serde_json::json!("0.0.0.0:1"));
+    intent.selected_gears[0]
+        .plugins
+        .push(gearbox_ir::PluginSelection {
+            gear: plugin_id,
+            config: [("issuer".to_owned(), serde_json::json!("https://idp"))]
+                .into_iter()
+                .collect(),
+            profiles: BTreeSet::new(),
+            entry_index: 0,
+            declared_at: None,
+        });
+
+    assert_eq!(
+        codes_of(&catalogue, &intent),
+        vec![DiagnosticCode::GdlUnknownConfigKey]
+    );
+}
+
+/// A plugin's required field with no default and no value is said out loud
+/// too: `oidc-authn-plugin` without `s2s_oauth` resolved, generated and failed
+/// at startup.
+#[test]
+fn an_unset_required_plugin_field_is_reported() {
+    let mut catalogue = catalogue_with_a_secret();
+    let plugin_id = GearId::new("demo-plugin").unwrap();
+    let mut plugin = catalogue.gears[&GearId::new("demo").unwrap()].clone();
+    plugin.id = plugin_id.clone();
+    let schema = plugin.config_schema.as_mut().unwrap();
+    let mut s2s = field("s2s_oauth", ConfigFieldType::Complex);
+    s2s.required = true;
+    schema.fields.push(s2s);
+    catalogue.gears.insert(plugin_id.clone(), plugin);
+
+    let mut intent = intent("bind_addr", serde_json::json!("0.0.0.0:1"));
+    intent.selected_gears[0]
+        .plugins
+        .push(gearbox_ir::PluginSelection {
+            gear: plugin_id,
+            config: BTreeMap::new(),
+            profiles: BTreeSet::new(),
+            entry_index: 0,
+            declared_at: None,
+        });
+
+    assert_eq!(
+        codes_of(&catalogue, &intent),
+        vec![DiagnosticCode::GdlRequiredConfigUnset]
     );
 }
 

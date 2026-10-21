@@ -10,12 +10,190 @@
 //! enumerate the profiles would make the common case noisy and the exceptional
 //! one invisible.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use gearbox_ir::{
     ApplicationPin, BindingIntent, ClusterScopeIntent, Diagnostic, DiagnosticCode, Diagnostics,
-    Location, ProductIntent, ProfileId,
+    Location, PlatformAuth, ProductIntent, ProfileId,
 };
+use serde_json::{Value, json};
+
+const API_GATEWAY: &str = "api-gateway";
+const DIRECTORY: &str = "service-discovery";
+
+/// The intent as `profile` sees it: each gear's `profile_config` for it merged
+/// over `config`, and the profile's `platform_auth` written into `api-gateway`'s
+/// `internal_auth` -- which the generator spreads to the hubs and workers.
+///
+/// Everything after this reads one configuration per gear, so the production
+/// rules, the config check and the lock all see what this profile will run.
+/// Borrowed when the profile changes nothing.
+pub fn effective<'a>(
+    intent: &'a ProductIntent,
+    profile: &ProfileId,
+    uri: &str,
+    diagnostics: &mut Diagnostics,
+) -> Cow<'a, ProductIntent> {
+    let declaration = intent.profiles.get(profile);
+    let auth = declaration.and_then(gearbox_ir::DeploymentProfileDecl::platform_auth);
+    let overridden = intent
+        .selected_gears
+        .iter()
+        .any(|s| s.profile_config.contains_key(profile));
+    if auth.is_none() && !overridden {
+        return Cow::Borrowed(intent);
+    }
+    let mut out = intent.clone();
+    for selection in &mut out.selected_gears {
+        if let Some(over) = selection.profile_config.get(profile) {
+            for (key, value) in over {
+                match selection.config.get_mut(key) {
+                    Some(base) => merge(base, value),
+                    None => {
+                        selection.config.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+    }
+    if let (Some(auth), Some(declaration)) = (auth, declaration) {
+        apply_platform_auth(&mut out, auth, declaration, uri, diagnostics);
+    }
+    Cow::Owned(out)
+}
+
+/// `over` merged into `base`: maps key by key, any other value replaced.
+fn merge(base: &mut Value, over: &Value) {
+    match (base, over) {
+        (Value::Object(base), Value::Object(over)) => {
+            for (key, value) in over {
+                match base.get_mut(key) {
+                    Some(slot) => merge(slot, value),
+                    None => {
+                        base.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+        (base, over) => *base = over.clone(),
+    }
+}
+
+/// What `platform_auth` means in the runtime's `internal_auth`, filled in under
+/// any field the description set itself (a provider it names must agree).
+fn apply_platform_auth(
+    intent: &mut ProductIntent,
+    auth: PlatformAuth,
+    declaration: &gearbox_ir::DeploymentProfileDecl,
+    uri: &str,
+    diagnostics: &mut Diagnostics,
+) {
+    let at = Location::or_file(declaration.declared_at(), uri);
+    let profile = declaration.id();
+    let label = format!("{}-platform", intent.id);
+    let Some(gateway) = intent
+        .selected_gears
+        .iter_mut()
+        .find(|s| s.gear.as_str() == API_GATEWAY)
+    else {
+        diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::TopologyPlatformAuthUnapplied,
+                format!(
+                    "profile `{profile}` sets `platform_auth = \"{}\"`, but the product selects no \
+                     `api-gateway` to carry it to the hubs and workers",
+                    auth.as_str()
+                ),
+            )
+            .with_help("select `api-gateway`, or remove `platform_auth`")
+            .at(at),
+        );
+        return;
+    };
+    let mut wanted = match auth {
+        // The projected token the generated chart mounts for every unit; its
+        // path follows the audience, filled in below.
+        PlatformAuth::Kube => json!({
+            "provider": "kube",
+            "audiences": ["toolkit-internal"],
+        }),
+        // One secret, one identity: every holder authenticates under the
+        // product's label. The value comes from the environment (`APP__...`
+        // overrides); an empty one fails startup rather than authenticating.
+        PlatformAuth::SharedSecret => json!({
+            "provider": "shared_secret",
+            "secret": "",
+            "peer_name": label,
+        }),
+    };
+    if let Some(written) = gateway.config.get("internal_auth") {
+        let provider = written.get("provider").and_then(Value::as_str);
+        if provider.is_some_and(|p| p != auth.as_str()) {
+            diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::TopologyPlatformAuthUnapplied,
+                    format!(
+                        "profile `{profile}` sets `platform_auth = \"{}\"`, but `api-gateway`'s \
+                         `internal_auth.provider` is `{}` for it",
+                        auth.as_str(),
+                        provider.unwrap_or_default()
+                    ),
+                )
+                .with_help(
+                    "keep one: remove `internal_auth.provider` from the gear's configuration \
+                     (fields such as `audiences` may stay), or change the profile's \
+                     `platform_auth`",
+                )
+                .at(Location::or_file(gateway.declared_at.as_ref(), uri)),
+            );
+            return;
+        }
+        merge(&mut wanted, written);
+    }
+    if auth == PlatformAuth::Kube
+        && let Value::Object(fields) = &mut wanted
+        && !fields.contains_key("token_path")
+    {
+        let audience = fields
+            .get("audiences")
+            .and_then(|a| a.get(0))
+            .and_then(Value::as_str)
+            .unwrap_or("toolkit-internal")
+            .to_owned();
+        fields.insert(
+            "token_path".to_owned(),
+            Value::String(format!("/var/run/secrets/tokens/{audience}")),
+        );
+    }
+    gateway
+        .config
+        .insert("internal_auth".to_owned(), wanted.clone());
+
+    // A shared-secret peer may register only the gear named like its label
+    // unless the label is a trusted registrar, and every worker holds the same
+    // label.
+    if auth == PlatformAuth::SharedSecret
+        && let Some(directory) = intent
+            .selected_gears
+            .iter_mut()
+            .find(|s| s.gear.as_str() == DIRECTORY)
+    {
+        let peer = wanted
+            .get("peer_name")
+            .cloned()
+            .unwrap_or(Value::String(label));
+        let registrars = directory
+            .config
+            .entry("trusted_registrars".to_owned())
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Value::Array(list) = registrars
+            && !list.contains(&peer)
+        {
+            list.push(peer);
+        }
+    }
+}
 
 /// The intent with everything that does not apply to this profile removed.
 ///

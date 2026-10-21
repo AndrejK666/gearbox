@@ -1,0 +1,101 @@
+gdl_version = "1.3"
+
+# The Phase 4 integration product (tasks/service-deployment/phase-4.md): small on
+# purpose -- no database, no UI. It exists to prove direct routing and both
+# authentication planes on a real cluster, and to run the same gears once as
+# the embedded all-in-one binary.
+#
+# Units on `kind`:
+#   Flight Control  -- api-gateway's hand-written chart: the edge, the
+#                      directory, the hub, Types Registry, tenant AuthN (OIDC)
+#   cluster         -- cluster's hand-written chart: coordination over gRPC
+#   payments        -- the PaymentApi provider, internal only
+#   checkout        -- the consumer: `charge` exposed, `status` internal; calls
+#                      payments and cluster directly
+#   authz           -- the AuthZ bundle; `evaluate` is platform-plane
+#
+# The issuer and audience are the mock IdP's (gears-rust
+# deploy/helm/mock-idp.sh); its CA is mounted at /app/oidc-ca by the install.
+
+ISSUER = "https://mock-idp.gearbox-p4.svc.cluster.local"
+
+product(
+    id = "integration-demo",
+    name = "Integration Demo",
+    version = "0.1.0",
+
+    sources = [source(id = "gears-rust", at = path("../../../gears-rust"))],
+
+    profiles = [
+        kubernetes(
+            id = "kind",
+            discovery = "directory",
+            namespace = "gearbox-p4",
+            platform_auth = "kube",
+            # Every process links a Types Registry copy; they share this
+            # database, which the acceptance install deploys beside the product.
+            database = postgres(
+                host = "postgres.gearbox-p4.svc.cluster.local", user = "integration",
+                password = "${GEARS_PG_PASSWORD}", existing_secret = "integration-db",
+                params = {"sslmode": "disable"},
+            ),
+        ),
+        embedded(id = "all-in-one", sqlite_databases = {"types-registry": "types.sqlite3"}),
+    ],
+    default_profile = "kind",
+
+    gears = [
+        # The edge publishes its API description (`/openapi.json`) in every
+        # profile; Flight Control's chart turns it on too.
+        use_gear("api-gateway", source = "gears-rust", config = {"enable_docs": True}),
+        use_gear("service-discovery", source = "gears-rust"),
+        use_gear("grpc-hub", source = "gears-rust"),
+        use_gear("types-registry", source = "gears-rust"),
+        use_gear("cluster", source = "gears-rust"),
+        use_gear("api-contracts", source = "gears-rust"),
+        use_gear("api-contracts-consumer", source = "gears-rust"),
+        use_gear("authn-resolver", source = "gears-rust", plugins = [
+            plugin("oidc-authn-plugin", config = {
+                # `claim_mapping` has no default: which claims carry the
+                # subject, its tenant and its scopes.
+                "jwt": {
+                    "trusted_issuers": [{"issuer": ISSUER}],
+                    "expected_audience": ["integration-demo"],
+                    "claim_mapping": {
+                        "subject_id": "sub",
+                        "subject_tenant_id": "tenant_id",
+                        "token_scopes": "scope",
+                    },
+                },
+                "s2s_oauth": {
+                    "discovery_url": ISSUER,
+                    "default_subject_type": "gts.cf.core.security.subject_user.v1~",
+                },
+                "http_client": {"custom_ca_certificate_paths": ["/app/oidc-ca/ca.crt"]},
+            }),
+        ]),
+        use_gear("authz-resolver", source = "gears-rust", plugins = [
+            plugin("static-authz-plugin"),
+        ]),
+    ],
+
+    cluster_profiles = [
+        # One cluster replica: its in-memory backend coordinates every process
+        # that reaches it (R8, two replicas over a shared backend, is recorded
+        # as not delivered in phase-4.md).
+        cluster_profile(name = "event-broker", cache = provider("standalone")),
+    ],
+
+    applications = [
+        application("flight-control", anchor = "api-gateway",
+                    include = ["service-discovery", "grpc-hub", "types-registry", "authn-resolver"],
+                    profiles = ["kind"]),
+        application("cluster", anchor = "cluster", include = ["grpc-hub"], profiles = ["kind"]),
+        application("payments", anchor = "api-contracts", include = ["authn-resolver"],
+                    profiles = ["kind"]),
+        application("checkout", anchor = "api-contracts-consumer", include = ["authn-resolver"],
+                    profiles = ["kind"]),
+        application("authz", anchor = "authz-resolver", include = ["authn-resolver"],
+                    profiles = ["kind"]),
+    ],
+)

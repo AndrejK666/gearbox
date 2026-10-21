@@ -29,9 +29,11 @@ product(
                 password = "${GEARS_PG_PASSWORD}", params = {"sslmode": "disable"}),
             target_dir = "../../../gears-rust/target",
         ),
+        # A production profile: its units authenticate each other with
+        # ServiceAccount tokens (GBX0325 is an error here, not a warning).
         kubernetes(
-            development = True,
             id = "prod",
+            platform_auth = "kube",
             discovery = "static",
             namespace = "payments",
             database = postgres(host = "postgres.example.com", user = "payments",
@@ -75,14 +77,25 @@ product(
                 # `local` takes the static plugin for the same reason `dev`
                 # does: it is a one-machine development profile, and validating
                 # tokens against a real issuer there is a decision nobody wants.
-                # Moving it here was not cosmetic -- the host refused to start
-                # with `missing field jwt`, because `OidcAuthNGearConfig.jwt` has
-                # no default and `oidc-authn-plugin` does not expose it, so no
-                # description can supply it. Found by running the product.
+                # `prod` states the issuer and audience the plugin validates
+                # against (`jwt`, which `OidcAuthNGearConfig` requires).
                 plugin("static-authn-plugin", profiles = ["dev", "local"],
                        config = {"mode": "accept_all"}),
-                plugin("oidc-authn-plugin", profiles = ["prod"],
-                       config = {"issuer": "https://id.example.com"}),
+                plugin("oidc-authn-plugin", profiles = ["prod"], config = {
+                    "jwt": {
+                        "trusted_issuers": [{"issuer": "https://id.example.com"}],
+                        "expected_audience": ["payments"],
+                        "claim_mapping": {
+                            "subject_id": "sub",
+                            "subject_tenant_id": "tenant_id",
+                            "token_scopes": "scope",
+                        },
+                    },
+                    "s2s_oauth": {
+                        "discovery_url": "https://id.example.com",
+                        "default_subject_type": "gts.cf.core.security.subject_user.v1~",
+                    },
+                }),
             ],
         ),
     ],

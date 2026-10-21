@@ -171,8 +171,23 @@ pub fn check(
     uri: &str,
     diagnostics: &mut Diagnostics,
 ) -> Vec<PointResolution> {
-    let profiles: Vec<&ProfileId> = intent.profiles.keys().collect();
-    check_profiles(catalogue, intent, &profiles, uri, diagnostics)
+    // Each profile on the configuration it runs: a `profile_config` can change
+    // a host's or a plugin's `vendor`, the join key, so the raw intent would
+    // answer for no profile in particular. What deriving it reports is the
+    // resolver's and `validate`'s to say, not this check's.
+    let mut out = Vec::new();
+    for profile in intent.profiles.keys() {
+        let effective =
+            crate::resolve::profile::effective(intent, profile, uri, &mut Diagnostics::new());
+        out.extend(check_profiles(
+            catalogue,
+            &effective,
+            &[profile],
+            uri,
+            diagnostics,
+        ));
+    }
+    out
 }
 
 /// As [`check`], for the named profiles only.

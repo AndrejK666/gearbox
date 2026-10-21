@@ -30,7 +30,7 @@ use gearbox_ir::{FileEntry, SourceId};
 #[path = "common/corpus.rs"]
 mod corpus_support;
 
-const PRODUCTS: &[&str] = &["payments-demo", "configurable-gears"];
+const PRODUCTS: &[&str] = &["payments-demo", "configurable-gears", "integration-demo"];
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

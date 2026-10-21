@@ -324,6 +324,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
             cargo_profile: None,
             namespace: None,
             image_registry: None,
+            platform_auth: None,
             development: development.unwrap_or(false),
             declared_at: call_location(eval),
         })
@@ -342,6 +343,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `target_dir`: The Cargo target directory the host starts workers from, relative to this
     ///   file.
     /// * `cargo_profile`: The Cargo profile: `dev`, `release` or a custom one.
+    /// * `platform_auth`: How the processes authenticate each other: `"shared_secret"`.
     fn self_hosted<'v>(
         #[starlark(require = named)] id: &str,
         #[starlark(require = named)] host: &str,
@@ -350,6 +352,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] cargo_profile: Option<&str>,
         #[starlark(require = named)] database: Option<&crate::records::PostgresRecord>,
         #[starlark(require = named)] sqlite_databases: Option<Value<'_>>,
+        #[starlark(require = named)] platform_auth: Option<&str>,
         #[starlark(require = named)] development: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<ProfileRecord> {
@@ -364,6 +367,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
             cargo_profile: cargo_profile.map(str::to_owned),
             namespace: None,
             image_registry: None,
+            platform_auth: platform_auth.map(str::to_owned),
             development: development.unwrap_or(false),
             declared_at: call_location(eval),
         })
@@ -380,6 +384,8 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `discovery`: `"static"` or `"directory"`.
     /// * `namespace`: The namespace the chart deploys to.
     /// * `image_registry`: The registry images are pulled from.
+    /// * `platform_auth`: How the units authenticate each other: `"kube"` (`ServiceAccount`
+    ///   tokens through `TokenReview`) or `"shared_secret"`.
     fn kubernetes<'v>(
         #[starlark(require = named)] id: &str,
         #[starlark(require = named)] discovery: &str,
@@ -387,6 +393,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] image_registry: Option<&str>,
         #[starlark(require = named)] database: Option<&crate::records::PostgresRecord>,
         #[starlark(require = named)] sqlite_databases: Option<Value<'_>>,
+        #[starlark(require = named)] platform_auth: Option<&str>,
         #[starlark(require = named)] development: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<ProfileRecord> {
@@ -401,6 +408,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
             cargo_profile: None,
             namespace: namespace.map(str::to_owned),
             image_registry: image_registry.map(str::to_owned),
+            platform_auth: platform_auth.map(str::to_owned),
             development: development.unwrap_or(false),
             declared_at: call_location(eval),
         })
@@ -438,6 +446,8 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `features`: The gear's Cargo features to turn on.
     /// * `config`: The gear's configuration, as a map. Keys and types are checked against the
     ///   gear's `config_schema`.
+    /// * `profile_config`: Profile ids mapped to configuration merged over `config` when that
+    ///   profile is resolved: maps key by key, any other value replaced.
     /// * `plugins`: The plugins for the gear's extension points, as `plugin(...)`.
     fn use_gear<'v>(
         #[starlark(require = pos)] gear: &str,
@@ -446,6 +456,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] package: Option<&str>,
         #[starlark(require = named)] features: Option<UnpackList<String>>,
         #[starlark(require = named)] config: Option<Value<'v>>,
+        #[starlark(require = named)] profile_config: Option<Value<'v>>,
         #[starlark(require = named)] plugins: Option<UnpackList<&'v PluginRecord>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<UseGearRecord> {
@@ -456,6 +467,15 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
             package: package.map(str::to_owned),
             features: strings(features),
             config: config_map("config", config)?,
+            profile_config: config_map("profile_config", profile_config)?
+                .into_iter()
+                .map(|(profile, value)| match value {
+                    serde_json::Value::Object(map) => Ok((profile, map.into_iter().collect())),
+                    other => Err(anyhow::anyhow!(
+                        "`profile_config[\"{profile}\"]` must be a map, got `{other}`"
+                    )),
+                })
+                .collect::<anyhow::Result<_>>()?,
             plugins: plugins
                 .map(|l| l.items.into_iter().cloned().collect())
                 .unwrap_or_default(),

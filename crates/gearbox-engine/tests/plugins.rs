@@ -843,3 +843,55 @@ fn a_host_is_matched_by_the_vendor_field_its_point_names() {
         "{codes:?} {messages}"
     );
 }
+
+/// Item 15 review: the join key may differ per profile. A host `vendor` set by
+/// one profile's `profile_config` is checked for that profile, and only there.
+#[test]
+fn a_profile_config_vendor_is_checked_for_its_profile() {
+    let cat = require!();
+    let (codes, messages) = check(
+        &cat,
+        &product(
+            r#"embedded(id = "dev"), kubernetes(id = "prod", discovery = "static")"#,
+            "dev",
+            &format!(
+                r#"{AUTHN}, profile_config = {{"prod": {{"vendor": "acme"}}}},
+                   plugins = [plugin("static-authn-plugin")])"#
+            ),
+        ),
+    );
+    assert!(
+        codes.contains(&DiagnosticCode::PluginVendorMismatch) && messages.contains("acme"),
+        "{codes:?} {messages}"
+    );
+    assert_eq!(
+        codes
+            .iter()
+            .filter(|c| **c == DiagnosticCode::PluginVendorMismatch)
+            .count(),
+        1,
+        "prod only, not dev: {messages}"
+    );
+}
+
+/// The inverse: a raw `vendor` that every profile overrides is no error.
+#[test]
+fn a_vendor_every_profile_overrides_is_not_an_error() {
+    let cat = require!();
+    let (codes, messages) = check(
+        &cat,
+        &product(
+            r#"embedded(id = "dev")"#,
+            "dev",
+            &format!(
+                r#"{AUTHN}, config = {{"vendor": "acme"}},
+                   profile_config = {{"dev": {{"vendor": "constructorfabric"}}}},
+                   plugins = [plugin("static-authn-plugin")])"#
+            ),
+        ),
+    );
+    assert!(
+        !codes.contains(&DiagnosticCode::PluginVendorMismatch),
+        "{codes:?} {messages}"
+    );
+}

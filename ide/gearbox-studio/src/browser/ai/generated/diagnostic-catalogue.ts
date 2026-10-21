@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 118, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 120, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -274,6 +274,14 @@ export const DIAGNOSTIC_CATALOGUE: {
     docs: "Explicit GDL dependencies must match the co-location edges in Rust.",
     requiresEvidence: false,
   },
+  GBX0215: {
+    code: "GBX0215",
+    title: "code resolves a contract it does not declare",
+    severity: "warning",
+    domain: "validate",
+    docs: "A gear's code resolves a contract from the `ClientHub` --\n`hub.get::<dyn Trait>()` -- that it neither consumes nor provides, and\nlinks no provider of through `deps`. The call compiles and finds nothing\nat run time, or finds a client the composition never planned: whether it\ncan be remote, and where its provider runs, are decided from declarations\nthis call does not have (test case G16). Read from syntax, so a warning.",
+    requiresEvidence: false,
+  },
   GBX0301: {
     code: "GBX0301",
     title: "unknown gear",
@@ -446,6 +454,14 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "error",
     domain: "topology",
     docs: "A production profile breaks a production rule (gears-rust ADR-0011\nsections 1 and 3, Gearbox ADR-0026 section 6; test case P4): the public\nlistener serves internal operations, a multi-process profile has no\nplatform auth of its kind (`kube` on Kubernetes, `shared_secret`\nself-hosted), an embedded hub binds TCP, a hub socket sits in a shared\ntemporary directory, a hub does not enforce platform auth, or tenant\n`AuthN` accepts everyone. Every profile is a production target unless it\nsays `development = True`, which reports the same findings as warnings.",
+    requiresEvidence: false,
+  },
+  GBX0326: {
+    code: "GBX0326",
+    title: "a profile's platform auth cannot be applied",
+    severity: "error",
+    domain: "topology",
+    docs: "A profile's `platform_auth` cannot be applied as written: `api-gateway`,\nwhich carries the platform credential to the hubs and workers, is not\nselected, or its `internal_auth` names another provider. Two answers to\none question are not merged; the description keeps one.",
     requiresEvidence: false,
   },
   GBX0321: {

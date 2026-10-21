@@ -115,6 +115,11 @@ pub fn resolve_at(
         None => gearbox_ir::file_uri(std::path::Path::new(intent.gdl_path.as_str())),
     };
 
+    // Step 0 -- the configuration this profile runs: `profile_config` merged
+    // over `config`, the profile's `platform_auth` written where it is carried.
+    let effective = profile::effective(intent, profile, &uri, &mut diagnostics);
+    let intent: &ProductIntent = &effective;
+
     // Step 1 -- narrow to the profile. Done first because everything after it
     // reads the narrowed view, and because a duplicate that only appears once
     // narrowed is a contradiction the description could not have shown.

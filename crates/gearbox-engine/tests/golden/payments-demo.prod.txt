@@ -48,7 +48,10 @@ features = ["full"]
 [dependencies.toolkit]
 package = "cf-gears-toolkit"
 path = "<gears-rust>/libs/toolkit"
-features = ["bootstrap"]
+features = [
+    "bootstrap",
+    "k8s-auth",
+]
 
 [dependencies.toolkit_db]
 package = "cf-gears-toolkit-db"
@@ -78,6 +81,7 @@ version = "1.0"
 [dependencies.api_gateway]
 package = "cf-gears-api-gateway"
 path = "<gears-rust>/gears/system/api-gateway"
+features = ["k8s-auth"]
 
 [dependencies.authn_resolver]
 package = "cf-gears-authn-resolver"
@@ -94,6 +98,7 @@ path = "<gears-rust>/gears/system/cluster/cluster"
 [dependencies.grpc_hub]
 package = "cf-gears-grpc-hub"
 path = "<gears-rust>/gears/system/grpc-hub"
+features = ["k8s-auth"]
 
 [dependencies.oidc_authn_plugin]
 package = "cf-gears-oidc-authn-plugin"
@@ -110,7 +115,10 @@ features = ["full"]
 [dependencies.toolkit]
 package = "cf-gears-toolkit"
 path = "<gears-rust>/libs/toolkit"
-features = ["bootstrap"]
+features = [
+    "bootstrap",
+    "k8s-auth",
+]
 
 [dependencies.toolkit_db]
 package = "cf-gears-toolkit-db"
@@ -149,6 +157,11 @@ path = "<gears-rust>/examples/toolkit/api-contracts/api-contracts-consumer"
 version = "4.5"
 features = ["derive"]
 
+[dependencies.cluster_sdk]
+package = "cf-gears-cluster-sdk"
+path = "<gears-rust>/gears/system/cluster/cluster-sdk"
+features = ["grpc-client"]
+
 [dependencies.oidc_authn_plugin]
 package = "cf-gears-oidc-authn-plugin"
 path = "<gears-rust>/gears/system/authn-resolver/plugins/oidc-authn-plugin"
@@ -160,7 +173,10 @@ features = ["full"]
 [dependencies.toolkit]
 package = "cf-gears-toolkit"
 path = "<gears-rust>/libs/toolkit"
-features = ["bootstrap"]
+features = [
+    "bootstrap",
+    "k8s-auth",
+]
 
 [dependencies.toolkit_db]
 package = "cf-gears-toolkit-db"
@@ -187,6 +203,11 @@ oop_http:
   listen_addr: 0.0.0.0:8090
   advertise_uri: http://api-contracts.payments.svc.cluster.local:8090
   allow_loopback_advertise: false
+  internal_auth:
+    audiences:
+    - toolkit-internal
+    provider: kube
+    token_path: /var/run/secrets/tokens/toolkit-internal
 gears:
   api-contracts:
     config: {}
@@ -194,7 +215,18 @@ gears:
     config: {}
   oidc-authn-plugin:
     config:
-      issuer: https://id.example.com
+      jwt:
+        claim_mapping:
+          subject_id: sub
+          subject_tenant_id: tenant_id
+          token_scopes: scope
+        expected_audience:
+        - payments
+        trusted_issuers:
+        - issuer: https://id.example.com
+      s2s_oauth:
+        default_subject_type: gts.cf.core.security.subject_user.v1~
+        discovery_url: https://id.example.com
   types-registry:
     database:
       server: pg
@@ -214,10 +246,24 @@ database:
       port: 5432
       user: payments
       password: ${GEARS_PG_PASSWORD}
+internal_auth:
+  audiences:
+  - toolkit-internal
+  provider: kube
+  token_path: /var/run/secrets/tokens/toolkit-internal
 gears:
   api-gateway:
     config:
       bind_addr: 0.0.0.0:8087
+      internal_advertise_uri: http://api-gateway.payments.svc.cluster.local:8088
+      internal_auth:
+        audiences:
+        - toolkit-internal
+        provider: kube
+        token_path: /var/run/secrets/tokens/toolkit-internal
+      internal_bind_addr: 0.0.0.0:8088
+      public:
+        exposed_only: true
   authn-resolver:
     config: {}
   cluster:
@@ -233,12 +279,31 @@ gears:
               name: env:PG_PASSWORD
   grpc-hub:
     config:
+      internal_auth:
+        audiences:
+        - toolkit-internal
+        provider: kube
+        token_path: /var/run/secrets/tokens/toolkit-internal
+      internal_auth_enforcement: required
       listen_addr: 0.0.0.0:50051
   oidc-authn-plugin:
     config:
-      issuer: https://id.example.com
+      jwt:
+        claim_mapping:
+          subject_id: sub
+          subject_tenant_id: tenant_id
+          token_scopes: scope
+        expected_audience:
+        - payments
+        trusted_issuers:
+        - issuer: https://id.example.com
+      s2s_oauth:
+        default_subject_type: gts.cf.core.security.subject_user.v1~
+        discovery_url: https://id.example.com
   service-discovery:
-    config: {}
+    config:
+      platform_namespaces:
+      - payments
   types-registry:
     database:
       server: pg
@@ -262,6 +327,11 @@ oop_http:
   listen_addr: 0.0.0.0:8091
   advertise_uri: http://audit.payments.svc.cluster.local:8091
   allow_loopback_advertise: false
+  internal_auth:
+    audiences:
+    - toolkit-internal
+    provider: kube
+    token_path: /var/run/secrets/tokens/toolkit-internal
 gears:
   api-contracts-consumer:
     config:
@@ -279,7 +349,18 @@ gears:
           endpoint: http://cluster.payments.svc.cluster.local:50051
   oidc-authn-plugin:
     config:
-      issuer: https://id.example.com
+      jwt:
+        claim_mapping:
+          subject_id: sub
+          subject_tenant_id: tenant_id
+          token_scopes: scope
+        expected_audience:
+        - payments
+        trusted_issuers:
+        - issuer: https://id.example.com
+      s2s_oauth:
+        default_subject_type: gts.cf.core.security.subject_user.v1~
+        discovery_url: https://id.example.com
   types-registry:
     database:
       server: pg
@@ -332,6 +413,11 @@ oop_http:
   listen_addr: 0.0.0.0:8090
   advertise_uri: http://api-contracts.payments.svc.cluster.local:8090
   allow_loopback_advertise: false
+  internal_auth:
+    audiences:
+    - toolkit-internal
+    provider: kube
+    token_path: /var/run/secrets/tokens/toolkit-internal
 gears:
   api-contracts:
     config: {}
@@ -339,7 +425,18 @@ gears:
     config: {}
   oidc-authn-plugin:
     config:
-      issuer: https://id.example.com
+      jwt:
+        claim_mapping:
+          subject_id: sub
+          subject_tenant_id: tenant_id
+          token_scopes: scope
+        expected_audience:
+        - payments
+        trusted_issuers:
+        - issuer: https://id.example.com
+      s2s_oauth:
+        default_subject_type: gts.cf.core.security.subject_user.v1~
+        discovery_url: https://id.example.com
   types-registry:
     database:
       server: pg
@@ -710,10 +807,24 @@ database:
       port: 5432
       user: payments
       password: ${GEARS_PG_PASSWORD}
+internal_auth:
+  audiences:
+  - toolkit-internal
+  provider: kube
+  token_path: /var/run/secrets/tokens/toolkit-internal
 gears:
   api-gateway:
     config:
       bind_addr: 0.0.0.0:8087
+      internal_advertise_uri: http://api-gateway.payments.svc.cluster.local:8088
+      internal_auth:
+        audiences:
+        - toolkit-internal
+        provider: kube
+        token_path: /var/run/secrets/tokens/toolkit-internal
+      internal_bind_addr: 0.0.0.0:8088
+      public:
+        exposed_only: true
   authn-resolver:
     config: {}
   cluster:
@@ -729,12 +840,31 @@ gears:
               name: env:PG_PASSWORD
   grpc-hub:
     config:
+      internal_auth:
+        audiences:
+        - toolkit-internal
+        provider: kube
+        token_path: /var/run/secrets/tokens/toolkit-internal
+      internal_auth_enforcement: required
       listen_addr: 0.0.0.0:50051
   oidc-authn-plugin:
     config:
-      issuer: https://id.example.com
+      jwt:
+        claim_mapping:
+          subject_id: sub
+          subject_tenant_id: tenant_id
+          token_scopes: scope
+        expected_audience:
+        - payments
+        trusted_issuers:
+        - issuer: https://id.example.com
+      s2s_oauth:
+        default_subject_type: gts.cf.core.security.subject_user.v1~
+        discovery_url: https://id.example.com
   service-discovery:
-    config: {}
+    config:
+      platform_namespaces:
+      - payments
   types-registry:
     database:
       server: pg
@@ -919,6 +1049,10 @@ spec:
               containerPort: 50051
               protocol: TCP
 
+            - name: internal
+              containerPort: 8088
+              protocol: TCP
+
             - name: rest
               containerPort: 8087
               protocol: TCP
@@ -956,21 +1090,21 @@ spec:
           startupProbe:
             httpGet:
               path: /healthz
-              port: 8087
+              port: 8088
             {{- omit .Values.startupProbe "enabled" | toYaml | nindent 12 }}
           {{- end }}
           {{- if .Values.livenessProbe.enabled }}
           livenessProbe:
             httpGet:
               path: /healthz
-              port: 8087
+              port: 8088
             {{- omit .Values.livenessProbe "enabled" | toYaml | nindent 12 }}
           {{- end }}
           {{- if .Values.readinessProbe.enabled }}
           readinessProbe:
             httpGet:
               path: /readyz
-              port: 8087
+              port: 8088
             {{- omit .Values.readinessProbe "enabled" | toYaml | nindent 12 }}
           {{- end }}
           {{- with .Values.resources }}
@@ -1036,6 +1170,11 @@ spec:
     - name: grpc
       port: 50051
       targetPort: 50051
+      protocol: TCP
+
+    - name: internal
+      port: 8088
+      targetPort: 8088
       protocol: TCP
 
     - name: rest
@@ -1136,6 +1275,11 @@ oop_http:
   listen_addr: 0.0.0.0:8091
   advertise_uri: http://audit.payments.svc.cluster.local:8091
   allow_loopback_advertise: false
+  internal_auth:
+    audiences:
+    - toolkit-internal
+    provider: kube
+    token_path: /var/run/secrets/tokens/toolkit-internal
 gears:
   api-contracts-consumer:
     config:
@@ -1153,7 +1297,18 @@ gears:
           endpoint: http://cluster.payments.svc.cluster.local:50051
   oidc-authn-plugin:
     config:
-      issuer: https://id.example.com
+      jwt:
+        claim_mapping:
+          subject_id: sub
+          subject_tenant_id: tenant_id
+          token_scopes: scope
+        expected_audience:
+        - payments
+        trusted_issuers:
+        - issuer: https://id.example.com
+      s2s_oauth:
+        default_subject_type: gts.cf.core.security.subject_user.v1~
+        discovery_url: https://id.example.com
   types-registry:
     database:
       server: pg
@@ -1524,6 +1679,25 @@ api-contracts:
     pullPolicy: IfNotPresent
   serviceAccount:
     create: true
+    name: api-contracts
+  resources:
+    limits:
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  extraVolumes:
+  - name: platform-token
+    projected:
+      sources:
+      - serviceAccountToken:
+          audience: toolkit-internal
+          expirationSeconds: 3600
+          path: toolkit-internal
+  extraVolumeMounts:
+  - mountPath: /var/run/secrets/tokens
+    name: platform-token
+    readOnly: true
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 65532
@@ -1560,8 +1734,8 @@ api-contracts:
     type: ClusterIP
   homeVolume:
     type: emptyDir
-  automountServiceAccountToken: false
-  tokenReview: false
+  automountServiceAccountToken: true
+  tokenReview: true
   custom: {}
 api-gateway:
   database:
@@ -1576,6 +1750,24 @@ api-gateway:
     pullPolicy: IfNotPresent
   serviceAccount:
     create: true
+  resources:
+    limits:
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  extraVolumes:
+  - name: platform-token
+    projected:
+      sources:
+      - serviceAccountToken:
+          audience: toolkit-internal
+          expirationSeconds: 3600
+          path: toolkit-internal
+  extraVolumeMounts:
+  - mountPath: /var/run/secrets/tokens
+    name: platform-token
+    readOnly: true
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 65532
@@ -1612,8 +1804,8 @@ api-gateway:
     type: ClusterIP
   homeVolume:
     type: emptyDir
-  automountServiceAccountToken: false
-  tokenReview: false
+  automountServiceAccountToken: true
+  tokenReview: true
   strategy:
     type: Recreate
   custom:
@@ -1634,6 +1826,25 @@ audit:
     pullPolicy: IfNotPresent
   serviceAccount:
     create: true
+    name: api-contracts-consumer
+  resources:
+    limits:
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  extraVolumes:
+  - name: platform-token
+    projected:
+      sources:
+      - serviceAccountToken:
+          audience: toolkit-internal
+          expirationSeconds: 3600
+          path: toolkit-internal
+  extraVolumeMounts:
+  - mountPath: /var/run/secrets/tokens
+    name: platform-token
+    readOnly: true
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 65532
@@ -1670,8 +1881,8 @@ audit:
     type: ClusterIP
   homeVolume:
     type: emptyDir
-  automountServiceAccountToken: false
-  tokenReview: false
+  automountServiceAccountToken: true
+  tokenReview: true
   custom: {}
 === helm/payments-demo/values.schema.json
 {
@@ -3290,6 +3501,25 @@ api-contracts:
     pullPolicy: IfNotPresent
   serviceAccount:
     create: true
+    name: api-contracts
+  resources:
+    limits:
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  extraVolumes:
+  - name: platform-token
+    projected:
+      sources:
+      - serviceAccountToken:
+          audience: toolkit-internal
+          expirationSeconds: 3600
+          path: toolkit-internal
+  extraVolumeMounts:
+  - mountPath: /var/run/secrets/tokens
+    name: platform-token
+    readOnly: true
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 65532
@@ -3326,8 +3556,8 @@ api-contracts:
     type: ClusterIP
   homeVolume:
     type: emptyDir
-  automountServiceAccountToken: false
-  tokenReview: false
+  automountServiceAccountToken: true
+  tokenReview: true
   custom: {}
 api-gateway:
   database:
@@ -3342,6 +3572,24 @@ api-gateway:
     pullPolicy: IfNotPresent
   serviceAccount:
     create: true
+  resources:
+    limits:
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  extraVolumes:
+  - name: platform-token
+    projected:
+      sources:
+      - serviceAccountToken:
+          audience: toolkit-internal
+          expirationSeconds: 3600
+          path: toolkit-internal
+  extraVolumeMounts:
+  - mountPath: /var/run/secrets/tokens
+    name: platform-token
+    readOnly: true
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 65532
@@ -3378,8 +3626,8 @@ api-gateway:
     type: ClusterIP
   homeVolume:
     type: emptyDir
-  automountServiceAccountToken: false
-  tokenReview: false
+  automountServiceAccountToken: true
+  tokenReview: true
   strategy:
     type: Recreate
   custom:
@@ -3400,6 +3648,25 @@ audit:
     pullPolicy: IfNotPresent
   serviceAccount:
     create: true
+    name: api-contracts-consumer
+  resources:
+    limits:
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  extraVolumes:
+  - name: platform-token
+    projected:
+      sources:
+      - serviceAccountToken:
+          audience: toolkit-internal
+          expirationSeconds: 3600
+          path: toolkit-internal
+  extraVolumeMounts:
+  - mountPath: /var/run/secrets/tokens
+    name: platform-token
+    readOnly: true
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 65532
@@ -3436,8 +3703,8 @@ audit:
     type: ClusterIP
   homeVolume:
     type: emptyDir
-  automountServiceAccountToken: false
-  tokenReview: false
+  automountServiceAccountToken: true
+  tokenReview: true
   custom: {}
 === product.lock
 # GENERATED by gearbox <version> -- do not edit. Run `gearbox resolve` to regenerate.
@@ -3458,7 +3725,6 @@ id = "payments-demo"
 version = "0.1.0"
 profile = "prod"
 profile_kind = "kubernetes"
-development = true
 layout = "apps"
 gearbox_version = "<version>"
 lock_hash = "<digest>"
@@ -3532,6 +3798,11 @@ link = ["api_gateway"]
 
 [[gears.api-gateway.selected_by]]
 reason = "selected"
+
+[gears.api-gateway.config.internal_auth]
+audiences = ["toolkit-internal"]
+provider = "kube"
+token_path = "/var/run/secrets/tokens/toolkit-internal"
 
 [gears.authn-resolver]
 id = "authn-resolver"
@@ -3625,8 +3896,20 @@ reason = "plugin_of"
 host = "authn-resolver"
 profile = "prod"
 
-[gears.oidc-authn-plugin.config]
+[gears.oidc-authn-plugin.config.jwt]
+expected_audience = ["payments"]
+
+[gears.oidc-authn-plugin.config.jwt.claim_mapping]
+subject_id = "sub"
+subject_tenant_id = "tenant_id"
+token_scopes = "scope"
+
+[[gears.oidc-authn-plugin.config.jwt.trusted_issuers]]
 issuer = "https://id.example.com"
+
+[gears.oidc-authn-plugin.config.s2s_oauth]
+default_subject_type = "gts.cf.core.security.subject_user.v1~"
+discovery_url = "https://id.example.com"
 
 [gears.service-discovery]
 id = "service-discovery"
@@ -3725,13 +4008,21 @@ rest_host = "api-gateway"
 grpc_hub = "grpc-hub"
 needs_db = true
 subchart = "api-gateway"
-service_port = 8087
+service_port = 8088
 
 [[applications.listens]]
 name = "grpc"
 gear = "grpc-hub"
 config_key = "listen_addr"
 address = "0.0.0.0:50051"
+allow_loopback_advertise = false
+
+[[applications.listens]]
+name = "internal"
+gear = "api-gateway"
+config_key = "internal_bind_addr"
+address = "0.0.0.0:8088"
+advertise_uri = "http://api-gateway.payments.svc.cluster.local:8088"
 allow_loopback_advertise = false
 
 [[applications.listens]]
@@ -3826,6 +4117,14 @@ endpoint = "http://cluster.payments.svc.cluster.local:50051"
 critical = true
 gates_readiness = false
 
+[bindings.client_sdk]
+crate_name = "cf-gears-cluster-sdk"
+lib_ident = "cluster_sdk"
+path = "gears/system/cluster/cluster-sdk"
+features = ["grpc-client"]
+default_features = true
+link = ["cluster_sdk"]
+
 [bindings.selected.selected]
 choice = "auto"
 
@@ -3842,6 +4141,14 @@ endpoint_source = "cluster SDK: cluster.$POD_NAMESPACE.svc.cluster.local:50051"
 endpoint = "http://cluster.payments.svc.cluster.local:50051"
 critical = true
 gates_readiness = false
+
+[bindings.client_sdk]
+crate_name = "cf-gears-cluster-sdk"
+lib_ident = "cluster_sdk"
+path = "gears/system/cluster/cluster-sdk"
+features = ["grpc-client"]
+default_features = true
+link = ["cluster_sdk"]
 
 [bindings.selected.selected]
 choice = "auto"
@@ -4019,23 +4326,6 @@ kind = "colocated-by"
 because = "`oidc-authn-plugin` names `types-registry` in its `deps`, so the two are linked into one binary and no profile can separate them. Removing that entry is the only thing that can."
 
 [[diagnostics]]
-code = "GBX0325"
-severity = "warning"
-message = 'profile `prod` breaks a production rule: a kubernetes profile needs platform auth `internal_auth.provider = "kube"` on `api-gateway`, which configures none (ADR-0011 section 3)'
-help = "allowed because the profile is `development = True`; a production profile refuses it"
-
-[diagnostics.location]
-uri = "file://<repo>/products/payments-demo/product.gdl"
-
-[diagnostics.location.range.start]
-line = 31
-character = 8
-
-[diagnostics.location.range.end]
-line = 39
-character = 9
-
-[[diagnostics]]
 code = "GBX0323"
 severity = "info"
 message = "`api-contracts-consumer` is at preview: usable, but not declared stable"
@@ -4045,11 +4335,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 50
+line = 52
 character = 8
 
 [diagnostics.location.range.end]
-line = 50
+line = 52
 character = 65
 
 [[diagnostics]]
@@ -4062,11 +4352,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 49
+line = 51
 character = 8
 
 [diagnostics.location.range.end]
-line = 49
+line = 51
 character = 56
 
 [[diagnostics]]
@@ -4079,11 +4369,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 47
+line = 49
 character = 8
 
 [diagnostics.location.range.end]
-line = 47
+line = 49
 character = 54
 
 [[diagnostics]]
@@ -4096,11 +4386,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 72
+line = 74
 character = 8
 
 [diagnostics.location.range.end]
-line = 86
+line = 99
 character = 9
 
 [[diagnostics]]
@@ -4113,11 +4403,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 60
+line = 62
 character = 8
 
 [diagnostics.location.range.end]
-line = 60
+line = 62
 character = 50
 
 [[diagnostics]]
@@ -4147,11 +4437,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 72
+line = 74
 character = 8
 
 [diagnostics.location.range.end]
-line = 86
+line = 99
 character = 9
 
 [[diagnostics]]
@@ -4164,11 +4454,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 48
+line = 50
 character = 8
 
 [diagnostics.location.range.end]
-line = 48
+line = 50
 character = 60
 
 [[diagnostics]]
@@ -4254,11 +4544,11 @@ evidence = "gears/system/cluster/cluster/src/defaults/leader.rs (CasBasedLeaderE
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 114
+line = 127
 character = 8
 
 [diagnostics.location.range.end]
-line = 131
+line = 144
 character = 9
 
 [[diagnostics]]
@@ -4272,9 +4562,9 @@ evidence = "libs/toolkit/src/discovery.rs:38"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 31
+line = 33
 character = 8
 
 [diagnostics.location.range.end]
-line = 39
+line = 41
 character = 9

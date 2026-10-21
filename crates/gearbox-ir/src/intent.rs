@@ -147,6 +147,33 @@ impl Discovery {
     }
 }
 
+/// How the processes of a multi-process profile authenticate each other on the
+/// platform plane (gears-rust ADR-0008; ADR-0011 section 3).
+///
+/// A property of the profile because it follows from where the processes run:
+/// a Kubernetes `ServiceAccount` token exists only on a cluster. The resolver
+/// writes it into `api-gateway`'s `internal_auth`, which the generator spreads
+/// to the hubs and workers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum PlatformAuth {
+    /// A projected `ServiceAccount` token, validated through `TokenReview`.
+    Kube,
+    /// One pre-shared secret, injected through the environment.
+    SharedSecret,
+}
+
+impl PlatformAuth {
+    /// The spelling a description and the runtime's `internal_auth.provider` use.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Kube => "kube",
+            Self::SharedSecret => "shared_secret",
+        }
+    }
+}
+
 /// A deployment profile, as declared.
 ///
 /// A composition-time concept: the runtime has no such type, only a per-gear
@@ -196,6 +223,9 @@ pub enum DeploymentProfileDecl {
         /// product cannot drift with the operator's environment.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cargo_profile: Option<String>,
+        /// `platform_auth = "shared_secret"`: how the processes authenticate each other.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        platform_auth: Option<PlatformAuth>,
         /// `development = True`: the production rules (gears-rust ADR-0011 sections 1 and 3,
         /// Gearbox ADR-0026 section 6) are reported as warnings rather than errors, and
         /// the generator keeps its development defaults. Absent means production.
@@ -219,6 +249,9 @@ pub enum DeploymentProfileDecl {
         namespace: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         image_registry: Option<String>,
+        /// `platform_auth = "kube"` or `"shared_secret"`: how the units authenticate each other.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        platform_auth: Option<PlatformAuth>,
         /// `development = True`: the production rules (gears-rust ADR-0011 sections 1 and 3,
         /// Gearbox ADR-0026 section 6) are reported as warnings rather than errors, and
         /// the generator keeps its development defaults. Absent means production.
@@ -244,6 +277,18 @@ impl DeploymentProfileDecl {
             | Self::Kubernetes {
                 sqlite_databases, ..
             } => sqlite_databases,
+        }
+    }
+
+    /// The platform auth the description gave this profile; an embedded profile
+    /// has no platform plane between processes.
+    #[must_use]
+    pub const fn platform_auth(&self) -> Option<PlatformAuth> {
+        match self {
+            Self::Embedded { .. } => None,
+            Self::SelfHosted { platform_auth, .. } | Self::Kubernetes { platform_auth, .. } => {
+                *platform_auth
+            }
         }
     }
 
@@ -421,6 +466,13 @@ pub struct GearSelection {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[ts(type = "Record<string, unknown>")]
     pub config: BTreeMap<String, serde_json::Value>,
+
+    /// `profile_config = {"prod": {...}}`: per-profile configuration merged over
+    /// `config` when that profile is resolved -- maps key by key, any other value
+    /// replaced.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[ts(type = "Record<string, Record<string, unknown>>")]
+    pub profile_config: BTreeMap<ProfileId, BTreeMap<String, serde_json::Value>>,
 
     /// Implementations chosen for this gear's plugin extension points.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

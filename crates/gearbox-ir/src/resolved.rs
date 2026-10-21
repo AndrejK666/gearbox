@@ -634,6 +634,16 @@ pub struct ResolvedBinding {
     #[serde(default)]
     pub gates_readiness: bool,
 
+    /// The client the consuming *process* has to link for this binding, when
+    /// its consumer's own crate does not: the cluster SDK with its gRPC client
+    /// (`ProvidesClientWiring`). A `consumes-*` binding leaves it `None` -- the
+    /// consumer gear's crate depends on its contract's SDK with the client it
+    /// needs. Without it the generated process links the SDK without its
+    /// remote half, registers no client, and every call reports the profile
+    /// unbound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_sdk: Option<crate::CargoRef>,
+
     pub selected: Selected<BindingRequest>,
 }
 

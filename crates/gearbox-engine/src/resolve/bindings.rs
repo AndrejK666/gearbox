@@ -396,6 +396,7 @@ fn local(
         critical: request.and_then(|r| r.critical).unwrap_or(edge.critical),
         // Decided once every binding is known; see `resolve::resolve_at`.
         gates_readiness: false,
+        client_sdk: None,
         selected: selection(
             request,
             if forced_by.is_some() {
@@ -478,6 +479,7 @@ fn remote(
         critical: request.and_then(|r| r.critical).unwrap_or(edge.critical),
         // Decided once every binding is known; see `resolve::resolve_at`.
         gates_readiness: false,
+        client_sdk: None,
         selected: selection(request, downgrade),
     }
 }
