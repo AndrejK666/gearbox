@@ -848,6 +848,11 @@ unselected included gear is refused before generation.
 An explicitly included worker gear is not also seeded into the default host.
 It can still appear in both processes when a host dependency or host `include`
 requires it there.
+An included gear is placed by the `include`: a consumer elsewhere does not also
+give it a process of its own (only its own `application(...)` pin or a
+`prefer.isolate` does). That consumer reaches it in the including worker, which
+keeps a directory record under the gear's own name (`oop_http.directory_gears`;
+the directory admits the worker for it through `registrar_gears`).
 
 ### `product(...)`
 

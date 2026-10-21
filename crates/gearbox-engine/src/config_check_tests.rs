@@ -20,6 +20,7 @@ fn field(name: &str, ty: ConfigFieldType) -> ConfigFieldDecl {
         default: None,
         doc: None,
         secret: false,
+        fields: Vec::new(),
     }
 }
 
@@ -303,6 +304,7 @@ fn catalogue_with_a_secret() -> Catalogue {
         default: None,
         doc: None,
         secret: true,
+        fields: Vec::new(),
     });
     catalogue
 }
@@ -439,6 +441,91 @@ fn an_undeclared_plugin_config_key_is_refused() {
         codes_of(&catalogue, &intent),
         vec![DiagnosticCode::GdlUnknownConfigKey]
     );
+}
+
+/// A host that declares no configuration schema of its own still has its
+/// plugins checked: a plugin's config belongs to the plugin's schema, and the
+/// host's missing one used to skip the plugin check with it.
+#[test]
+fn a_plugin_of_a_host_without_a_schema_is_still_checked() {
+    let mut catalogue = catalogue_with_a_secret();
+    let plugin_id = GearId::new("demo-plugin").unwrap();
+    let host_id = GearId::new("demo").unwrap();
+    let mut plugin = catalogue.gears[&host_id].clone();
+    plugin.id = plugin_id.clone();
+    catalogue.gears.insert(plugin_id.clone(), plugin);
+    catalogue.gears.get_mut(&host_id).unwrap().config_schema = None;
+
+    let mut intent = intent("bind_addr", serde_json::json!("0.0.0.0:1"));
+    intent.selected_gears[0].config.clear();
+    intent.selected_gears[0]
+        .plugins
+        .push(gearbox_ir::PluginSelection {
+            gear: plugin_id,
+            config: [("issuer".to_owned(), serde_json::json!("https://idp"))]
+                .into_iter()
+                .collect(),
+            profiles: BTreeSet::new(),
+            entry_index: 0,
+            declared_at: None,
+        });
+
+    assert_eq!(
+        codes_of(&catalogue, &intent),
+        vec![DiagnosticCode::GdlUnknownConfigKey]
+    );
+}
+
+/// One level into a set struct value: a required nested key the value does
+/// not set is GBX0120, and a nested key of the wrong type is GBX0113.
+/// `oidc-authn-plugin`'s `jwt` without `claim_mapping` resolved, generated and
+/// failed at startup.
+#[test]
+fn a_nested_required_key_and_a_nested_type_are_checked() {
+    let mut catalogue = catalogue();
+    let demo = GearId::new("demo").unwrap();
+    let schema = catalogue
+        .gears
+        .get_mut(&demo)
+        .unwrap()
+        .config_schema
+        .as_mut()
+        .unwrap();
+    let mut jwt = field("jwt", ConfigFieldType::Complex);
+    let mut claim_mapping = field("claim_mapping", ConfigFieldType::Complex);
+    claim_mapping.required = true;
+    jwt.fields = vec![
+        field("require_audience", ConfigFieldType::Bool),
+        claim_mapping,
+    ];
+    schema.fields.push(jwt);
+
+    let check = |value: serde_json::Value| {
+        let intent = intent("jwt", value);
+        let mut diagnostics = Diagnostics::default();
+        check(&catalogue, &intent, "product.gdl", &mut diagnostics);
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message.clone()))
+            .collect::<Vec<_>>()
+    };
+
+    let missing = check(serde_json::json!({ "require_audience": true }));
+    assert_eq!(
+        missing.iter().map(|(c, _)| *c).collect::<Vec<_>>(),
+        [DiagnosticCode::GdlRequiredConfigUnset],
+        "{missing:?}"
+    );
+    assert!(missing[0].1.contains("`jwt.claim_mapping`"), "{missing:?}");
+
+    let wrong = check(serde_json::json!({ "require_audience": "yes", "claim_mapping": {} }));
+    assert_eq!(
+        wrong.iter().map(|(c, _)| *c).collect::<Vec<_>>(),
+        [DiagnosticCode::GdlConfigTypeMismatch],
+        "{wrong:?}"
+    );
+
+    assert!(check(serde_json::json!({ "claim_mapping": {} })).is_empty());
 }
 
 /// A plugin's required field with no default and no value is said out loud

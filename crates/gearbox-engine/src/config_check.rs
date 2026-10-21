@@ -114,6 +114,10 @@ pub fn check(
             diagnostics.push(diagnostic);
         }
 
+        // A plugin's config is its own schema's business, not its host's: a host
+        // that declares no schema of its own still has its plugins checked.
+        check_plugin_config(catalogue, selection, uri, diagnostics);
+
         let Some(schema) = gear.config_schema.as_ref() else {
             continue;
         };
@@ -141,6 +145,13 @@ pub fn check(
                 diagnostics.push(literal_secret(&selection.gear, key, selection, uri));
                 continue;
             }
+            check_nested(
+                &format!("`{}`", selection.gear),
+                field,
+                value,
+                &location(selection, uri),
+                diagnostics,
+            );
             let Some(expected) = mismatch(&field.ty, value) else {
                 continue;
             };
@@ -160,8 +171,6 @@ pub fn check(
         }
 
         report_unset_required(gear, schema, selection, uri, diagnostics);
-
-        check_plugin_config(catalogue, selection, uri, diagnostics);
     }
 }
 
@@ -294,7 +303,15 @@ fn check_plugin_config(
             };
             if field.secret && !literal_secret_is_allowed(value) {
                 diagnostics.push(literal_secret(&plugin.gear, key, selection, uri));
+                continue;
             }
+            check_nested(
+                &format!("plugin `{}`", plugin.gear),
+                field,
+                value,
+                &Location::or_file(plugin.declared_at.as_ref(), uri),
+                diagnostics,
+            );
         }
         // A required field the plugin's loader refuses without: the generated
         // file carries only what the description sets.
@@ -320,6 +337,66 @@ fn check_plugin_config(
                 .at(Location::or_file(plugin.declared_at.as_ref(), uri))
                 .about_config(field.name.clone()),
             );
+        }
+    }
+}
+
+/// One level into a set struct value: a nested key of the wrong type, and a
+/// required nested key with no default that the value does not set.
+///
+/// `jwt.claim_mapping` is the case that asked for it: `JwtConfigInput`
+/// requires it, and a description setting `jwt = {...}` without it resolved,
+/// generated and failed at startup. A key the nested struct does not declare is
+/// left to the gear's loader: the projection is one level deep and reads no
+/// `flatten`, so its silence is not proof of an unknown key.
+fn check_nested(
+    owner: &str,
+    field: &gearbox_ir::ConfigFieldDecl,
+    value: &serde_json::Value,
+    at: &Location,
+    diagnostics: &mut Diagnostics,
+) {
+    let Some(set) = value.as_object() else {
+        return;
+    };
+    for nested in &field.fields {
+        let path = format!("{}.{}", field.name, nested.name);
+        match set.get(&nested.name) {
+            Some(value) => {
+                if let Some(expected) = mismatch(&nested.ty, value) {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            DiagnosticCode::GdlConfigTypeMismatch,
+                            format!(
+                                "{owner} config key `{path}` is {}, but it is declared as \
+                                 {expected}",
+                                actual(value)
+                            ),
+                            format!("write `{path}` as {expected}"),
+                        )
+                        .at(at.clone())
+                        .about_config(field.name.clone()),
+                    );
+                }
+            }
+            None if nested.required && nested.default.is_none() => diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::GdlRequiredConfigUnset,
+                    format!(
+                        "{owner} requires `{path}`, which has no default, and this description's \
+                         `{}` does not set it",
+                        field.name
+                    ),
+                )
+                .with_help(format!(
+                    "add `{}` to `{}`, or the generated file will be missing a field the \
+                     loader refuses at startup",
+                    nested.name, field.name
+                ))
+                .at(at.clone())
+                .about_config(field.name.clone()),
+            ),
+            None => {}
         }
     }
 }

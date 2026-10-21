@@ -21,7 +21,7 @@
 #   GEARS_RUST=../gears-rust products/integration-demo/acceptance.sh
 #
 # Images (build them first): flight-control:p4 and cluster-oop:p4 from
-# gears-rust (FC_IMAGE, CLUSTER_IMAGE), gbx-{payments,checkout,authz}:0.1.0 from
+# gears-rust (FC_IMAGE, CLUSTER_IMAGE), gbx-{payments,checkout}:0.1.0 from
 # the generated `docker/build.sh`, plus nginx, postgres and curl.
 set -eu
 repo=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
@@ -67,14 +67,24 @@ trap cleanup EXIT
 echo "== generate"
 cargo run -q -p gearbox-cli -- generate --root "$gears_rust" --source-id gears-rust \
   --product products/integration-demo/product.gdl --profile kind >/dev/null
-"$helm" dependency build "$chart" >/dev/null
-for name in payments checkout authz; do
+# `update`, not `build`: every dependency is a generated `file://` subchart, and
+# a lock left by an earlier generation with other units would refuse `build`.
+"$helm" dependency update "$chart" >/dev/null
+# A worker's port, as the generator assigned it (its Service listens on it too).
+port_of() {
+  sed -n 's#^  advertise_uri: http://[^:]*:\([0-9]*\)$#\1#p' ".gearbox/integration-demo/kind/config/$1.yaml"
+}
+payments_port=$(port_of payments)
+checkout_url=http://checkout:$(port_of checkout)
+payments_url=http://payments:$payments_port
+[ -n "$payments_port" ] && [ "$checkout_url" != http://checkout: ] || fail "no worker ports in the generated config"
+for name in payments checkout; do
   grep -q 'audience: toolkit-internal' "$chart/values.yaml" \
     || fail "the generated values no longer mount the platform token as this script assumes"
 done
 
 if [ -n "${LOAD_NODE:-}" ]; then
-  for image in "$fc_image" "$cl_image" gbx-payments:0.1.0 gbx-checkout:0.1.0 gbx-authz:0.1.0 \
+  for image in "$fc_image" "$cl_image" gbx-payments:0.1.0 gbx-checkout:0.1.0 \
     "$pg_image" "$curl_image" "$idp_image"; do
     docker image save --platform "linux/${LOAD_ARCH:-arm64}" --output "$work/image.tar" "$image"
     docker exec -i "$LOAD_NODE" ctr --namespace k8s.io images import \
@@ -147,7 +157,7 @@ EOF
   echo "  oidc: {caConfigMap: idp-ca}"
   echo "cluster:"
   echo "  image: {repository: ${cl_image%:*}, tag: ${cl_image#*:}}"
-  for name in payments checkout authz; do
+  for name in payments checkout; do
     echo "$name:"
     worker_values
   done
@@ -161,12 +171,12 @@ KUBE_CONTEXT=$ctx sh "$gears_rust/deploy/helm/cluster-scoped-guard.sh" "$work/re
   >"$work/cluster-scoped"
 ok "disposable cluster: cluster-scoped objects are new and named after $ns: $(wc -l <"$work/cluster-scoped" | tr -d ' ')"
 h install "$release" "$chart" -f "$work/values.yaml" >/dev/null
-for deploy in flight-control cluster "$release-payments" "$release-checkout" "$release-authz"; do
+for deploy in flight-control cluster "$release-payments" "$release-checkout"; do
   k rollout status "deploy/$deploy" --timeout=240s >/dev/null || {
     k get pods; k logs "deploy/$deploy" --tail=30; fail "$deploy did not become Ready"
   }
 done
-ok "cold start: every unit Ready (Flight Control, cluster, payments, checkout, authz)"
+ok "cold start: every unit Ready (Flight Control, cluster, payments, checkout)"
 
 # A probe inside the cluster, with its own ServiceAccount and a projected
 # platform token: the caller every in-cluster check speaks as.
@@ -282,44 +292,60 @@ ok "edge OpenAPI describes exactly the proxied exposed operation: $paths"
 
 echo "== direct calls inside the cluster, both planes"
 expect 200 "direct: checkout's internal status round-trips through cluster over gRPC" \
-  GET http://checkout:8091/api-contracts-consumer/v1/status -H "$bearer"
+  GET $checkout_url/api-contracts-consumer/v1/status -H "$bearer"
 expect 200 "direct: checkout charges payments with no edge in the path" \
-  POST http://checkout:8091/api-contracts-consumer/v1/charge -H "$bearer" -H "$json" -d "$charge"
+  POST $checkout_url/api-contracts-consumer/v1/charge -H "$bearer" -H "$json" -d "$charge"
 expect 401 "direct: payments refuses a call without a tenant token" \
-  POST http://payments:8093/api-contracts/v1/payments/charge -H "$json" -d "$charge"
+  POST $payments_url/api-contracts/v1/payments/charge -H "$json" -d "$charge"
 expect 200 "direct: payments serves a tenant call" \
-  POST http://payments:8093/api-contracts/v1/payments/charge -H "$bearer" -H "$json" -d "$charge"
-expect 401 "AuthZ evaluate: no credential" POST http://authz:8090/authz-resolver/v1/evaluate -H "$json" -d "$evaluate"
-expect 401 "AuthZ evaluate: a forged platform token" POST http://authz:8090/authz-resolver/v1/evaluate \
+  POST $payments_url/api-contracts/v1/payments/charge -H "$bearer" -H "$json" -d "$charge"
+expect 401 "AuthZ evaluate: no credential" POST $payments_url/authz-resolver/v1/evaluate -H "$json" -d "$evaluate"
+expect 401 "AuthZ evaluate: a forged platform token" POST $payments_url/authz-resolver/v1/evaluate \
   -H "x-toolkit-internal-token: forged" -H "$json" -d "$evaluate"
-expect 401 "AuthZ evaluate: a tenant bearer is the other plane" POST http://authz:8090/authz-resolver/v1/evaluate \
+expect 401 "AuthZ evaluate: a tenant bearer is the other plane" POST $payments_url/authz-resolver/v1/evaluate \
   -H "$bearer" -H "$json" -d "$evaluate"
 expect 200 "AuthZ evaluate: a ServiceAccount token for the platform audience" \
-  POST http://authz:8090/authz-resolver/v1/evaluate -H "x-toolkit-internal-token: PLATFORM" -H "$json" -d "$evaluate"
+  POST $payments_url/authz-resolver/v1/evaluate -H "x-toolkit-internal-token: PLATFORM" -H "$json" -d "$evaluate"
 gears=$(listed)
 for gear in $workers; do
   case " $gears " in *" $gear "*) ;; *) fail "the directory lists [$gears], not $gear" ;; esac
 done
 ok "the directory lists every worker: $gears"
+# todo-issues 1: payments keeps a record for its anchor (authz-resolver) and one
+# for the PaymentApi provider linked beside it, both at its Service, so checkout
+# finds PaymentApi under its own name.
+body "$fc_internal/service-discovery/v1/gears" -H "$bearer" | python3 -c '
+import json, sys
+url = sys.argv[1]
+data = json.load(sys.stdin)
+items = data.get("items", data) if isinstance(data, dict) else data
+for name in ("api-contracts", "authz-resolver"):
+    endpoints = [i.get("rest_endpoint") or "" for g in items if g.get("name") == name
+                 for i in g.get("instances", [])]
+    if not any(e.startswith(url) for e in endpoints):
+        sys.exit(f"{name}: {endpoints}, not at {url}")
+' "http://payments.$ns.svc.cluster.local:$payments_port" \
+  || fail "the directory does not keep both of payments' records at its Service"
+ok "the directory keeps a record per gear payments serves out: api-contracts and authz-resolver"
 
 echo "== the edge stops routing; direct calls continue"
 k delete service flight-control >/dev/null
 expect 000 "edge: unreachable (its Service is gone)" \
   POST "$edge/api-contracts-consumer/v1/charge" -H "$bearer" -H "$json" -d "$charge"
 expect 200 "outage: checkout still charges payments directly" \
-  POST http://checkout:8091/api-contracts-consumer/v1/charge -H "$bearer" -H "$json" -d "$charge"
+  POST $checkout_url/api-contracts-consumer/v1/charge -H "$bearer" -H "$json" -d "$charge"
 # The destination: the charge's payment is in payments' own records, and the
 # directory resolves the provider to the payments Service -- not to the edge.
-payment=$(body http://checkout:8091/api-contracts-consumer/v1/charge -X POST -H "$bearer" -H "$json" -d "$charge" \
+payment=$(body $checkout_url/api-contracts-consumer/v1/charge -X POST -H "$bearer" -H "$json" -d "$charge" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["payment_id"])')
-body http://payments:8093/api-contracts/v1/payments -H "$bearer" | grep -q "$payment" \
+body $payments_url/api-contracts/v1/payments -H "$bearer" | grep -q "$payment" \
   || fail "outage: payment $payment is not in payments' records"
 ok "outage: the charge landed at payments (payment $payment in its records)"
-body "$fc_internal/service-discovery/v1/gears" -H "$bearer" | grep -q "payments.$ns.svc.cluster.local:8093" \
+body "$fc_internal/service-discovery/v1/gears" -H "$bearer" | grep -q "payments.$ns.svc.cluster.local:$payments_port" \
   || fail "outage: the directory does not resolve api-contracts to the payments Service"
 ok "outage: the directory resolves PaymentApi's provider to the payments Service, no edge hop"
-first=$(body http://checkout:8091/api-contracts-consumer/v1/status -H "$bearer" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
-second=$(body http://checkout:8091/api-contracts-consumer/v1/status -H "$bearer" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+first=$(body $checkout_url/api-contracts-consumer/v1/status -H "$bearer" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+second=$(body $checkout_url/api-contracts-consumer/v1/status -H "$bearer" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
 [ "$second" -gt "$first" ] || fail "outage: the cluster cache did not advance ($first -> $second)"
 ok "outage: checkout coordinates through cluster (cache version $first -> $second)"
 h upgrade "$release" "$chart" -f "$work/values.yaml" >/dev/null
@@ -329,9 +355,12 @@ eventually 60 200 "edge: routing again after its Service is restored" \
 echo "== Flight Control is replaced (Recreate: the directory restarts empty)"
 k rollout restart deploy/flight-control >/dev/null
 sleep 2
-during=$(status POST http://checkout:8091/api-contracts-consumer/v1/charge -H "$bearer" -H "$json" -d "$charge")
+# todo-issues 18: the directory is unreachable, and checkout reaches payments at
+# the address it last resolved.
+expect 200 "direct: a charge while Flight Control is down, at payments' last known address" \
+  POST $checkout_url/api-contracts-consumer/v1/charge -H "$bearer" -H "$json" -d "$charge"
 k rollout status deploy/flight-control --timeout=180s >/dev/null
-ok "Flight Control replaced; a direct charge while it was down answered $during (recorded, not required)"
+ok "Flight Control replaced"
 eventually 90 200 "edge: routes recovered after the replacement" \
   POST "$edge/api-contracts-consumer/v1/charge" -H "$bearer" -H "$json" -d "$charge"
 start=$(date +%s)
@@ -364,24 +393,24 @@ eventually 90 200 "edge: charges reach the new payments pod" \
   POST "$edge/api-contracts-consumer/v1/charge" -H "$bearer" -H "$json" -d "$charge"
 replace cluster cluster
 eventually 90 200 "direct: checkout coordinates through the new cluster pod" \
-  GET http://checkout:8091/api-contracts-consumer/v1/status -H "$bearer"
+  GET $checkout_url/api-contracts-consumer/v1/status -H "$bearer"
 
 echo "== a platform credential is replaced and the retired one refused"
 # A ServiceAccount token is a platform credential the API server can revoke:
 # deleting the account retires every token minted for it.
 k create serviceaccount p4-rotate >/dev/null
 retired=$(k create token p4-rotate --audience toolkit-internal --duration 10m)
-expect 200 "AuthZ evaluate: a fresh ServiceAccount token" POST http://authz:8090/authz-resolver/v1/evaluate \
+expect 200 "AuthZ evaluate: a fresh ServiceAccount token" POST $payments_url/authz-resolver/v1/evaluate \
   -H "x-toolkit-internal-token: $retired" -H "$json" -d "$evaluate"
 k delete serviceaccount p4-rotate >/dev/null
 # The validator caches a review for its TTL (internal_auth_cache_ttl_secs, 30 s).
 eventually 90 401 "AuthZ evaluate: the token of a deleted account is refused" \
-  POST http://authz:8090/authz-resolver/v1/evaluate -H "x-toolkit-internal-token: $retired" -H "$json" -d "$evaluate"
+  POST $payments_url/authz-resolver/v1/evaluate -H "x-toolkit-internal-token: $retired" -H "$json" -d "$evaluate"
 k create serviceaccount p4-rotate >/dev/null
 replacement=$(k create token p4-rotate --audience toolkit-internal --duration 10m)
-expect 200 "AuthZ evaluate: the replacement credential" POST http://authz:8090/authz-resolver/v1/evaluate \
+expect 200 "AuthZ evaluate: the replacement credential" POST $payments_url/authz-resolver/v1/evaluate \
   -H "x-toolkit-internal-token: $replacement" -H "$json" -d "$evaluate"
-expect 401 "AuthZ evaluate: the retired one stays refused" POST http://authz:8090/authz-resolver/v1/evaluate \
+expect 401 "AuthZ evaluate: the retired one stays refused" POST $payments_url/authz-resolver/v1/evaluate \
   -H "x-toolkit-internal-token: $retired" -H "$json" -d "$evaluate"
 
 echo "== the same gears as the embedded all-in-one production binary (A20, G18)"

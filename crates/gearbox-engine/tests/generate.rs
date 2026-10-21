@@ -1518,6 +1518,7 @@ fn a_secret_config_field_becomes_an_env_placeholder() {
         default: None,
         doc: None,
         secret: true,
+        fields: Vec::new(),
     });
     schema.fields.push(ConfigFieldDecl {
         name: "visible".to_owned(),
@@ -1526,6 +1527,7 @@ fn a_secret_config_field_becomes_an_env_placeholder() {
         default: None,
         doc: None,
         secret: false,
+        fields: Vec::new(),
     });
 
     let gear = lock
@@ -2819,8 +2821,9 @@ fn a_remote_binding_writes_its_criticality_into_the_consumers_wiring() {
     assert_eq!(wiring["critical"], true, "{wiring}");
 }
 
-/// ADR-0010 section 6: under directory discovery a provider that is not its
-/// worker's anchor is looked up under the worker's directory name.
+/// ADR-0010 section 6: under directory discovery a provider beside the
+/// worker's anchor that the worker keeps no record for -- here, one with no
+/// REST surface -- is looked up under the worker's directory name.
 #[test]
 fn a_non_anchor_provider_is_looked_up_under_its_workers_directory_name() {
     let Some((mut lock, source_roots)) = resolve("local") else {
@@ -2854,6 +2857,78 @@ fn a_non_anchor_provider_is_looked_up_under_its_workers_directory_name() {
     let wiring =
         &config["gears"][consumer.as_str()]["config"]["consumer_wiring"]["beside-the-anchor"];
     assert_eq!(wiring["directory_name"], worker.registers_as(), "{wiring}");
+}
+
+/// A production single-node self-hosted hub is a socket in a private
+/// directory, and it refuses a directory other local users can reach rather
+/// than warning (gears-rust ADR-0011 section 3). payments-demo `local`, made
+/// production.
+#[test]
+fn a_production_self_hosted_hub_refuses_a_shared_socket_directory() {
+    let Some(root) = gears_rust() else {
+        return;
+    };
+    let opened = vec![SourceRoot::open(SourceId::new("gears-rust").unwrap(), &root).unwrap()];
+    let scan = load_catalogue(&opened);
+    let path = product_gdl();
+    let mut intent = load_product(&path, None)
+        .intent
+        .expect("the product evaluates");
+    let local = ProfileId::new("local").unwrap();
+    if let Some(gearbox_ir::DeploymentProfileDecl::SelfHosted { development, .. }) =
+        intent.profiles.get_mut(&local)
+    {
+        *development = false;
+    }
+    let resolution =
+        gearbox_engine::resolve::resolve_at(&scan.catalogue, &intent, &local, Some(&path));
+    let sources = opened
+        .iter()
+        .map(|r| (r.id.clone(), r.to_resolved()))
+        .collect();
+    let lock =
+        gearbox_engine::resolve::product::assemble(&scan.catalogue, &intent, &resolution, sources);
+    assert!(!lock.product.development);
+    let roots = opened
+        .iter()
+        .map(|r| (r.id.clone(), r.root.clone()))
+        .collect();
+    let files = generate_tree(&lock, &roots, &out_root()).files;
+
+    let mut hubs = 0;
+    for application in &lock.applications {
+        let config = yaml(text(&files, &format!("config/{}.yaml", application.name)));
+        let hub = &config["gears"]["grpc-hub"]["config"];
+        if hub.is_null() {
+            continue;
+        }
+        hubs += 1;
+        assert!(
+            hub["listen_addr"]
+                .as_str()
+                .is_some_and(|a| a.starts_with("uds://")),
+            "{hub}"
+        );
+        assert_eq!(
+            hub["strict_socket_dir"],
+            serde_json::Value::Bool(true),
+            "{hub}"
+        );
+    }
+    assert!(hubs > 0, "a self-hosted product runs a hub");
+
+    // A development profile keeps the warning.
+    let (lock, generated) = generated("local").expect("payments-demo local generates");
+    for application in &lock.applications {
+        let config = yaml(text(
+            &generated.files,
+            &format!("config/{}.yaml", application.name),
+        ));
+        assert!(
+            config["gears"]["grpc-hub"]["config"]["strict_socket_dir"].is_null(),
+            "{config}"
+        );
+    }
 }
 
 /// P4 / ADR-0026 §6: a production Kubernetes profile with Kube platform auth.
@@ -3493,4 +3568,72 @@ fn a_remote_cluster_requester_links_the_sdk_client() {
         );
         assert!(registered.contains("use cluster_sdk as _;"), "{registered}");
     }
+}
+
+/// ADR-0010 section 6, todo-issues 1: a REST provider beside the worker's
+/// anchor gets a directory record of its own. The worker lists it in
+/// `oop_http.directory_gears`, the consumer finds it under its own name (no
+/// `directory_name`), and the directory admits the worker for it.
+#[test]
+fn a_rest_provider_beside_the_anchor_registers_under_its_own_name() {
+    let Some((mut lock, source_roots)) = resolve("local") else {
+        return;
+    };
+    let worker = lock
+        .applications
+        .iter()
+        .find(|a| a.is_worker())
+        .expect("a worker")
+        .clone();
+    let beside = gearbox_ir::GearId::new("beside-the-anchor").unwrap();
+    let mut gear = lock
+        .gears
+        .values()
+        .find(|g| g.runtime_caps.contains(&gearbox_ir::RuntimeCap::Rest))
+        .expect("a REST gear")
+        .clone();
+    gear.id = beside.clone();
+    lock.gears.insert(beside.clone(), gear);
+    let remote = lock
+        .bindings
+        .iter_mut()
+        .find(|b| b.is_remote() && b.provider_application == worker.name)
+        .expect("a remote binding into the worker");
+    remote.provider = beside;
+    let (consumer, consumer_app) = (
+        remote.consumer.to_string(),
+        remote.consumer_application.to_string(),
+    );
+    let files = generate_tree(&lock, &source_roots, &out_root());
+
+    let consumer_config: serde_json::Value =
+        serde_saphyr::from_str(text(&files.files, &format!("config/{consumer_app}.yaml"))).unwrap();
+    let wiring = &consumer_config["gears"][consumer.as_str()]["config"]["consumer_wiring"]["beside-the-anchor"];
+    assert!(wiring["directory_name"].is_null(), "{wiring}");
+
+    let worker_config: serde_json::Value =
+        serde_saphyr::from_str(text(&files.files, &format!("config/{}.yaml", worker.name)))
+            .unwrap();
+    assert_eq!(
+        worker_config["oop_http"]["directory_gears"],
+        serde_json::json!(["beside-the-anchor"]),
+        "{}",
+        worker_config["oop_http"]
+    );
+
+    let directory_app = lock
+        .applications
+        .iter()
+        .find(|a| a.gears.iter().any(|g| g.as_str() == "service-discovery"))
+        .expect("the directory's application");
+    let directory_config: serde_json::Value = serde_saphyr::from_str(text(
+        &files.files,
+        &format!("config/{}.yaml", directory_app.name),
+    ))
+    .unwrap();
+    assert_eq!(
+        directory_config["gears"]["service-discovery"]["config"]["registrar_gears"]
+            [worker.registers_as()],
+        serde_json::json!(["beside-the-anchor"]),
+    );
 }

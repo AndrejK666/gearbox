@@ -9,10 +9,13 @@ gdl_version = "1.3"
 #   Flight Control  -- api-gateway's hand-written chart: the edge, the
 #                      directory, the hub, Types Registry, tenant AuthN (OIDC)
 #   cluster         -- cluster's hand-written chart: coordination over gRPC
-#   payments        -- the PaymentApi provider, internal only
+#   payments        -- the AuthZ bundle (anchor; `evaluate` is platform-plane)
+#                      and, linked beside it, the PaymentApi provider, internal
+#                      only. The directory has a record for each, so checkout
+#                      finds PaymentApi under its own name (gears-rust
+#                      ADR-0010 section 6)
 #   checkout        -- the consumer: `charge` exposed, `status` internal; calls
 #                      payments and cluster directly
-#   authz           -- the AuthZ bundle; `evaluate` is platform-plane
 #
 # The issuer and audience are the mock IdP's (gears-rust
 # deploy/helm/mock-idp.sh); its CA is mounted at /app/oidc-ca by the install.
@@ -91,11 +94,9 @@ product(
                     include = ["service-discovery", "grpc-hub", "types-registry", "authn-resolver"],
                     profiles = ["kind"]),
         application("cluster", anchor = "cluster", include = ["grpc-hub"], profiles = ["kind"]),
-        application("payments", anchor = "api-contracts", include = ["authn-resolver"],
-                    profiles = ["kind"]),
+        application("payments", anchor = "authz-resolver",
+                    include = ["api-contracts", "authn-resolver"], profiles = ["kind"]),
         application("checkout", anchor = "api-contracts-consumer", include = ["authn-resolver"],
-                    profiles = ["kind"]),
-        application("authz", anchor = "authz-resolver", include = ["authn-resolver"],
                     profiles = ["kind"]),
     ],
 )

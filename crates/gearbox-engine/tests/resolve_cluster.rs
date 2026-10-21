@@ -969,3 +969,47 @@ fn one_unreplicated_cluster_unit_holds_the_only_copy() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn a_remote_grpc_binding_into_a_builtin_host_process_is_not_gbx0305() {
+    // todo-issues 9: GBX0305 refuses a remote consumer of a process the
+    // built-in HTTP host serves, because that host is a public listener and a
+    // contract's REST routes are internal. A gRPC binding is served by the
+    // process's hub, not its HTTP host, so it must not be refused -- even
+    // though the provider's process has REST gears and no REST host.
+    let mut cat = support::remote_cluster_catalogue();
+    cat.gears
+        .get_mut(&support::gid("cluster"))
+        .unwrap()
+        .runtime_caps
+        .insert(gearbox_ir::RuntimeCap::Rest);
+    let mut intent = support::kubernetes(
+        &["app", "cluster", "grpc-hub"],
+        gearbox_ir::Discovery::Static,
+    );
+    support::pin(&mut intent, "app-worker", "app", 1);
+    support::bind_cluster(&mut intent, "app", "postgres", Some("existingSecret:pg"));
+
+    let r = resolve(&cat, &intent, &pid("prod"));
+    let binding = r
+        .bindings
+        .iter()
+        .find(|b| b.provider.as_str() == "cluster")
+        .unwrap_or_else(|| panic!("no cluster binding: {:?}", r.diagnostics));
+    assert_eq!(binding.transport, gearbox_ir::Transport::Grpc);
+    let provider = r
+        .partition
+        .applications
+        .iter()
+        .find(|a| a.name == binding.provider_application)
+        .expect("the provider's application");
+    assert!(
+        provider.rest_host.is_none() && provider.serve.is_some(),
+        "the premise: the built-in HTTP host serves cluster's process: {provider:?}"
+    );
+    assert!(
+        messages_of(&r, DiagnosticCode::TopologyRestWithoutHost).is_empty(),
+        "{:?}",
+        r.diagnostics
+    );
+}

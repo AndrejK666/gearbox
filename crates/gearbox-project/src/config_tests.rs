@@ -876,3 +876,116 @@ fn a_binding_that_is_not_a_struct_is_not_mistaken_for_the_config_type() {
         Ok(Some("DemoConfig".to_owned()))
     );
 }
+
+// -- one level into a nested struct ------------------------------------------
+
+/// A struct-typed field carries the fields of the struct it names, one level
+/// down, so a check can say that a set `jwt = {...}` lacks `claim_mapping`.
+#[test]
+fn a_struct_typed_field_carries_one_nested_level() {
+    let files = [file(
+        r"
+        #[derive(Deserialize)]
+        pub struct PluginConfig {
+            pub jwt: JwtConfigInput,
+            pub cache: Option<Cache>,
+        }
+        #[derive(Deserialize)]
+        pub struct JwtConfigInput {
+            #[serde(default)]
+            pub require_audience: bool,
+            pub claim_mapping: ClaimMappingInput,
+        }
+        #[derive(Deserialize)]
+        pub struct ClaimMappingInput { pub subject: String }
+        #[derive(Deserialize)]
+        pub struct Cache { pub ttl: u64 }
+        ",
+    )];
+    let projected = fields(&files, "PluginConfig");
+    let jwt = named(&projected, "jwt");
+    assert_eq!(jwt.ty, ConfigFieldType::Complex, "the control is unchanged");
+    assert_eq!(names(&jwt.fields), ["require_audience", "claim_mapping"]);
+    let claim_mapping = named(&jwt.fields, "claim_mapping");
+    assert!(claim_mapping.required);
+    assert!(
+        claim_mapping.fields.is_empty(),
+        "one level only: `claim_mapping`'s own fields are not projected"
+    );
+    assert_eq!(names(&named(&projected, "cache").fields), ["ttl"]);
+}
+
+/// A struct whose wire shape is another type's has no nested keys: the event
+/// broker's `topics` is a transparent map, and `entries` is never written.
+#[test]
+fn a_transparent_or_converted_struct_has_no_nested_level() {
+    let files = [file(
+        r#"
+        #[derive(Deserialize)]
+        pub struct C { pub topics: Topics, pub port: Port }
+        #[derive(Deserialize)]
+        #[serde(transparent)]
+        pub struct Topics { pub entries: BTreeMap<String, u8> }
+        #[derive(Deserialize)]
+        #[serde(try_from = "u16")]
+        pub struct Port { pub value: u16 }
+        "#,
+    )];
+    for field in fields(&files, "C") {
+        assert!(
+            field.fields.is_empty(),
+            "{}: {:?}",
+            field.name,
+            field.fields
+        );
+    }
+}
+
+/// A type from outside the crate, or a scalar, has no nested level.
+#[test]
+fn a_foreign_or_scalar_field_has_no_nested_level() {
+    let files = [file(
+        r"
+        #[derive(Deserialize)]
+        pub struct C { pub url: String, pub tls: other_crate::Tls, pub list: Vec<Item> }
+        #[derive(Deserialize)]
+        pub struct Item { pub a: u8 }
+        ",
+    )];
+    let projected = fields(&files, "C");
+    for field in &projected {
+        assert!(
+            field.fields.is_empty(),
+            "{}: {:?}",
+            field.name,
+            field.fields
+        );
+    }
+}
+
+/// `gts::GtsTypeId` deserializes from its string form, so its control is a
+/// string box -- `Complex` hid the event broker's `default_storage_backend`.
+#[test]
+fn a_gts_type_id_is_a_string() {
+    let files = [file(
+        r"
+        #[derive(Deserialize)]
+        pub struct C { pub default_storage_backend: Option<gts::GtsTypeId> }
+        ",
+    )];
+    assert_eq!(
+        named(&fields(&files, "C"), "default_storage_backend").ty,
+        ConfigFieldType::Str
+    );
+}
+
+/// The case that asked for the nested level, against the real tree.
+#[test]
+fn the_oidc_plugin_s_jwt_requires_claim_mapping() {
+    let files = require!(tree(
+        "gears/system/authn-resolver/plugins/oidc-authn-plugin"
+    ));
+    let projected = fields(&files, "OidcAuthNGearConfig");
+    let claim_mapping = named(&named(&projected, "jwt").fields, "claim_mapping");
+    assert!(claim_mapping.required && claim_mapping.default.is_none());
+}

@@ -14,6 +14,7 @@ fn field(name: &str, ty: ConfigFieldType, required: bool) -> ConfigFieldDecl {
         default: None,
         doc: None,
         secret: false,
+        fields: Vec::new(),
     }
 }
 

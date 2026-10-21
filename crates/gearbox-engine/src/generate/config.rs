@@ -83,6 +83,9 @@ struct OopHttpSection {
     allow_loopback_advertise: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     internal_auth: Option<Value>,
+    /// The further gears this worker keeps a directory record for.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    directory_gears: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -264,6 +267,21 @@ pub fn app_config(
     write_spawns(input, application, &mut gears);
     write_public_listener(input, application, &mut gears);
 
+    // A production hub on a socket refuses a directory other local users can
+    // reach, rather than warning about it (gears-rust ADR-0011 section 3).
+    if !input.lock.product.development
+        && let Some(hub) = gears.get_mut("grpc-hub")
+        && hub
+            .config
+            .get("listen_addr")
+            .and_then(Value::as_str)
+            .is_some_and(|addr| addr.starts_with("uds://"))
+    {
+        hub.config
+            .entry("strict_socket_dir")
+            .or_insert(Value::Bool(true));
+    }
+
     // One platform-plane provider for the embedded host and its workers. The
     // product supplies secret values through AppConfig's APP__ environment
     // overrides; no credential value is needed during generation.
@@ -285,6 +303,8 @@ pub fn app_config(
                 )])
             });
     }
+
+    write_registrar_gears(input, &mut gears);
 
     let internal_auth = input
         .lock
@@ -330,6 +350,10 @@ pub fn app_config(
                 advertise_uri: serve.advertise_uri.clone(),
                 allow_loopback_advertise: serve.allow_loopback_advertise,
                 internal_auth: internal_auth.clone(),
+                directory_gears: directory_gears(input.lock, application)
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
             }),
         http_host: application
             .serve
@@ -440,6 +464,9 @@ pub(super) fn unit_chart_overlay(
     // the chart's `secretEnv` maps from the existing Secret.
     let database = write_database(input, application, &mut gears)?;
     write_cluster(input, &mut gears);
+    // A hand-written unit (Flight Control) may host the directory: it admits the
+    // workers' further records only if the overlay says so.
+    write_registrar_gears(input, &mut gears);
     let mut gear_sections = Map::new();
     for (id, section) in gears {
         let mut gear = Map::new();
@@ -459,6 +486,39 @@ pub(super) fn unit_chart_overlay(
         overlay.insert("database".to_owned(), to_json(database)?);
     }
     Ok(overlay)
+}
+
+/// The directory admits a worker for the further gears it registers, and for
+/// nothing else (gears-rust ADR-0010 section 6). Merged with what the
+/// description lists, so its own entries still stand.
+fn write_registrar_gears(input: &GenerateInput<'_>, gears: &mut BTreeMap<String, GearSection>) {
+    let registrars = registrar_gears(input.lock);
+    if registrars.is_empty() {
+        return;
+    }
+    let Some(directory) = gears.get_mut("service-discovery") else {
+        return;
+    };
+    let entry = directory
+        .config
+        .entry("registrar_gears".to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let Some(map) = entry.as_object_mut() else {
+        return;
+    };
+    for (registrar, listed) in registrars {
+        let gears = map
+            .entry(registrar)
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Some(gears) = gears.as_array_mut() {
+            for gear in listed {
+                let gear = Value::String(gear.to_string());
+                if !gears.contains(&gear) {
+                    gears.push(gear);
+                }
+            }
+        }
+    }
 }
 
 fn to_json(value: &impl Serialize) -> Result<Value, GenerateError> {
@@ -609,9 +669,10 @@ fn write_cluster_sdk_wiring(
 }
 
 /// The directory name to look the provider up under, when it is not the
-/// provider's own: a worker registers once, under its anchor (or role), so a
-/// gear it links alongside is found there (gears-rust ADR-0010 section 6). A host
-/// registers each of its REST gears under its own name.
+/// provider's own: a gear a worker links beside its anchor (or role) and does
+/// not keep a record for is found under the worker's name. A REST provider the
+/// worker lists in `directory_gears`, and every REST gear of a host, is found
+/// under its own (gears-rust ADR-0010 section 6).
 fn directory_name(
     input: &GenerateInput<'_>,
     binding: &gearbox_ir::ResolvedBinding,
@@ -622,8 +683,71 @@ fn directory_name(
         .iter()
         .find(|a| a.name == binding.provider_application)?;
     let registers_as = provider_application.registers_as();
-    (provider_application.is_worker() && registers_as != binding.provider.as_str())
-        .then(|| registers_as.to_owned())
+    (provider_application.is_worker()
+        && registers_as != binding.provider.as_str()
+        && !directory_gears(input.lock, provider_application).contains(&binding.provider))
+    .then(|| registers_as.to_owned())
+}
+
+/// The further gears a worker keeps a directory record for, beside the name it
+/// registers under (gears-rust ADR-0010 section 6): each REST gear it provides
+/// to a consumer in another process.
+///
+/// A gear another application already registers under that name is left out:
+/// a second record would split its consumers between two endpoints. Its
+/// consumers keep finding it under this worker's name.
+fn directory_gears(
+    lock: &gearbox_ir::ResolvedProduct,
+    application: &ResolvedApplication,
+) -> BTreeSet<GearId> {
+    if !application.is_worker() {
+        return BTreeSet::new();
+    }
+    let rest = |gear: &GearId| {
+        lock.gears
+            .get(gear)
+            .is_some_and(|g| g.runtime_caps.contains(&gearbox_ir::RuntimeCap::Rest))
+    };
+    let registered_elsewhere = |gear: &GearId| {
+        lock.applications
+            .iter()
+            .filter(|other| other.name != application.name)
+            .any(|other| {
+                if other.is_worker() {
+                    other.registers_as() == gear.as_str()
+                } else {
+                    other.gears.contains(gear)
+                        && lock.gears.get(gear).is_some_and(|g| {
+                            !g.runtime_caps.contains(&gearbox_ir::RuntimeCap::RestHost)
+                        })
+                }
+            })
+    };
+    lock.bindings
+        .iter()
+        .filter(|b| {
+            b.provider_application == application.name
+                && b.consumer_application != application.name
+                && b.provider.as_str() != application.registers_as()
+        })
+        .map(|b| b.provider.clone())
+        .filter(|gear| rest(gear) && !registered_elsewhere(gear))
+        .collect()
+}
+
+/// Registrar -> the further gears it registers, for every worker that has any.
+/// A worker's identity carries the name it registers under.
+fn registrar_gears(lock: &gearbox_ir::ResolvedProduct) -> BTreeMap<String, BTreeSet<GearId>> {
+    lock.applications
+        .iter()
+        .map(|application| {
+            (
+                application.registers_as().to_owned(),
+                directory_gears(lock, application),
+            )
+        })
+        .filter(|(_, gears)| !gears.is_empty())
+        .collect()
 }
 
 /// The cluster gear's per-scope backend bindings.

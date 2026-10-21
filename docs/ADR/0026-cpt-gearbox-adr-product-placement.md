@@ -118,8 +118,10 @@ It requires:
 
 * The requester's generated chart passes `POD_NAMESPACE` from the downward API.
 * As implemented: the `cluster` Service keeps port 50051 and targets the port the resolver gave that process's hub;
-  under directory discovery the SDK wiring carries `directory_name` when cluster's process registers under another
-  anchor.
+  under directory discovery, when cluster's process registers under another anchor, that worker keeps a directory
+  record under `cluster` (`oop_http.directory_gears`, admitted by the directory's `registrar_gears`), so the SDK
+  wiring needs no `directory_name`. The alias is still written for a provider without a REST surface, which such
+  a record cannot carry, and for a gear another application already registers.
 * `write_cluster` keeps writing the profiles into the `cluster` gear's section, wherever it is
   (`generate/config.rs:376-436`).
 * A generic contract edge stays REST-only (GBX0402 stands). No gRPC resolving client is generated in this roadmap.

@@ -781,6 +781,24 @@ fn split(
     if let Some(pin) = host_pin {
         worker_anchors.remove(&pin.anchor);
     }
+    // An `include` places the gear: a severable edge to it does not also make
+    // it a worker of its own, which put one gear in two processes and gave its
+    // remote consumers the stray copy. Its own pin or an isolate still sends it
+    // out.
+    let pinned_anchors: BTreeSet<&GearId> = scoped
+        .application_pins
+        .iter()
+        .map(|p| &p.anchor)
+        .chain(isolates.iter())
+        .collect();
+    let included: BTreeSet<GearId> = scoped
+        .application_pins
+        .iter()
+        .flat_map(|p| p.include.iter())
+        .filter(|g| !pinned_anchors.contains(g))
+        .cloned()
+        .collect();
+    worker_anchors.retain(|g| !included.contains(g));
 
     // `bind(mode = local)`: the provider joins the consumer's process
     // (ADR `cpt-gearbox-adr-product-placement` section 2). It stops being a

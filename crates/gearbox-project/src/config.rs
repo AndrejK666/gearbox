@@ -67,6 +67,12 @@ pub struct ConfigField {
     /// unreadable shape is a reason to report [`ConfigFieldType::Complex`], not
     /// a reason to forget what the field holds.
     pub secret: bool,
+    /// One level of a struct-typed field: the fields of the struct its type
+    /// names, when this crate declares it with named fields. Empty otherwise,
+    /// and always empty one level down. The control stays
+    /// [`ConfigFieldType::Complex`]; this is what a check reads to say that a
+    /// set `jwt = {...}` lacks the required `claim_mapping`.
+    pub fields: Vec<ConfigField>,
     /// Path relative to the crate's `src/`, and the line of the field.
     pub relative: PathBuf,
     pub line: usize,
@@ -241,6 +247,9 @@ struct SerdeAttrs {
     with: bool,
     flatten: bool,
     skip: bool,
+    /// `transparent`, `from` or `try_from` on a container: what is on the
+    /// wire is another type's shape, not this struct's named keys.
+    shape_elsewhere: bool,
     /// True when an attribute could not be read to its end, so the flags above
     /// are what was seen rather than what was written.
     partial: bool,
@@ -274,6 +283,11 @@ fn serde_attrs(attrs: &[syn::Attribute]) -> SerdeAttrs {
                 }
             } else if meta.path.is_ident("flatten") {
                 out.flatten = true;
+            } else if meta.path.is_ident("transparent") {
+                out.shape_elsewhere = true;
+            } else if meta.path.is_ident("from") || meta.path.is_ident("try_from") {
+                out.shape_elsewhere = true;
+                let _ = meta.value()?.parse::<syn::Expr>()?;
             } else if meta.path.is_ident("skip") {
                 out.skip = true;
             } else if meta.path.is_ident("with") {
@@ -445,8 +459,9 @@ fn classify(ty: &syn::Type, items: &ItemIndex<'_>) -> (ConfigFieldType, bool) {
         return (ConfigFieldType::Complex, false);
     };
     match ident.as_str() {
-        // A path is a string on the wire, and an operator types one.
-        "String" | "str" | "PathBuf" | "Path" => (ConfigFieldType::Str, false),
+        // A path is a string on the wire, and an operator types one. So is a
+        // GTS type id: `gts::GtsTypeId` deserializes from its string form.
+        "String" | "str" | "PathBuf" | "Path" | "GtsTypeId" => (ConfigFieldType::Str, false),
         // Every `secrecy` wrapper, not the one alias. The point of all of them
         // is that the value is a credential, and a field typed `Secret<String>`
         // or `SecretBox<str>` used to fall through to the item lookup and come
@@ -587,6 +602,16 @@ pub fn project_config_fields(
     files: &[RustFile],
     root: &str,
 ) -> Result<Vec<ConfigField>, ConfigFieldsError> {
+    project_struct_fields(files, root, true)
+}
+
+/// [`project_config_fields`], descending one level into struct-typed fields
+/// when `nested`.
+fn project_struct_fields(
+    files: &[RustFile],
+    root: &str,
+    nested: bool,
+) -> Result<Vec<ConfigField>, ConfigFieldsError> {
     let Some((file, item)) = find_struct(files, root) else {
         return Err(ConfigFieldsError::RootNotFound {
             root: root.to_owned(),
@@ -604,6 +629,12 @@ pub fn project_config_fields(
             root: root.to_owned(),
             field: None,
         });
+    }
+    // One level down, a struct whose wire shape is another type's has no keys
+    // of its own to check: `TopicSettingsMap` is a transparent map, and its
+    // field `entries` is never written.
+    if !nested && container.shape_elsewhere {
+        return Ok(Vec::new());
     }
     let defaults = default_impl_fields(files, root);
     let items = item_index(files);
@@ -675,6 +706,18 @@ pub fn project_config_fields(
             })
         };
 
+        // One level into a struct this crate declares, so a check can name a
+        // required key inside a set value. A nested struct that cannot be read
+        // contributes nothing rather than failing the gear's whole schema.
+        let fields = if nested && ty == ConfigFieldType::Complex && !secret {
+            type_ident(optional.unwrap_or(&field.ty))
+                .filter(|ident| matches!(items.get(ident), Some(syn::Item::Struct(_))))
+                .and_then(|ident| project_struct_fields(files, &ident, false).ok())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
         out.push(ConfigField {
             name,
             ty,
@@ -682,6 +725,7 @@ pub fn project_config_fields(
             default,
             doc: doc_of(&field.attrs),
             secret,
+            fields,
             relative: file.relative.clone(),
             line: field.ident.as_ref().map_or(0, |i| i.span().start().line),
         });

@@ -423,6 +423,13 @@ pub struct ConfigFieldDecl {
     /// a generator cannot do that for a field it cannot tell from a hostname.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub secret: bool,
+
+    /// One level of a struct-typed field: the fields of the struct its type
+    /// names, when the scanned crate declares it. The control is still
+    /// [`ConfigFieldType::Complex`]; a check reads these to name a required
+    /// key missing from a set value (`jwt.claim_mapping`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<ConfigFieldDecl>,
 }
 
 /// A gear's configuration surface, as its description curates it.

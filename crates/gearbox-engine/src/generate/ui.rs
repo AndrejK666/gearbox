@@ -414,12 +414,11 @@ mod tests {
     struct TestPackage(std::path::PathBuf);
     impl TestPackage {
         fn new() -> Self {
-            let unique = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let dir =
-                std::env::temp_dir().join(format!("gearbox-ui-{}-{unique}", std::process::id()));
+            // A per-process counter, not the clock: macOS clocks tick in
+            // microseconds, so two tests starting together got the same path.
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let nth = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!("gearbox-ui-{}-{nth}", std::process::id()));
             std::fs::create_dir(&dir).unwrap();
             std::fs::create_dir(dir.join("src")).unwrap();
             std::fs::write(dir.join("src/index.ts"), "export const plugin = {};").unwrap();

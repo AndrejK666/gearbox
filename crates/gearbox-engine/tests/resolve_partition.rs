@@ -479,6 +479,35 @@ fn two_pins_differing_by_role_are_not_a_duplicate() {
     );
 }
 
+/// todo-issues 1: an `include` places the gear. A provider of a severable edge
+/// used to become a worker of its own as well, so the gear ran in two processes
+/// and its remote consumer was bound to the stray copy.
+#[test]
+fn an_included_provider_is_placed_by_the_include_alone() {
+    let mut cat = support::catalogue_with_declared_edge();
+    cat.gears.insert(gid("other"), support::descriptor("other"));
+    let mut intent = support::self_hosted_intent(&["host", "provider", "other"]);
+    support::pin(&mut intent, "worker", "other", 1);
+    intent.application_pins[0].include.insert(gid("provider"));
+
+    let r = resolve(&cat, &intent, &pid("local"));
+    let holding: Vec<&str> = r
+        .partition
+        .applications
+        .iter()
+        .filter(|a| a.gears.contains(&gid("provider")))
+        .map(|a| a.name.as_str())
+        .collect();
+    assert_eq!(holding, ["worker"], "{:?}", r.partition.applications);
+    assert!(
+        !r.partition
+            .applications
+            .iter()
+            .any(|a| a.anchor == gid("provider")),
+        "no process is anchored on the included provider"
+    );
+}
+
 #[test]
 fn an_application_cannot_include_a_gear_outside_the_product() {
     let cat = support::catalogue_of(vec![
