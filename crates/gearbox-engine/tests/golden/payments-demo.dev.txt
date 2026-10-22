@@ -89,6 +89,9 @@ database:
       password: ${GEARS_PG_PASSWORD}
       params:
         sslmode: disable
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-contracts:
     config: {}
@@ -549,6 +552,9 @@ to = "gear:static-authn-plugin"
 kind = "colocated-by"
 because = "`static-authn-plugin` names `types-registry` in its `deps`, so the two are linked into one binary and no profile can separate them. Removing that entry is the only thing that can."
 
+[permissions]
+"directory.read" = ["*"]
+
 [[diagnostics]]
 code = "GBX0307"
 severity = "warning"
@@ -576,11 +582,11 @@ help = "allowed because the profile is `development = True`; a production profil
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 18
+line = 23
 character = 8
 
 [diagnostics.location.range.end]
-line = 21
+line = 26
 character = 10
 
 [[diagnostics]]
@@ -593,11 +599,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 52
+line = 57
 character = 8
 
 [diagnostics.location.range.end]
-line = 52
+line = 57
 character = 65
 
 [[diagnostics]]
@@ -610,11 +616,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 51
+line = 56
 character = 8
 
 [diagnostics.location.range.end]
-line = 51
+line = 56
 character = 56
 
 [[diagnostics]]
@@ -627,11 +633,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 49
+line = 54
 character = 8
 
 [diagnostics.location.range.end]
-line = 49
+line = 54
 character = 54
 
 [[diagnostics]]
@@ -644,11 +650,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 74
+line = 79
 character = 8
 
 [diagnostics.location.range.end]
-line = 99
+line = 104
 character = 9
 
 [[diagnostics]]
@@ -661,11 +667,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 62
+line = 67
 character = 8
 
 [diagnostics.location.range.end]
-line = 62
+line = 67
 character = 50
 
 [[diagnostics]]
@@ -695,11 +701,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 50
+line = 55
 character = 8
 
 [diagnostics.location.range.end]
-line = 50
+line = 55
 character = 60
 
 [[diagnostics]]
@@ -712,11 +718,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 74
+line = 79
 character = 8
 
 [diagnostics.location.range.end]
-line = 99
+line = 104
 character = 9
 
 [[diagnostics]]
@@ -764,9 +770,9 @@ evidence = "gears/system/cluster/cluster/src/defaults/leader.rs (CasBasedLeaderE
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 122
+line = 127
 character = 8
 
 [diagnostics.location.range.end]
-line = 126
+line = 131
 character = 9

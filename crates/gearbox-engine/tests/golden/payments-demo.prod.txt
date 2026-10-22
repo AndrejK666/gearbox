@@ -208,6 +208,9 @@ oop_http:
     - toolkit-internal
     provider: kube
     token_path: /var/run/secrets/tokens/toolkit-internal
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-contracts:
     config: {}
@@ -251,6 +254,9 @@ internal_auth:
   - toolkit-internal
   provider: kube
   token_path: /var/run/secrets/tokens/toolkit-internal
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-gateway:
     config:
@@ -332,6 +338,9 @@ oop_http:
     - toolkit-internal
     provider: kube
     token_path: /var/run/secrets/tokens/toolkit-internal
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-contracts-consumer:
     config:
@@ -418,6 +427,9 @@ oop_http:
     - toolkit-internal
     provider: kube
     token_path: /var/run/secrets/tokens/toolkit-internal
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-contracts:
     config: {}
@@ -812,6 +824,9 @@ internal_auth:
   - toolkit-internal
   provider: kube
   token_path: /var/run/secrets/tokens/toolkit-internal
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-gateway:
     config:
@@ -1280,6 +1295,9 @@ oop_http:
     - toolkit-internal
     provider: kube
     token_path: /var/run/secrets/tokens/toolkit-internal
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-contracts-consumer:
     config:
@@ -4325,6 +4343,9 @@ to = "gear:oidc-authn-plugin"
 kind = "colocated-by"
 because = "`oidc-authn-plugin` names `types-registry` in its `deps`, so the two are linked into one binary and no profile can separate them. Removing that entry is the only thing that can."
 
+[permissions]
+"directory.read" = ["*"]
+
 [[diagnostics]]
 code = "GBX0323"
 severity = "info"
@@ -4335,11 +4356,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 52
+line = 57
 character = 8
 
 [diagnostics.location.range.end]
-line = 52
+line = 57
 character = 65
 
 [[diagnostics]]
@@ -4352,11 +4373,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 51
+line = 56
 character = 8
 
 [diagnostics.location.range.end]
-line = 51
+line = 56
 character = 56
 
 [[diagnostics]]
@@ -4369,11 +4390,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 49
+line = 54
 character = 8
 
 [diagnostics.location.range.end]
-line = 49
+line = 54
 character = 54
 
 [[diagnostics]]
@@ -4386,11 +4407,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 74
+line = 79
 character = 8
 
 [diagnostics.location.range.end]
-line = 99
+line = 104
 character = 9
 
 [[diagnostics]]
@@ -4403,11 +4424,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 62
+line = 67
 character = 8
 
 [diagnostics.location.range.end]
-line = 62
+line = 67
 character = 50
 
 [[diagnostics]]
@@ -4437,11 +4458,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 74
+line = 79
 character = 8
 
 [diagnostics.location.range.end]
-line = 99
+line = 104
 character = 9
 
 [[diagnostics]]
@@ -4454,11 +4475,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 50
+line = 55
 character = 8
 
 [diagnostics.location.range.end]
-line = 50
+line = 55
 character = 60
 
 [[diagnostics]]
@@ -4544,11 +4565,11 @@ evidence = "gears/system/cluster/cluster/src/defaults/leader.rs (CasBasedLeaderE
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 127
+line = 132
 character = 8
 
 [diagnostics.location.range.end]
-line = 144
+line = 149
 character = 9
 
 [[diagnostics]]
@@ -4562,9 +4583,9 @@ evidence = "libs/toolkit/src/discovery.rs:38"
 uri = "file://<repo>/products/payments-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 33
+line = 38
 character = 8
 
 [diagnostics.location.range.end]
-line = 41
+line = 46
 character = 9

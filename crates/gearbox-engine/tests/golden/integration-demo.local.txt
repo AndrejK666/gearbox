@@ -205,6 +205,9 @@ oop_http:
     peer_name: integration-demo-platform
     provider: shared_secret
     secret: ${TOOLKIT_PLATFORM_SECRET}
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-contracts-consumer:
     config:
@@ -270,6 +273,9 @@ internal_auth:
   peer_name: integration-demo-platform
   provider: shared_secret
   secret: ${TOOLKIT_PLATFORM_SECRET}
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-contracts-consumer:
     runtime:
@@ -372,6 +378,9 @@ oop_http:
     secret: ${TOOLKIT_PLATFORM_SECRET}
   directory_gears:
   - api-contracts
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-contracts:
     config: {}
@@ -1053,6 +1062,9 @@ to = "gear:static-authz-plugin"
 kind = "colocated-by"
 because = "`static-authz-plugin` names `types-registry` in its `deps`, so the two are linked into one binary and no profile can separate them. Removing that entry is the only thing that can."
 
+[permissions]
+"directory.read" = ["*"]
+
 [[diagnostics]]
 code = "GBX0323"
 severity = "info"
@@ -1063,11 +1075,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 74
+line = 79
 character = 8
 
 [diagnostics.location.range.end]
-line = 74
+line = 79
 character = 65
 
 [[diagnostics]]
@@ -1080,11 +1092,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 73
+line = 78
 character = 8
 
 [diagnostics.location.range.end]
-line = 73
+line = 78
 character = 56
 
 [[diagnostics]]
@@ -1097,11 +1109,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 68
+line = 73
 character = 8
 
 [diagnostics.location.range.end]
-line = 68
+line = 73
 character = 86
 
 [[diagnostics]]
@@ -1114,11 +1126,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 75
+line = 80
 character = 8
 
 [diagnostics.location.range.end]
-line = 112
+line = 117
 character = 10
 
 [[diagnostics]]
@@ -1131,11 +1143,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 113
+line = 118
 character = 8
 
 [diagnostics.location.range.end]
-line = 115
+line = 120
 character = 10
 
 [[diagnostics]]
@@ -1148,11 +1160,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 72
+line = 77
 character = 8
 
 [diagnostics.location.range.end]
-line = 72
+line = 77
 character = 50
 
 [[diagnostics]]
@@ -1165,11 +1177,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 70
+line = 75
 character = 8
 
 [diagnostics.location.range.end]
-line = 70
+line = 75
 character = 51
 
 [[diagnostics]]
@@ -1182,11 +1194,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 75
+line = 80
 character = 8
 
 [diagnostics.location.range.end]
-line = 112
+line = 117
 character = 10
 
 [[diagnostics]]
@@ -1199,11 +1211,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 69
+line = 74
 character = 8
 
 [diagnostics.location.range.end]
-line = 69
+line = 74
 character = 60
 
 [[diagnostics]]
@@ -1216,11 +1228,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 113
+line = 118
 character = 8
 
 [diagnostics.location.range.end]
-line = 115
+line = 120
 character = 10
 
 [[diagnostics]]
@@ -1233,11 +1245,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 71
+line = 76
 character = 8
 
 [diagnostics.location.range.end]
-line = 71
+line = 76
 character = 57
 
 [[diagnostics]]
@@ -1251,11 +1263,11 @@ evidence = "gears/system/cluster/cluster/src/defaults/leader.rs (CasBasedLeaderE
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 133
+line = 138
 character = 8
 
 [diagnostics.location.range.end]
-line = 134
+line = 139
 character = 59
 
 [[diagnostics]]
@@ -1269,9 +1281,9 @@ evidence = "libs/toolkit/src/bootstrap/run.rs:74"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 50
+line = 55
 character = 8
 
 [diagnostics.location.range.end]
-line = 60
+line = 65
 character = 9

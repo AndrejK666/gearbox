@@ -82,13 +82,14 @@ fn the_slice_loads_without_unexpected_diagnostics() {
     // and the clickhouse usage-collector plugin -- plus the six demo gears
     // under `gears/demo`: lab-ui-backend, family-labs-bootstrap,
     // family-labs-outbound, and the demo-authn, demo-authz and firebase-authn
-    // plugins.
+    // plugins -- plus family-labs-broker-events, once Event Broker left the
+    // gateway.
     //
     // The assertion above is the one that matters -- every description and
     // not one diagnostic between them. The count is here so that a corpus
     // moving underneath the suite is found in one place rather than inferred
     // from a stranger failure elsewhere.
-    assert_eq!(catalogue.gears.len(), 55, "the slice gears");
+    assert_eq!(catalogue.gears.len(), 56, "the slice gears");
 }
 
 #[test]

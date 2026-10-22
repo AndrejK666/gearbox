@@ -1041,12 +1041,17 @@ gear(
 `product.gdl`:
 
 ```
+gdl_version = "1.4"
+
 product(
     id = "payments-demo",
     name = "Payments Demo",
     version = "0.1.0",
     layout = "apps",
     sources = [source(id = "gears-rust", at = path("../../../gears-rust"))],
+    # What each permission a gear declares is granted to (GDL 1.4): here the
+    # Directory listing, to any authenticated caller.
+    permissions = {"directory.read": ["*"]},
     # `dev` and `local` are development profiles: accept-all AuthN and no
     # platform auth are allowed (GBX0325 as warnings). `prod` is a production
     # profile, its platform auth given by the profile -- see "Deployment profiles".

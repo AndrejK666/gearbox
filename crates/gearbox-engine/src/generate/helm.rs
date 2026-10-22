@@ -129,6 +129,14 @@ fn database_secret(
     }))
 }
 
+/// Whether `application` links the tenant `AuthN` resolver.
+fn hosts_authn(application: &ResolvedApplication) -> bool {
+    application
+        .gears
+        .iter()
+        .any(|gear| gear.as_str() == "authn-resolver")
+}
+
 /// Whether the process runs the directory, which is that process's memory: one
 /// replica, and a rollout that stops it before starting the next -- a surge
 /// would start a second, independent registry (ADR-0004 amendment).
@@ -301,10 +309,11 @@ fn umbrella_values(
             // before its production rules are checked.
             let image = application.image.as_ref();
             // `${VAR}` placeholders in the overlay, from the existing Secret the
-            // description names -- the same pairing a generated chart makes.
+            // description names -- the same pairing a generated chart makes --
+            // or else the product's own (`unit_secret`).
             let config_rel = paths::rel(&["config", &format!("{}.yaml", application.name)])?;
             let database = database_secret(application, input)?;
-            let mut secret_env: Vec<UnitSecretEnv> = match existing_secret(application, input)? {
+            let mut secret_env: Vec<UnitSecretEnv> = match unit_secret(application, input)? {
                 Some(secret) => files
                     .get(&config_rel)
                     .and_then(FileEntry::as_text)
@@ -349,6 +358,7 @@ fn umbrella_values(
                         .is_worker()
                         .then(|| directory_endpoint(input))
                         .flatten(),
+                    authn: hosts_authn(application).then_some(UnitAuthnValues { mode: "product" }),
                 }),
             );
             continue;
@@ -871,6 +881,12 @@ struct UnitChartValues {
     config_overlay: serde_json::Map<String, serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     directory_endpoint: Option<String>,
+    /// A unit hosting `authn-resolver` (Flight Control's chart) authenticates
+    /// tenants with the plugins the description selected, passed in
+    /// `configOverlay`: `product` takes them as given, where the chart's own
+    /// default would bring its OIDC plugin and refuse every other.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    authn: Option<UnitAuthnValues>,
 }
 
 #[derive(serde::Serialize)]
@@ -879,6 +895,11 @@ struct UnitSecretEnv {
     name: String,
     secret_name: String,
     key: String,
+}
+
+#[derive(serde::Serialize)]
+struct UnitAuthnValues {
+    mode: &'static str,
 }
 
 #[derive(serde::Serialize)]
@@ -1351,6 +1372,36 @@ fn existing_secret(
             .filter(|name| !name.is_empty())
             .map(str::to_owned)
     }) else {
+        return Ok(None);
+    };
+    helm_safe("existingSecret", &name)?;
+    Ok(Some(name))
+}
+
+/// The Secret a unit chart's `${VAR}` placeholders come from: the one
+/// [`existing_secret`] finds, **otherwise the product's own**, the one its
+/// Postgres names (`postgres(existing_secret = ...)`).
+///
+/// Only for a unit chart. Its overlay is this generator's output and
+/// `secretEnv` is the one way a value reaches it, so without a source a Flight
+/// Control unit's `AuthN` tokens, say, reached the pod unfilled. A generated
+/// chart keeps its opt-in: `existingSecret` in the operator's values, beside
+/// the `extraEnv` an installation may supply instead (review of the Phase 5
+/// split).
+fn unit_secret(
+    application: &ResolvedApplication,
+    input: &GenerateInput<'_>,
+) -> Result<Option<String>, GenerateError> {
+    if let Some(name) = existing_secret(application, input)? {
+        return Ok(Some(name));
+    }
+    let Some(name) = input
+        .lock
+        .database
+        .as_ref()
+        .and_then(|db| db.existing_secret.clone())
+        .filter(|name| !name.is_empty())
+    else {
         return Ok(None);
     };
     helm_safe("existingSecret", &name)?;

@@ -150,6 +150,9 @@ oop_http:
     - toolkit-internal
     provider: kube
     token_path: /var/run/secrets/tokens/toolkit-internal
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-contracts-consumer:
     config:
@@ -200,6 +203,9 @@ oop_http:
     - toolkit-internal
     provider: kube
     token_path: /var/run/secrets/tokens/toolkit-internal
+permissions:
+  directory.read:
+  - "*"
 gears:
   cluster:
     config:
@@ -242,6 +248,9 @@ internal_auth:
   - toolkit-internal
   provider: kube
   token_path: /var/run/secrets/tokens/toolkit-internal
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-gateway:
     config:
@@ -323,6 +332,9 @@ oop_http:
     token_path: /var/run/secrets/tokens/toolkit-internal
   directory_gears:
   - api-contracts
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-contracts:
     config: {}
@@ -412,6 +424,9 @@ oop_http:
     - toolkit-internal
     provider: kube
     token_path: /var/run/secrets/tokens/toolkit-internal
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-contracts-consumer:
     config:
@@ -862,6 +877,11 @@ where the workload values are:
   env:            extra env entries (list), e.g. secretKeyRef to an existing Secret
   extraVolumes, extraVolumeMounts: read-only inputs the unit's configuration
                   names, e.g. an IdP's CA bundle from a ConfigMap
+  podAnnotations: extra pod annotations (map), beside `checksum/config`, e.g. an
+                  input revision that must roll the pod when it changes
+  initContainers: containers run before the unit (list, rendered as given), e.g.
+                  waiting for an external database; each carries its own hardened
+                  securityContext
   resources, nodeSelector, tolerations, affinity: passed through
 */}}
 {{- define "toolkit-common.deployment" -}}
@@ -886,6 +906,9 @@ spec:
         {{- include "toolkit-common.labels" $labels | nindent 8 }}
       annotations:
         checksum/config: {{ .configChecksum }}
+        {{- with $w.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       serviceAccountName: {{ $w.serviceAccount }}
       automountServiceAccountToken: {{ $w.automountServiceAccountToken | default false }}
@@ -906,6 +929,10 @@ spec:
       {{- end }}
       {{- with $w.affinity }}
       affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.initContainers }}
+      initContainers:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
@@ -1301,6 +1328,8 @@ data:
   "configFile" "cluster.yaml"
   "homeDir" "/var/lib/cluster"
   "env" $env
+  "podAnnotations" .Values.podAnnotations
+  "initContainers" .Values.initContainers
   "ports" (list
     (dict "name" "grpc" "containerPort" 50051)
     (dict "name" "http" "containerPort" 8090)
@@ -1399,6 +1428,14 @@ platformAudience: toolkit-internal
 
 configOverlay: {}
 
+# Extra pod annotations, beside the configuration checksum; a change rolls the
+# pod (a product may name the revision of an input its configuration reads).
+podAnnotations: {}
+
+# Containers run before the unit, rendered as given, each with its own hardened
+# securityContext -- e.g. waiting for an external database.
+initContainers: []
+
 resources:
   requests:
     cpu: 50m
@@ -1480,6 +1517,11 @@ where the workload values are:
   env:            extra env entries (list), e.g. secretKeyRef to an existing Secret
   extraVolumes, extraVolumeMounts: read-only inputs the unit's configuration
                   names, e.g. an IdP's CA bundle from a ConfigMap
+  podAnnotations: extra pod annotations (map), beside `checksum/config`, e.g. an
+                  input revision that must roll the pod when it changes
+  initContainers: containers run before the unit (list, rendered as given), e.g.
+                  waiting for an external database; each carries its own hardened
+                  securityContext
   resources, nodeSelector, tolerations, affinity: passed through
 */}}
 {{- define "toolkit-common.deployment" -}}
@@ -1504,6 +1546,9 @@ spec:
         {{- include "toolkit-common.labels" $labels | nindent 8 }}
       annotations:
         checksum/config: {{ .configChecksum }}
+        {{- with $w.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       serviceAccountName: {{ $w.serviceAccount }}
       automountServiceAccountToken: {{ $w.automountServiceAccountToken | default false }}
@@ -1524,6 +1569,10 @@ spec:
       {{- end }}
       {{- with $w.affinity }}
       affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $w.initContainers }}
+      initContainers:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
@@ -1935,6 +1984,12 @@ so an overlay cannot switch them off.
 {{- $_ := unset $gears "oidc-authn-plugin" -}}
 {{- $_ := set $gears "static-authn-plugin" (dict "config" (dict "mode" "accept_all")) -}}
 {{- end -}}
+{{- /* `product`: the description's plugins only, so the chart's own OIDC
+       plugin goes; an image built without it would hold a section for a gear
+       it does not link. */ -}}
+{{- if eq .Values.authn.mode "product" -}}
+{{- $_ := unset $gears "oidc-authn-plugin" -}}
+{{- end -}}
 {{- $cfg = mustMergeOverwrite $cfg (deepCopy .Values.configOverlay) -}}
 {{- /* OIDC inputs are checked on the merged configuration: the chart's `oidc`
        values or a description's own plugin configuration (Gearbox passes it
@@ -1980,6 +2035,15 @@ so an overlay cannot switch them off.
 {{- if eq .Values.authn.mode "oidc" -}}
 {{- include "toolkit-common.require" (list (not (hasKey $cfg.gears "static-authn-plugin")) "production rule: authn.mode oidc admits no static-authn-plugin, whose default mode accepts everyone") -}}
 {{- end -}}
+{{- /* `product`: the description chooses the tenant AuthN plugins and supplies
+       them in `configOverlay`; none is added or removed here. A static plugin is
+       admitted only with explicit tokens, never its accept-everyone default. */ -}}
+{{- if eq .Values.authn.mode "product" -}}
+{{- $static := $cfg.gears | dig "static-authn-plugin" "config" dict -}}
+{{- if hasKey $cfg.gears "static-authn-plugin" -}}
+{{- include "toolkit-common.require" (list (ne (toString (dig "mode" "accept_all" $static)) "accept_all") "production rule: authn.mode product admits a static-authn-plugin only with explicit tokens, not accept_all") -}}
+{{- end -}}
+{{- end -}}
 {{- /* Each listener on the port its Service and container expose: an overlay that
        swapped them would put internal operations behind the public Service. */ -}}
 {{- include "toolkit-common.requirePort" (list (dig "bind_addr" "" $gw) 8087 "api-gateway bind_addr (public)") -}}
@@ -2021,6 +2085,8 @@ data:
   "configFile" "flight-control.yaml"
   "homeDir" "/var/lib/flight-control"
   "env" $env
+  "podAnnotations" .Values.podAnnotations
+  "initContainers" .Values.initContainers
   "extraVolumes" $volumes
   "extraVolumeMounts" $mounts
   "ports" (list
@@ -2092,7 +2158,7 @@ image:
     "authn": {
       "type": "object",
       "required": ["mode"],
-      "properties": {"mode": {"enum": ["oidc", "static"]}}
+      "properties": {"mode": {"enum": ["oidc", "static", "product"]}}
     },
     "oidc": {
       "type": "object",
@@ -2117,6 +2183,8 @@ image:
       }
     },
     "configOverlay": {"type": "object"},
+    "podAnnotations": {"type": "object", "additionalProperties": {"type": "string"}},
+    "initContainers": {"type": "array", "items": {"type": "object"}},
     "ingress": {
       "type": "object",
       "properties": {
@@ -2148,7 +2216,10 @@ autoscaling:
   enabled: false
 
 # Tenant AuthN: `oidc` in production. `static` (accept-all) exists only for the
-# development preset and needs an image built with `static-authn`.
+# development preset and needs an image built with `static-authn`. `product`:
+# the product's description chooses the plugins and passes their configuration
+# in `configOverlay` (an image built with them); a static plugin then needs
+# explicit tokens.
 authn:
   mode: oidc
 oidc:
@@ -2182,6 +2253,14 @@ ingress:
   host: ""
   annotations: {}
   tls: []
+
+# Extra pod annotations, beside the configuration checksum; a change rolls the
+# pod (a product may name the revision of an input its configuration reads).
+podAnnotations: {}
+
+# Containers run before the unit, rendered as given, each with its own hardened
+# securityContext -- e.g. waiting for an external database.
+initContainers: []
 
 resources:
   requests:
@@ -2227,6 +2306,9 @@ oop_http:
     token_path: /var/run/secrets/tokens/toolkit-internal
   directory_gears:
   - api-contracts
+permissions:
+  directory.read:
+  - "*"
 gears:
   api-contracts:
     config: {}
@@ -2706,6 +2788,9 @@ cluster:
                 schema: cluster
                 secret_ref:
                   name: existingSecret:integration-db
+    permissions:
+      directory.read:
+      - "*"
   directoryEndpoint: http://flight-control-grpc.gearbox-p4.svc.cluster.local:50051
 flight-control:
   enabled: true
@@ -2763,6 +2848,11 @@ flight-control:
         database:
           dbname: types_registry
           server: pg
+    permissions:
+      directory.read:
+      - "*"
+  authn:
+    mode: product
 payments:
   database:
     existingSecret: integration-db
@@ -4009,6 +4099,9 @@ cluster:
                 schema: cluster
                 secret_ref:
                   name: existingSecret:integration-db
+    permissions:
+      directory.read:
+      - "*"
   directoryEndpoint: http://flight-control-grpc.gearbox-p4.svc.cluster.local:50051
 flight-control:
   enabled: true
@@ -4066,6 +4159,11 @@ flight-control:
         database:
           dbname: types_registry
           server: pg
+    permissions:
+      directory.read:
+      - "*"
+  authn:
+    mode: product
 payments:
   database:
     existingSecret: integration-db
@@ -4895,6 +4993,9 @@ to = "gear:static-authz-plugin"
 kind = "colocated-by"
 because = "`static-authz-plugin` names `types-registry` in its `deps`, so the two are linked into one binary and no profile can separate them. Removing that entry is the only thing that can."
 
+[permissions]
+"directory.read" = ["*"]
+
 [[diagnostics]]
 code = "GBX0323"
 severity = "info"
@@ -4905,11 +5006,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 74
+line = 79
 character = 8
 
 [diagnostics.location.range.end]
-line = 74
+line = 79
 character = 65
 
 [[diagnostics]]
@@ -4922,11 +5023,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 73
+line = 78
 character = 8
 
 [diagnostics.location.range.end]
-line = 73
+line = 78
 character = 56
 
 [[diagnostics]]
@@ -4939,11 +5040,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 68
+line = 73
 character = 8
 
 [diagnostics.location.range.end]
-line = 68
+line = 73
 character = 86
 
 [[diagnostics]]
@@ -4956,11 +5057,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 75
+line = 80
 character = 8
 
 [diagnostics.location.range.end]
-line = 112
+line = 117
 character = 10
 
 [[diagnostics]]
@@ -4973,11 +5074,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 113
+line = 118
 character = 8
 
 [diagnostics.location.range.end]
-line = 115
+line = 120
 character = 10
 
 [[diagnostics]]
@@ -4990,11 +5091,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 72
+line = 77
 character = 8
 
 [diagnostics.location.range.end]
-line = 72
+line = 77
 character = 50
 
 [[diagnostics]]
@@ -5007,11 +5108,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 70
+line = 75
 character = 8
 
 [diagnostics.location.range.end]
-line = 70
+line = 75
 character = 51
 
 [[diagnostics]]
@@ -5024,11 +5125,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 75
+line = 80
 character = 8
 
 [diagnostics.location.range.end]
-line = 112
+line = 117
 character = 10
 
 [[diagnostics]]
@@ -5041,11 +5142,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 69
+line = 74
 character = 8
 
 [diagnostics.location.range.end]
-line = 69
+line = 74
 character = 60
 
 [[diagnostics]]
@@ -5058,11 +5159,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 113
+line = 118
 character = 8
 
 [diagnostics.location.range.end]
-line = 115
+line = 120
 character = 10
 
 [[diagnostics]]
@@ -5075,11 +5176,11 @@ help = "nothing to do for now; this says what the product depends on"
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 71
+line = 76
 character = 8
 
 [diagnostics.location.range.end]
-line = 71
+line = 76
 character = 57
 
 [[diagnostics]]
@@ -5093,11 +5194,11 @@ evidence = "gears/system/cluster/cluster/src/defaults/leader.rs (CasBasedLeaderE
 uri = "file://<repo>/products/integration-demo/product.gdl"
 
 [diagnostics.location.range.start]
-line = 122
+line = 127
 character = 8
 
 [diagnostics.location.range.end]
-line = 132
+line = 137
 character = 9
 
 [[diagnostics]]
