@@ -185,6 +185,14 @@ pub const KEYS: &[&str] = &[
     "terraform/helm/README.md",
 ];
 
+/// The templates a new gear is scaffolded from. Not per product, so never
+/// overlaid or written into one: there is no product yet when they render.
+pub const SCAFFOLD_KEYS: &[&str] = &[
+    "scaffold/gear.gdl",
+    "scaffold/Cargo.toml",
+    "scaffold/lib.rs",
+];
+
 /// A set of template sources, keyed as described in the module docs.
 ///
 /// Empty means "use the builtins". That is the ordinary case: most products
@@ -278,6 +286,9 @@ impl TemplateSet {
                 Some(include_str!("templates/terraform/helm/README.md.jinja"))
             }
             "rust-toolchain.toml" => Some(include_str!("templates/rust-toolchain.toml.jinja")),
+            "scaffold/gear.gdl" => Some(include_str!("templates/scaffold/gear.gdl.jinja")),
+            "scaffold/Cargo.toml" => Some(include_str!("templates/scaffold/Cargo.toml.jinja")),
+            "scaffold/lib.rs" => Some(include_str!("templates/scaffold/lib.rs.jinja")),
             "main.rs" => Some(include_str!("templates/main.rs.jinja")),
             "worker_main.rs" => Some(include_str!("templates/worker_main.rs.jinja")),
             "registered_gears.rs" => Some(include_str!("templates/registered_gears.rs.jinja")),
@@ -379,6 +390,10 @@ fn load_overrides(dir: &Path) -> Result<TemplateSet, GenerateError> {
 /// The result always ends in exactly one newline. minijinja strips the
 /// template's own trailing newline, and a Rust file without one is a file
 /// `rustfmt --check` and half the tools in the ecosystem complain about.
+///
+/// # Errors
+/// Returns [`GenerateError::Template`] when the source does not parse or names a
+/// variable `ctx` does not carry.
 pub fn render(
     what: &'static str,
     source: &str,
@@ -487,7 +502,7 @@ mod tests {
 
     #[test]
     fn every_declared_key_has_a_builtin() {
-        for key in KEYS {
+        for key in KEYS.iter().chain(SCAFFOLD_KEYS) {
             assert!(
                 TemplateSet::builtin(key).is_some(),
                 "`{key}` is in the contract but has no builtin"

@@ -64,7 +64,7 @@ pub use apply::{
     ApplyOutcome, OUTPUT_DIR, apply_generate, base_root_for, default_out_root, plan,
     standalone_base_root, summarize,
 };
-pub use templates::{KEYS as TEMPLATE_KEYS, TemplateSet};
+pub use templates::{KEYS as TEMPLATE_KEYS, SCAFFOLD_KEYS, TemplateSet, render as render_template};
 // Re-exported for the one caller outside generation that needs the same
 // arithmetic: a cloned description re-bases its relative paths, and a second
 // implementation of "relative, or absolute when there is none" would be a

@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 gearbox-engine.workspace = true
+minijinja.workspace = true
 # Editing a description is the business of the crate that owns the parser: the
 # edit is placed at a span the Starlark AST reports, and nothing else has one.
 gearbox-gdl.workspace = true

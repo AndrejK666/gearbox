@@ -31,7 +31,23 @@ fn uncommented(block: &str) -> String {
 #[test]
 fn every_offered_field_evaluates_once_uncommented() {
     for kind in [GearKind::Minimal, GearKind::Service, GearKind::Plugin] {
-        let fields = uncommented(&gdl_shape_common(kind));
+        let params = crate::protocol::ScaffoldGearParams {
+            id: "x".to_owned(),
+            name: "X".to_owned(),
+            version: "0.1.0".to_owned(),
+            kind,
+            plugin: None,
+            destination_dir: "x".to_owned(),
+            dry_run: false,
+        };
+        let files = scaffold_gear_files(&params, None, None).unwrap();
+        let gdl = &files[0].1;
+        // The fields every kind may add later, after the kind's own shape.
+        let common = gdl
+            .find("    # This gear's SDKs")
+            .or_else(|| gdl.find("    # The repository and directory"))
+            .map_or("", |at| &gdl[at..]);
+        let fields = uncommented(common);
         assert!(fields.contains("source = git("), "{kind:?}: {fields}");
         assert_eq!(
             fields.contains("sdk = ["),

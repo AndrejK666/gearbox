@@ -1,0 +1,23 @@
+# Generated product description for {{ comment }}.
+#
+# Edit this file in Gearbox Studio. Comments carry the reasoning for choices
+# made here — preserve them when changing the description.
+
+product(
+    id = {{ id }},
+    name = {{ name }},
+    version = {{ version }},
+
+    sources = [
+{% for source in sources %}        source(id = {{ source.id }}, at = path({{ source.at }})){% if not loop.last %},
+{% endif %}{% endfor %}
+    ],
+
+    profiles = [
+        {{ profile }},
+    ],
+    default_profile = {{ profile_id }},
+
+    gears = [
+    ],
+)

@@ -1,0 +1,17 @@
+[package]
+name = {{ crate_name }}
+version = {{ version }}
+edition = "2024"
+
+[lib]
+name = {{ lib }}
+path = "src/lib.rs"
+{% if toolkit %}
+[dependencies]
+{{ toolkit.alias }} = { package = {{ toolkit.package }}, path = {{ toolkit.path }} }
+{% if sdk %}{{ sdk.key }} = { package = {{ sdk.package }}, path = {{ sdk.path }} }
+{% endif %}{% endif %}
+# A workspace of its own. A new gear usually lands inside somebody else's tree
+# -- a product folder in a repository with a `[workspace]` of its own -- and
+# Cargo then refuses to build a crate that tree's workspace does not list.
+[workspace]
