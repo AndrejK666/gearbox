@@ -1,15 +1,16 @@
 //! The templates generation renders, and the overlay a product may supply.
 //!
-//! Builtins are compiled in via `include_str!`. A product that needs the
-//! Dockerfile or a Helm template to match a house style drops a file at
-//! `<dir of product.gdl>/templates/<key>.jinja` and that source wins. The
-//! key *is* the contract: it is the path under this module's `templates/`
-//! directory, without the `.jinja` suffix. A misspelled key is a file
-//! nobody reads, which is why [`TemplateSet::get`] names the key it wanted
-//! rather than silently falling through.
+//! Builtins are compiled in via `include_str!`. Generation writes each one
+//! into the product, as `<templates dir>/<key>.jinja`, and renders from that
+//! copy, so a product that needs the Dockerfile or a Helm template to match a
+//! house style edits the file; [`super::product_templates`] keeps an untouched
+//! copy following new builtins. The key *is* the contract: it is the path
+//! under this module's `templates/` directory, without the `.jinja` suffix. A
+//! misspelled key is a file nobody reads, which is why [`TemplateSet::get`]
+//! names the key it wanted rather than silently falling through.
 //!
-//! **`generate` never reads the filesystem.** The CLI and the RPC server
-//! load the overlay (see [`TemplateSet::load_for_product`]) and pass the
+//! **`generate` never reads the filesystem.** The CLI and the RPC server read
+//! the product's templates (see [`super::product_templates::sync`]) and pass the
 //! bytes in. That is what keeps `--dry-run` a preview of the same function
 //! that writes, not a second implementation that happens to agree today.
 //!
@@ -239,11 +240,28 @@ impl TemplateSet {
         product_file: &Path,
         declared: Option<&str>,
     ) -> Result<Self, GenerateError> {
+        match Self::dir_for_product(product_file, declared)? {
+            Some(dir) => load_overrides(&dir),
+            None => Ok(Self::new()),
+        }
+    }
+
+    /// The product's templates directory: the declared one, else `templates/`
+    /// beside the description. `None` only for a description with no parent.
+    ///
+    /// # Errors
+    /// Returns [`GenerateError::MissingTemplateDir`] when a declared directory
+    /// does not exist -- someone's intent gone wrong, as [`Self::load_for_product`]
+    /// explains. The conventional one may be absent; generation creates it.
+    pub fn dir_for_product(
+        product_file: &Path,
+        declared: Option<&str>,
+    ) -> Result<Option<std::path::PathBuf>, GenerateError> {
         let Some(parent) = product_file.parent() else {
-            return Ok(Self::new());
+            return Ok(None);
         };
         let Some(declared) = declared else {
-            return load_overrides(&parent.join("templates"));
+            return Ok(Some(parent.join("templates")));
         };
         let dir = parent.join(declared);
         if !dir.is_dir() {
@@ -252,7 +270,7 @@ impl TemplateSet {
                 at: dir.display().to_string(),
             });
         }
-        load_overrides(&dir)
+        Ok(Some(dir))
     }
 
     /// The compiled-in source for `key`, if this build has one.
@@ -328,13 +346,20 @@ impl TemplateSet {
         })
     }
 
-    /// Keys the product overlaid, in sorted order.
+    /// Keys whose source is not this build's builtin, in sorted order.
     ///
     /// Reported so an unexpected chart has a visible cause: without this,
-    /// a house-style Dockerfile looks like a generator change.
+    /// a house-style Dockerfile looks like a generator change. A product's copy
+    /// that is still the builtin is not an override: generation writes every
+    /// template into the product, and naming all of them would hide the one
+    /// that matters.
     #[must_use]
     pub fn overridden(&self) -> Vec<String> {
-        self.overrides.keys().cloned().collect()
+        self.overrides
+            .iter()
+            .filter(|(key, body)| Self::builtin(key) != Some(body.as_str()))
+            .map(|(key, _)| key.clone())
+            .collect()
     }
 
     #[must_use]
@@ -354,7 +379,13 @@ fn load_overrides(dir: &Path) -> Result<TemplateSet, GenerateError> {
     }
 
     let mut overrides = BTreeMap::new();
-    for entry in walkdir::WalkDir::new(dir) {
+    // `.base/` holds what each copy was written from, not templates to render.
+    let walk = walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_entry(|entry| {
+            entry.depth() != 1 || entry.file_name() != super::product_templates::BASE_DIR
+        });
+    for entry in walk {
         let entry = entry.map_err(|source| GenerateError::Io {
             what: "cannot walk template overrides",
             path: source.path().unwrap_or(dir).to_path_buf(),

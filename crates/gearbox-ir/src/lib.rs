@@ -38,7 +38,9 @@ pub use diagnostics::{
 pub use explain::{
     ExplanationGraph, ExplanationNode, NodeKind, ProvenanceEdge, ProvenanceKind, binding_key,
 };
-pub use fileset::{FileAction, FileEntry, FileKind, FilePlan, FileSet, Ownership};
+pub use fileset::{
+    FileAction, FileEntry, FileKind, FilePlan, FileSet, Ownership, ProductTemplate, TemplateStatus,
+};
 pub use ids::{
     ApplicationId, CapabilityId, ContractId, GearId, IdError, NodeId, ProductId, ProfileId,
     ProviderId, RelPath, RequirementId, SourceId,

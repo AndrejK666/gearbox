@@ -503,6 +503,24 @@ fn a_new_directory_inside_the_workspace_is_allowed() {
     assert!(!wanted.exists(), "the gate resolves; it does not create");
 }
 
+/// A product's templates directory is written into the product, so it is held to
+/// the workspace: generation may create it there, and nowhere else.
+#[test]
+fn a_products_templates_directory_is_written_only_inside_the_workspace() {
+    let tmp = scratch("templates");
+    let workspace = tmp.join("ws");
+    std::fs::create_dir_all(workspace.join("products/p")).unwrap();
+    let state = write_state(workspace.clone());
+    writable_templates_dir(&state, &workspace.join("products/p/templates"))
+        .expect("a templates directory beside a product in the workspace");
+
+    let elsewhere = tmp.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let err = writable_templates_dir(&state, &elsewhere.join("templates"))
+        .expect_err("a declared templates directory outside the workspace");
+    assert!(err.contains("outside the declared workspace"), "{err}");
+}
+
 /// A folder the person chose outside the workspace is a generation target when it
 /// is new, holds only dotfiles, or was generated before, and nothing else is.
 ///

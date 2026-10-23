@@ -877,7 +877,31 @@ product(
 )
 ```
 
-Omit `templates` to use a `templates/` directory beside the file.
+Omit `templates` to use a `templates/` directory beside the file. A declared
+directory that does not exist is refused; the conventional one is created.
+
+**Generation writes every template it renders into that directory**, as
+`<key>.jinja` -- `helm/deployment.yaml.jinja`, `docker/Dockerfile.jinja`,
+`ui/nginx.conf.jinja` and the rest of the keys in
+`crates/gearbox-engine/src/generate/templates.rs` -- and renders from those copies.
+To change a generated file, edit its template; to go back to the builtin, delete
+the copy. Beside each copy, `.base/<key>.jinja` is the builtin it was last written
+from, which is how a later build tells an edit from its own change:
+
+| the copy | a new build's builtin |
+|---|---|
+| is missing | is written |
+| is its base: nobody edited it | replaces it |
+| was edited | is merged into it three ways; the edit stays |
+| was edited where the builtin changed too | does not reach it: the copy is kept and renders as it is, **GBX0712** |
+| has no base, and is not the builtin | does not reach it, **GBX0712** |
+
+A copy that differs from the current builtin is reported as an override
+(**GBX0708**), in the CLI's output and in Studio's Generate view, which lists every
+template with its state. `--dry-run` and Studio's plan write nothing; an apply
+writes the copies after the tree, and not at all when the apply is refused. Keep
+`.base/` with the copies: without it an edited copy can no longer follow the
+builtin. A file for a key this build does not render is kept and unused.
 
 `permissions` (GDL 1.4) maps each abstract permission a gear's operations declare
 (`.permission("settings.values.write")`, gears-rust `cpt-cf-adr-operation-permissions`)

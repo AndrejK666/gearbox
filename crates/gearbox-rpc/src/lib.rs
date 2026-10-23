@@ -2098,6 +2098,7 @@ fn scaffold_gear(state: &mut State, id: RequestId, params: &ScaffoldGearParams) 
                 // Scaffolding renders no product templates, so nothing can be
                 // overridden here -- an empty list is the truth, not a stub.
                 overridden_templates: Vec::new(),
+                templates: Vec::new(),
             },
             // The text this method already built and evaluated. Carried because
             // the three file *paths* are the same for all three kinds, so a
@@ -2780,6 +2781,9 @@ struct PreparedGenerate {
     /// that came out looking wrong had a visible cause in one client and none in
     /// the other. An unexpected Dockerfile should say who wrote it.
     overridden_templates: Vec<String>,
+    /// The product's templates as generation will leave them, and what an apply
+    /// writes into the product for them.
+    templates: Option<gearbox_engine::generate::product_templates::TemplateSync>,
 }
 
 fn prepare_generate(
@@ -2821,19 +2825,28 @@ fn prepare_generate(
         .iter()
         .map(|root| (root.id.clone(), root.root.clone()))
         .collect();
-    let templates = match gearbox_engine::TemplateSet::load_for_product(
+    // The product's own copy of every template, followed to this build's
+    // builtins. Read here for the plan and the apply alike; only an apply writes.
+    let template_sync = match gearbox_engine::TemplateSet::dir_for_product(
         Path::new(path),
         resolved.templates.as_deref(),
-    ) {
-        Ok(templates) => templates,
+    )
+    .and_then(|dir| {
+        dir.map(|dir| gearbox_engine::generate::product_templates::sync(&dir))
+            .transpose()
+    }) {
+        Ok(sync) => sync,
         Err(e) => {
             return Err(error(
                 id.clone(),
                 error_code::GENERATE_REFUSED,
-                &format!("could not load template overrides: {e}"),
+                &format!("could not read the product's templates: {e}"),
             ));
         }
     };
+    let templates = template_sync
+        .as_ref()
+        .map_or_else(gearbox_engine::TemplateSet::new, |sync| sync.set.clone());
     // `crates = registry(...)`. Asking cargo takes seconds, and the Generate view
     // plans on every change it sees, so the answer is kept per product, sources
     // and gear set: none of those moving means cargo would answer the same.
@@ -2899,6 +2912,9 @@ fn prepare_generate(
     // See `Generated::diagnostics`: computing this and dropping it is exactly
     // what made a house template invisible in Studio for a milestone.
     diagnostics.extend(generated.diagnostics.as_slice().iter().cloned());
+    if let Some(sync) = &template_sync {
+        diagnostics.extend(sync.diagnostics.as_slice().iter().cloned());
+    }
 
     Ok(PreparedGenerate {
         files,
@@ -2906,6 +2922,7 @@ fn prepare_generate(
         base_root,
         diagnostics,
         overridden_templates: generated.overridden_templates,
+        templates: template_sync,
     })
 }
 
@@ -2958,6 +2975,10 @@ fn generate_plan(state: &mut State, id: RequestId, params: &GenerateParams) -> R
                     diagnostics,
                     out_root: prepared.out_root.display().to_string(),
                     overridden_templates: prepared.overridden_templates,
+                    templates: prepared
+                        .templates
+                        .map(|sync| sync.templates)
+                        .unwrap_or_default(),
                 },
             )
         }
@@ -2985,10 +3006,34 @@ fn generate_apply(state: &mut State, id: RequestId, params: &GenerateParams) -> 
         Err(refusal) => return refusal,
     };
 
+    // The templates directory is the product's, so it is judged as a write into
+    // the product: inside the declared workspace or a source root.
+    if let Some(sync) = &prepared.templates
+        && let Some(refusal) = sync
+            .templates
+            .first()
+            .and_then(|template| Path::new(&template.path).parent().map(Path::to_path_buf))
+            .and_then(|dir| writable_templates_dir(state, &dir).err())
+    {
+        return error(id, error_code::GENERATE_REFUSED, &refusal);
+    }
+
     match gearbox_engine::apply_generate(&prepared.files, &prepared.out_root, &prepared.base_root) {
         Ok(outcome) => {
             let mut diagnostics = prepared.diagnostics;
             diagnostics.extend(outcome.diagnostics.as_slice().iter().cloned());
+            // Only beside a tree that was written: a refused apply leaves the
+            // product exactly as it was, templates included.
+            if !outcome.diagnostics.has_errors()
+                && let Some(sync) = &prepared.templates
+                && let Err(e) = sync.write()
+            {
+                return error(
+                    id,
+                    error_code::GENERATE_REFUSED,
+                    &format!("generated, but could not write the product's templates: {e}"),
+                );
+            }
             ok(
                 id,
                 &GenerateApplyResult {
@@ -2996,6 +3041,10 @@ fn generate_apply(state: &mut State, id: RequestId, params: &GenerateParams) -> 
                     diagnostics,
                     written: u32::try_from(outcome.written).unwrap_or(u32::MAX),
                     overridden_templates: prepared.overridden_templates,
+                    templates: prepared
+                        .templates
+                        .map(|sync| sync.templates)
+                        .unwrap_or_default(),
                 },
             )
         }
@@ -3004,6 +3053,34 @@ fn generate_apply(state: &mut State, id: RequestId, params: &GenerateParams) -> 
             error_code::GENERATE_REFUSED,
             &format!("cannot apply generation: {e}"),
         ),
+    }
+}
+
+/// Whether a product's templates directory may be written.
+///
+/// The directory belongs to the product -- beside its description, or the one
+/// `product(templates = ...)` names -- so it gets [`writable_path`]'s rule: the
+/// nearest existing ancestor must sit inside the declared workspace or a source
+/// root. It may not exist yet; generation creates it.
+fn writable_templates_dir(state: &State, dir: &Path) -> Result<(), String> {
+    let existing = nearest_existing(dir)?;
+    let canonical = existing
+        .canonicalize()
+        .map_err(|e| format!("cannot canonicalize `{}`: {e}", existing.display()))?;
+    let allowed = state
+        .roots
+        .iter()
+        .map(|root| root.root.clone())
+        .chain(state.workspace.clone())
+        .filter_map(|root| root.canonicalize().ok());
+    if allowed.into_iter().any(|root| canonical.starts_with(root)) {
+        Ok(())
+    } else {
+        Err(format!(
+            "the product's templates directory `{}` is outside the declared workspace and \
+             every source root",
+            dir.display()
+        ))
     }
 }
 

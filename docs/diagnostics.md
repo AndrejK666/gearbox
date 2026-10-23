@@ -15,7 +15,7 @@ remedy at the point it is raised
 (`cpt-gearbox-nfr-actionable-diagnostics`), which is per-occurrence and
 so is not listed here.
 
-Codes: **123**.
+Codes: **124**.
 
 ## `GBX01xx` — Parsing and evaluating GDL
 
@@ -1611,6 +1611,7 @@ incomplete, so GBX0124 cannot tell whether the product maps all of it.
 | [GBX0709](#gbx0709) | warning | a crate differs from the version published, so the checkout is patched in |
 | [GBX0710](#gbx0710) | warning | a crate is not published at the checkout's version |
 | [GBX0711](#gbx0711) | warning | the registry could not be reached |
+| [GBX0712](#gbx0712) | warning | a product template did not take the new builtin |
 | [GBX0720](#gbx0720) | error | invalid UI composition or package |
 
 ### GBX0701
@@ -1734,6 +1735,20 @@ version the checkout declares, so it stays a path dependency.
 
 The registry could not be asked at all -- offline, or cargo failed -- so
 every crate of the source stays a path dependency.
+
+### GBX0712
+
+**a product template did not take the new builtin**
+
+A product's edited template could not take a new builtin.
+
+Generation writes every template into the product and remembers the
+default each copy came from, so a newer default reaches an edited copy by
+a three-way merge. When the new default changes the lines the edit
+changed, or the copy has no record of its default (it was written by hand
+before generation kept one), the copy is left as it is and still renders:
+the product keeps working, and silently does not get the fix. Reported so
+someone merges by hand, or deletes the copy to take the default.
 
 ### GBX0720
 

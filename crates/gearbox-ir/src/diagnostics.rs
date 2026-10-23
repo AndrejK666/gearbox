@@ -1512,6 +1512,7 @@ diagnostic_codes! {
     /// product's doing -- which is a fact an operator has to be told.
     GenTemplateOverridden = "GBX0708", Generator, Warning, false, "a product template replaced a builtin";
 
+
     /// A crate the product takes from a registry differs from what was published.
     ///
     /// `crates = registry(...)` on a source says its gears are published, and
@@ -1531,6 +1532,17 @@ diagnostic_codes! {
     /// The registry could not be asked at all -- offline, or cargo failed -- so
     /// every crate of the source stays a path dependency.
     GenRegistryUnavailable = "GBX0711", Generator, Warning, false, "the registry could not be reached";
+
+    /// A product's edited template could not take a new builtin.
+    ///
+    /// Generation writes every template into the product and remembers the
+    /// default each copy came from, so a newer default reaches an edited copy by
+    /// a three-way merge. When the new default changes the lines the edit
+    /// changed, or the copy has no record of its default (it was written by hand
+    /// before generation kept one), the copy is left as it is and still renders:
+    /// the product keeps working, and silently does not get the fix. Reported so
+    /// someone merges by hand, or deletes the copy to take the default.
+    GenTemplateBehindDefault = "GBX0712", Generator, Warning, false, "a product template did not take the new builtin";
 
     /// A UI package or composition cannot be built for this product.
     UiInvalid = "GBX0720", Generator, Error, false, "invalid UI composition or package";

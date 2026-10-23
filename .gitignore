@@ -99,3 +99,6 @@ ide/tests/.description-watch.log
 /ide/electron-app/*esbuild*.mjs
 /ide/electron-app/.browser_modules/
 /ide/.desktop-runtime/
+
+# Generation writes every product template here; the repository's products use the builtins.
+products/*/templates/

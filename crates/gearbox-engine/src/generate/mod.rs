@@ -45,6 +45,7 @@ mod json;
 mod manifest;
 mod merge3;
 mod paths;
+pub mod product_templates;
 mod rust;
 mod templates;
 mod terraform;

@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 123, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 124, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -1014,6 +1014,14 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "warning",
     domain: "generator",
     docs: "The registry could not be asked at all -- offline, or cargo failed -- so\nevery crate of the source stays a path dependency.",
+    requiresEvidence: false,
+  },
+  GBX0712: {
+    code: "GBX0712",
+    title: "a product template did not take the new builtin",
+    severity: "warning",
+    domain: "generator",
+    docs: "A product's edited template could not take a new builtin.\n\nGeneration writes every template into the product and remembers the\ndefault each copy came from, so a newer default reaches an edited copy by\na three-way merge. When the new default changes the lines the edit\nchanged, or the copy has no record of its default (it was written by hand\nbefore generation kept one), the copy is left as it is and still renders:\nthe product keeps working, and silently does not get the fix. Reported so\nsomeone merges by hand, or deletes the copy to take the default.",
     requiresEvidence: false,
   },
   GBX0720: {
