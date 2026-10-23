@@ -32,6 +32,13 @@
 //! | `helm/configmap.yaml` | `helm/<product>/charts/<sub>/templates/configmap.yaml` |
 //! | `helm/serviceaccount.yaml` | `helm/<product>/charts/<sub>/templates/serviceaccount.yaml` |
 //! | `ui/index.html` | `ui/index.html` (`product_id`) |
+//! | `ui/src/main.tsx` | `ui/src/main.tsx` (`shell` JSON-quoted, `shell_name`) |
+//! | `ui/src/module-registry.ts` | `ui/src/module-registry.ts` (`modules`: `index`, JSON-quoted `from`) |
+//! | `ui/tsconfig.json`, `ui/vite.config.ts`, `ui/Dockerfile` | the same paths |
+//! | `ui/dockerignore` | `ui/.dockerignore` |
+//! | `ui/nginx.conf` | `ui/nginx.conf` (`gateway`, `gateway_port`) |
+//! | `helm/ui/deployment.yaml` | `helm/<product>/templates/ui-deployment.yaml` (`name`, `port`) |
+//! | `helm/ui/service.yaml` | `helm/<product>/templates/ui-service.yaml` (`name`, `port`) |
 //! | `terraform/helm/main.tf` | `terraform/main.tf` (`product`) |
 //! | `terraform/helm/variables.tf` | `terraform/variables.tf` (`product_json`, `namespace_json`) |
 //! | `terraform/helm/outputs.tf` | `terraform/outputs.tf` |
@@ -103,6 +110,8 @@ const HELM_CONTEXT_DOC: &[(&str, &[&str])] = &[
         ],
     ),
     ("helm/Chart.yaml", &["header", "name", "version"]),
+    ("helm/ui/deployment.yaml", &["name", "port"]),
+    ("helm/ui/service.yaml", &["name", "port"]),
     ("helm/helpers.tpl", &["name", "application"]),
     (
         "helm/deployment.yaml",
@@ -160,7 +169,16 @@ pub const KEYS: &[&str] = &[
     "helm/service.yaml",
     "helm/configmap.yaml",
     "helm/serviceaccount.yaml",
+    "helm/ui/deployment.yaml",
+    "helm/ui/service.yaml",
     "ui/index.html",
+    "ui/src/main.tsx",
+    "ui/src/module-registry.ts",
+    "ui/tsconfig.json",
+    "ui/vite.config.ts",
+    "ui/dockerignore",
+    "ui/Dockerfile",
+    "ui/nginx.conf",
     "terraform/helm/main.tf",
     "terraform/helm/variables.tf",
     "terraform/helm/outputs.tf",
@@ -234,6 +252,19 @@ impl TemplateSet {
     pub fn builtin(key: &str) -> Option<&'static str> {
         match key {
             "ui/index.html" => Some(include_str!("templates/ui/index.html.jinja")),
+            "ui/src/main.tsx" => Some(include_str!("templates/ui/src/main.tsx.jinja")),
+            "ui/src/module-registry.ts" => {
+                Some(include_str!("templates/ui/src/module-registry.ts.jinja"))
+            }
+            "ui/tsconfig.json" => Some(include_str!("templates/ui/tsconfig.json.jinja")),
+            "ui/vite.config.ts" => Some(include_str!("templates/ui/vite.config.ts.jinja")),
+            "ui/dockerignore" => Some(include_str!("templates/ui/dockerignore.jinja")),
+            "ui/Dockerfile" => Some(include_str!("templates/ui/Dockerfile.jinja")),
+            "ui/nginx.conf" => Some(include_str!("templates/ui/nginx.conf.jinja")),
+            "helm/ui/deployment.yaml" => {
+                Some(include_str!("templates/helm/ui/deployment.yaml.jinja"))
+            }
+            "helm/ui/service.yaml" => Some(include_str!("templates/helm/ui/service.yaml.jinja")),
             "terraform/helm/main.tf" => {
                 Some(include_str!("templates/terraform/helm/main.tf.jinja"))
             }

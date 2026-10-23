@@ -1,0 +1,27 @@
+pid /tmp/nginx.pid;
+error_log /dev/stderr;
+events { worker_connections 1024; }
+http {
+  include /etc/nginx/mime.types;
+  access_log /dev/stdout;
+  client_body_temp_path /tmp/client_body;
+  proxy_temp_path /tmp/proxy;
+  fastcgi_temp_path /tmp/fastcgi;
+  uwsgi_temp_path /tmp/uwsgi;
+  scgi_temp_path /tmp/scgi;
+  server {
+    listen 8080;
+    root /usr/share/nginx/html;
+    location = /runtime-config.json { add_header Cache-Control no-store; }
+    location /api/ {
+      proxy_pass http://{{ gateway }}:{{ gateway_port }}/;
+      proxy_http_version 1.1;
+      proxy_buffering off;
+      proxy_cache off;
+      proxy_read_timeout 3600s;
+      proxy_set_header Connection '';
+      add_header X-Accel-Buffering no always;
+    }
+    location / { try_files $uri /index.html; }
+  }
+}

@@ -1,0 +1,3 @@
+{% for module in modules %}import { plugin as module{{ module.index }} } from {{ module.from }};
+{% endfor %}
+export const modules = [{% for module in modules %}module{{ module.index }}{% if not loop.last %}, {% endif %}{% endfor %}];

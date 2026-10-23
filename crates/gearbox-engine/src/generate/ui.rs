@@ -196,6 +196,18 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
     let Some(ui) = &input.lock.ui else {
         return Ok(Vec::new());
     };
+    // The UI's values live under the umbrella's `ui` key, beside each subchart's.
+    if input.lock.applications.iter().any(|application| {
+        application
+            .subchart
+            .as_deref()
+            .unwrap_or(application.name.as_str())
+            == "ui"
+    }) {
+        return Err(invalid(
+            "an application named `ui` would share the UI's Helm values key",
+        ));
+    }
     let base = if let Some(source) = &ui.source {
         let root = input
             .source_roots
@@ -244,11 +256,11 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
             id.as_str(),
             "module",
         )?;
-        imports.push(format!(
-            "import {{ plugin as module{index} }} from {};",
-            serde_json::to_string(&format!("{}/plugin", package.name))
-                .map_err(|e| invalid(e.to_string()))?
-        ));
+        imports.push(minijinja::context! {
+            index => index,
+            from => serde_json::to_string(&format!("{}/plugin", package.name))
+                .map_err(|e| invalid(e.to_string()))?,
+        });
         packages.push(package);
     }
     let mut names = BTreeSet::new();
@@ -307,25 +319,57 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
     };
     let lock = json!({"schemaVersion":1,"productLockHash":input.lock.product.lock_hash,"entryPoints":ui.entry_points,"npmLock":npm_lock.as_ref().map(|(metadata,_)|metadata),
         "packages":packages.iter().map(|p|json!({"name":p.name,"version":p.manifest["version"],"exports":p.manifest["exports"],"blake3":p.hash})).collect::<Vec<_>>()});
-    let registry = format!(
-        "{}\nexport const modules = [{}];\n",
-        imports.join("\n"),
-        (0..imports.len())
-            .map(|i| format!("module{i}"))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-    let main = format!(
-        "import React from 'react';\nimport {{createRoot}} from 'react-dom/client';\nimport {{ProductShell}} from {shell_name:?};\nimport '{shell_name}/theme.css';\nimport {{modules}} from './module-registry';\nfetch('/runtime-config.json').then(r=>{{if(!r.ok)throw Error('Runtime configuration unavailable');return r.json()}}).then(config=>createRoot(document.getElementById('root')!).render(<React.StrictMode><ProductShell config={{config}} modules={{modules}} /></React.StrictMode>)).catch(()=>{{document.getElementById('root')!.textContent='Product configuration could not be loaded.'}});\n"
-    );
-    let mut out = vec![file("ui/package.json",serde_json::to_vec_pretty(&root).map_err(|e|invalid(e.to_string()))?)?,
-        file("ui/ui.lock.json",serde_json::to_vec_pretty(&lock).map_err(|e|invalid(e.to_string()))?)?,
-        file("ui/src/module-registry.ts",registry.into_bytes())?,file("ui/src/main.tsx",main.into_bytes())?,
-        file("ui/index.html",super::templates::render("UI index",input.templates.get("ui/index.html")?,minijinja::context!{product_id => &input.lock.product.id})?.into_bytes())?,
-        file("ui/tsconfig.json",br#"{"compilerOptions":{"target":"ES2022","lib":["ES2022","DOM","DOM.Iterable"],"module":"ESNext","moduleResolution":"Bundler","jsx":"react-jsx","strict":true,"skipLibCheck":true,"noEmit":true,"esModuleInterop":true,"allowImportingTsExtensions":true},"include":["src","packages"]}"#.to_vec())?,
-        file("ui/vite.config.ts",b"import {defineConfig} from 'vite';import react from '@vitejs/plugin-react';import tailwindcss from '@tailwindcss/vite';export default defineConfig({plugins:[react(),tailwindcss()],server:{strictPort:true,proxy:{'/api':{target:'http://127.0.0.1:18087',rewrite:p=>p.slice(4)}}}});\n".to_vec())?,
-        file("ui/.dockerignore",b"node_modules\ndist\n.git\n.env*\n".to_vec())?,
-        file("ui/Dockerfile",b"FROM node:24.21.0-alpine AS build\nWORKDIR /app\nCOPY . .\nRUN npm ci && npm run build\nFROM nginxinc/nginx-unprivileged:1.28-alpine\nCOPY --from=build /app/dist /usr/share/nginx/html\nCOPY nginx.conf /etc/nginx/nginx.conf\nUSER 65532:65532\nEXPOSE 8080\n".to_vec())?];
+    let render = |key: &str, ctx: minijinja::Value| -> Result<Vec<u8>, GenerateError> {
+        Ok(super::templates::render("UI", input.templates.get(key)?, ctx)?.into_bytes())
+    };
+    let shell = serde_json::to_string(&shell_name).map_err(|e| invalid(e.to_string()))?;
+    let mut out = vec![
+        file(
+            "ui/package.json",
+            serde_json::to_vec_pretty(&root).map_err(|e| invalid(e.to_string()))?,
+        )?,
+        file(
+            "ui/ui.lock.json",
+            serde_json::to_vec_pretty(&lock).map_err(|e| invalid(e.to_string()))?,
+        )?,
+        file(
+            "ui/src/module-registry.ts",
+            render(
+                "ui/src/module-registry.ts",
+                minijinja::context! { modules => imports },
+            )?,
+        )?,
+        file(
+            "ui/src/main.tsx",
+            render(
+                "ui/src/main.tsx",
+                minijinja::context! { shell => shell, shell_name => &shell_name },
+            )?,
+        )?,
+        file(
+            "ui/index.html",
+            render(
+                "ui/index.html",
+                minijinja::context! { product_id => &input.lock.product.id },
+            )?,
+        )?,
+        file(
+            "ui/tsconfig.json",
+            render("ui/tsconfig.json", minijinja::context! {})?,
+        )?,
+        file(
+            "ui/vite.config.ts",
+            render("ui/vite.config.ts", minijinja::context! {})?,
+        )?,
+        file(
+            "ui/.dockerignore",
+            render("ui/dockerignore", minijinja::context! {})?,
+        )?,
+        file(
+            "ui/Dockerfile",
+            render("ui/Dockerfile", minijinja::context! {})?,
+        )?,
+    ];
     if let Some((_, bytes)) = npm_lock {
         out.push(file("ui/package-lock.json", bytes)?);
     }
@@ -344,68 +388,32 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
     let port = gateway
         .service_port
         .ok_or_else(|| invalid("UI Gateway has no service port"))?;
-    let nginx = format!(
-        "pid /tmp/nginx.pid;\nerror_log /dev/stderr;\nevents {{ worker_connections 1024; }}\nhttp {{ include /etc/nginx/mime.types; access_log /dev/stdout; client_body_temp_path /tmp/client_body; proxy_temp_path /tmp/proxy; fastcgi_temp_path /tmp/fastcgi; uwsgi_temp_path /tmp/uwsgi; scgi_temp_path /tmp/scgi; server {{ listen 8080; root /usr/share/nginx/html; location = /runtime-config.json {{ add_header Cache-Control no-store; }} location /api/ {{ proxy_pass http://{}:{port}/; proxy_http_version 1.1; proxy_buffering off; proxy_cache off; proxy_read_timeout 3600s; proxy_set_header Connection ''; add_header X-Accel-Buffering no always; }} location / {{ try_files $uri /index.html; }} }} }}\n",
-        gateway.name
-    );
-    out.push(file("ui/nginx.conf", nginx.into_bytes())?);
-    if input.lock.kubernetes.is_some() {
+    out.push(file(
+        "ui/nginx.conf",
+        render(
+            "ui/nginx.conf",
+            minijinja::context! { gateway => gateway.name.as_str(), gateway_port => port },
+        )?,
+    )?);
+    // Beside the other Helm templates, rendered into the umbrella chart.
+    let product = input.lock.product.id.as_str();
+    let helm_ctx = minijinja::context! { name => format!("{product}-ui"), port => UI_PORT };
+    for (key, name) in [
+        ("helm/ui/deployment.yaml", "ui-deployment.yaml"),
+        ("helm/ui/service.yaml", "ui-service.yaml"),
+    ] {
+        let body =
+            super::templates::render_helm("UI chart", input.templates.get(key)?, helm_ctx.clone())?;
         out.push(file(
-            &format!("helm/{}/templates/demo-ui.yaml", input.lock.product.id),
-            helm(input).into_bytes(),
+            &format!("helm/{product}/templates/{name}"),
+            body.into_bytes(),
         )?);
     }
     Ok(out)
 }
 
-fn helm(input: &GenerateInput<'_>) -> String {
-    format!(
-        r#"apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: demo-ui
-spec:
-  replicas: 1
-  selector:
-    matchLabels: {{app: demo-ui}}
-  template:
-    metadata:
-      labels: {{app: demo-ui}}
-    spec:
-      automountServiceAccountToken: false
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 65532
-        runAsGroup: 65532
-        fsGroup: 65532
-      containers:
-        - name: ui
-          image: {{{{ default "gbx-demo-ui:{}" .Values.demoUiImage | quote }}}}
-          imagePullPolicy: Never
-          ports: [{{containerPort: 8080}}]
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities: {{drop: [ALL]}}
-          readinessProbe:
-            httpGet: {{path: /, port: 8080}}
-          volumeMounts:
-            - {{name: tmp, mountPath: /tmp}}
-      volumes:
-        - name: tmp
-          emptyDir: {{}}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: demo-ui
-spec:
-  selector: {{app: demo-ui}}
-  ports: [{{name: http, port: 8080, targetPort: 8080}}]
-"#,
-        input.lock.product.version
-    )
-}
+/// The port the UI's nginx listens on inside its container.
+const UI_PORT: u16 = 8080;
 
 #[cfg(test)]
 mod tests {

@@ -435,11 +435,13 @@ fn umbrella_values(
         );
     }
     let values = UmbrellaValues {
-        demo_ui_image: input
-            .lock
-            .ui
-            .as_ref()
-            .map(|_| format!("gbx-demo-ui:{}", input.lock.product.version)),
+        ui: input.lock.ui.as_ref().map(|_| UiValues {
+            image: format!(
+                "gbx-{}-ui:{}",
+                input.lock.product.id, input.lock.product.version
+            ),
+            pull_policy: "IfNotPresent",
+        }),
         // Emitted empty rather than omitted. `global` is where a house policy
         // puts the labels it requires on everything, and a key absent from the
         // file an operator edits is a key nobody finds. `imageRegistry` stays
@@ -491,8 +493,16 @@ fn values_schema(input: &GenerateInput<'_>) -> Result<FileEntry, GenerateError> 
     properties.insert("global".to_owned(), global_schema()?);
     if input.lock.ui.is_some() {
         properties.insert(
-            "demoUiImage".to_owned(),
-            serde_json::json!({"type":"string", "minLength":1}),
+            "ui".to_owned(),
+            serde_json::json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["image", "pullPolicy"],
+                "properties": {
+                    "image": {"type": "string", "minLength": 1},
+                    "pullPolicy": {"enum": ["Always", "IfNotPresent", "Never"]},
+                },
+            }),
         );
     }
     let mut required = Vec::new();
@@ -818,10 +828,18 @@ struct SubchartValues {
     secret_keys: Option<Vec<String>>,
 }
 
+/// The UI's image, under the umbrella's `ui` key.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UiValues {
+    image: String,
+    pull_policy: &'static str,
+}
+
 #[derive(serde::Serialize)]
 struct UmbrellaValues {
-    #[serde(rename = "demoUiImage", skip_serializing_if = "Option::is_none")]
-    demo_ui_image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ui: Option<UiValues>,
     #[serde(skip_serializing_if = "Option::is_none")]
     global: Option<GlobalValues>,
     #[serde(flatten)]
