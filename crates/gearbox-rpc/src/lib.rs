@@ -2743,14 +2743,6 @@ fn standalone_out_root(roots: &[PathBuf], path: &Path) -> Result<PathBuf, String
     Ok(resolved)
 }
 
-/// What a standalone output root carries that the workspace tree does not.
-///
-/// The workspace's `.gitignore` already covers `.gearbox/`; a repository of its
-/// own has none, and without one the first `git add .` commits the build and the
-/// merge base. Offered once and then the operator's.
-const STANDALONE_GITIGNORE: &str =
-    "# Written once by Gearbox; yours from now on.\ntarget/\n.gearbox/\n";
-
 /// The nearest ancestor of `path` that exists, including `path` itself.
 fn nearest_existing(path: &Path) -> Result<PathBuf, String> {
     let mut cursor = path.to_path_buf();
@@ -2847,6 +2839,26 @@ fn prepare_generate(
     let templates = template_sync
         .as_ref()
         .map_or_else(gearbox_engine::TemplateSet::new, |sync| sync.set.clone());
+    // What a standalone output root carries that the workspace tree does not.
+    // The workspace's `.gitignore` already covers `.gearbox/`; a repository of
+    // its own has none, and without one the first `git add .` commits the build
+    // and the merge base. Offered once and then the operator's.
+    let standalone_gitignore = match templates.get("standalone/gitignore").and_then(|source| {
+        gearbox_engine::generate::render_template(
+            "standalone/gitignore",
+            source,
+            minijinja::context! {},
+        )
+    }) {
+        Ok(body) => body,
+        Err(e) => {
+            return Err(error(
+                id.clone(),
+                error_code::GENERATE_REFUSED,
+                &format!("could not render the output folder's .gitignore: {e}"),
+            ));
+        }
+    };
     // `crates = registry(...)`. Asking cargo takes seconds, and the Generate view
     // plans on every change it sees, so the answer is kept per product, sources
     // and gear set: none of those moving means cargo would answer the same.
@@ -2902,7 +2914,7 @@ fn prepare_generate(
     if standalone && let Ok(path) = RelPath::new(".gitignore") {
         drop(files.insert(gearbox_ir::FileEntry::text(
             path,
-            STANDALONE_GITIGNORE,
+            standalone_gitignore,
             gearbox_ir::FileKind::Text,
             gearbox_ir::Ownership::GeneratedOnce,
         )));

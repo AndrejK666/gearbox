@@ -44,6 +44,7 @@
 //! | `terraform/helm/variables.tf` | `terraform/variables.tf` (`product_json`, `namespace_json`) |
 //! | `terraform/helm/outputs.tf` | `terraform/outputs.tf` |
 //! | `terraform/helm/README.md` | `terraform/README.md` (`product`) |
+//! | `standalone/gitignore` | `.gitignore`, written once, in an output folder outside the workspace |
 //!
 //! An overlay for a key this build does not render is kept and reported (so
 //! the operator can see it was read) and otherwise unused.
@@ -184,6 +185,7 @@ pub const KEYS: &[&str] = &[
     "terraform/helm/variables.tf",
     "terraform/helm/outputs.tf",
     "terraform/helm/README.md",
+    "standalone/gitignore",
 ];
 
 /// The templates a new gear is scaffolded from. Not per product, so never
@@ -304,6 +306,7 @@ impl TemplateSet {
                 Some(include_str!("templates/terraform/helm/README.md.jinja"))
             }
             "rust-toolchain.toml" => Some(include_str!("templates/rust-toolchain.toml.jinja")),
+            "standalone/gitignore" => Some(include_str!("templates/standalone/gitignore.jinja")),
             "scaffold/gear.gdl" => Some(include_str!("templates/scaffold/gear.gdl.jinja")),
             "scaffold/Cargo.toml" => Some(include_str!("templates/scaffold/Cargo.toml.jinja")),
             "scaffold/lib.rs" => Some(include_str!("templates/scaffold/lib.rs.jinja")),
