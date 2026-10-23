@@ -1,0 +1,191 @@
+name: Release binaries
+
+# The `gearbox` executable (crates/gearbox-cli), built for the platforms its
+# consumers run it on and published as a GitHub release, so nobody downstream
+# has to compile this workspace to get one. Constructor Studio is the first
+# such consumer: its desktop app and its session and backend images run
+# `gearbox`, and until now each of them built it from a pinned commit.
+#
+# Two ways to publish:
+#
+#   - a tag `v<version>` matching [workspace.package] version in Cargo.toml
+#     publishes release `v<version>` (a pre-release when the version has a
+#     `-beta`-style suffix);
+#   - a manual run (Actions -> Release binaries -> Run workflow) on any ref
+#     publishes the pre-release `snapshot-<commit>` with version
+#     `<Cargo version>-<commit>`, for a consumer that needs a commit before
+#     it is tagged.
+#
+# Each release holds one archive per target plus SHA256SUMS. Assets are
+# published once and never replaced: consumers pin their SHA-256. A run for a
+# release that already exists only adds a target it lacks.
+#
+# A pull request that changes this file builds every target and publishes
+# nothing.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          own=$(awk '/^\[workspace.package\]/{p=1; next} /^\[/{p=0} p && /^version *=/{gsub(/[" ]/, "", $0); split($0, a, "="); print a[2]; exit}' Cargo.toml)
+          if [ -z "$own" ]; then
+            echo "::error::no [workspace.package] version in Cargo.toml"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tagged="${GITHUB_REF_NAME#v}"
+            if [ "$tagged" != "$own" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml's version ($own)"
+              exit 1
+            fi
+            version="$own"
+            tag="$GITHUB_REF_NAME"
+            if [[ "$version" == *-* ]]; then prerelease=true; else prerelease=false; fi
+          else
+            short="${GITHUB_SHA:0:7}"
+            version="$own-$short"
+            tag="snapshot-$short"
+            prerelease=true
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "gearbox $version, release $tag (pre-release: $prerelease)"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2022
+            exe: gearbox.exe
+            archive: zip
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            exe: gearbox
+            archive: tar.gz
+          # 22.04's glibc (2.35), so the binary also runs on older
+          # distributions than the runner's own.
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            exe: gearbox
+            archive: tar.gz
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    env:
+      CARGO_INCREMENTAL: 0
+      # A release binary without debug info, stripped: what a consumer ships.
+      CARGO_PROFILE_RELEASE_DEBUG: 0
+      CARGO_PROFILE_RELEASE_STRIP: true
+      NAME: gearbox-${{ needs.version.outputs.version }}-${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v6
+      # rust-toolchain.toml names the toolchain; rustup installs it on first use.
+      - name: Toolchain
+        shell: bash
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add ${{ matrix.target }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: release-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: release-${{ matrix.target }}-
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p gearbox-cli --target ${{ matrix.target }}
+          ./target/${{ matrix.target }}/release/${{ matrix.exe }} --version
+      - name: Archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "dist/$NAME"
+          cp "target/${{ matrix.target }}/release/${{ matrix.exe }}" LICENSE NOTICE "dist/$NAME/"
+          cd dist
+          if [ "${{ matrix.archive }}" = zip ]; then
+            7z a -tzip -bd "$NAME.zip" "$NAME" >/dev/null
+          else
+            tar -czf "$NAME.tar.gz" "$NAME"
+          fi
+          rm -rf "$NAME"
+          ls -la
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ env.NAME }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum gearbox-* > SHA256SUMS
+          cat SHA256SUMS
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Published once: a consumer pins what is there. Only a target the
+            # release lacks is added; SHA256SUMS is not rewritten.
+            existing=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+            for file in gearbox-*; do
+              if ! grep -qx "$file" <<< "$existing"; then
+                gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "$file"
+                echo "::warning::$TAG lacked $file; added it, but SHA256SUMS does not list it"
+              fi
+            done
+            exit 0
+          fi
+          flags=(--repo "$GITHUB_REPOSITORY" --title "gearbox $VERSION" --target "$GITHUB_SHA")
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); else flags+=(--latest); fi
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            flags+=(--verify-tag --generate-notes)
+          else
+            flags+=(--notes "A snapshot of $GITHUB_SHA, for a consumer that needs this commit before a release. Not a release.")
+          fi
+          gh release create "$TAG" "${flags[@]}" gearbox-* SHA256SUMS
