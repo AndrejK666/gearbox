@@ -421,8 +421,12 @@ test.describe("where the views live", () => {
     // disk depends on what ran before, and generating one here would leave the
     // repository dirty. Both states are asserted -- the point is that the button
     // agrees with the plan either way.
+    // The product's templates are written by an apply too.
     const writes = await studio.page
-      .locator('.gbx-generate [data-action="create"], .gbx-generate [data-action="update"]')
+      .locator(
+        '.gbx-generate [data-action="create"], .gbx-generate [data-action="update"], ' +
+          '.gbx-generate [data-template-action="create"], .gbx-generate [data-template-action="update"]',
+      )
       .count();
     const apply = studio.page.locator("[data-apply]");
     if (writes === 0) {
@@ -432,6 +436,53 @@ test.describe("where the views live", () => {
       await expect(apply).toBeDisabled();
     } else {
       await expect(studio.page.locator('[data-apply-block="nothing"]')).toHaveCount(0);
+    }
+  });
+});
+
+test.describe("a product's own templates", () => {
+  test("Generate writes the product's templates, sees an edit, and resets it [GDL reference: templates]", async ({
+    studio,
+  }) => {
+    // Every generated file comes from a template, and generation writes each one
+    // into the product so it can be edited there. The Generate view lists them
+    // with their state; an edit made in the file shows up without a re-resolve,
+    // and Reset deletes the copy so the next Apply writes the builtin back.
+    const page = studio.page;
+    await openProduct(page, "dev");
+    await openGenerate(page);
+    const key = "docker/dockerignore";
+    const row = page.locator(`[data-template="${key}"]`);
+    await expect(row).toHaveCount(1, { timeout: 60_000 });
+    const path = await row.getAttribute("data-template-path");
+    expect(path).not.toBeNull();
+    let original: string | undefined;
+    try {
+      if ((await row.getAttribute("data-template-action")) === "create") {
+        await page.locator("[data-apply]").click();
+        await expect(row).toHaveAttribute("data-template-action", "unchanged", { timeout: 60_000 });
+      }
+      expect(existsSync(path!)).toBe(true);
+      original = readFileSync(path!, "utf8");
+      if ((await row.getAttribute("data-template-status")) !== "default") {
+        // A copy left edited by an earlier run: take the builtin back first.
+        await page.locator(`[data-template-reset="${key}"]`).click();
+        await page.locator(".dialogBlock .theia-button.main").click();
+        await page.locator("[data-apply]").click();
+        await expect(row).toHaveAttribute("data-template-status", "default", { timeout: 60_000 });
+        original = readFileSync(path!, "utf8");
+      }
+
+      writeFileSync(path!, `${original}# house rule\n`);
+      await expect(row).toHaveAttribute("data-template-status", "edited", { timeout: 60_000 });
+
+      await page.locator(`[data-template-reset="${key}"]`).click();
+      await page.locator(".dialogBlock .theia-button.main").click();
+      await expect(row).toHaveAttribute("data-template-action", "create", { timeout: 60_000 });
+      await expect(row).toHaveAttribute("data-template-status", "default");
+      expect(existsSync(path!)).toBe(false);
+    } finally {
+      if (original !== undefined && !existsSync(path!)) writeFileSync(path!, original);
     }
   });
 });

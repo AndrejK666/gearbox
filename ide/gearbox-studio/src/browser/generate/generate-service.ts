@@ -206,7 +206,15 @@ export class GenerateService {
     // operation with no effect teaches the reader that the count above it is
     // decoration. Said as a count rather than as "nothing to do", because
     // `12 unchanged` is the reassuring half of the sentence.
-    if (this.state.status === "ready" && plans.length > 0 && !plans.some((p) => writesBytes(p.action))) {
+    // The product's templates are written by an apply too, so a plan whose tree
+    // is up to date still has work while a template waits to be written.
+    const templateWrites = (this.state.plan?.templates ?? []).some((t) => writesBytes(t.action));
+    if (
+      this.state.status === "ready" &&
+      plans.length > 0 &&
+      !plans.some((p) => writesBytes(p.action)) &&
+      !templateWrites
+    ) {
       const kept = plans.length;
       blocks.push({
         id: "nothing",
@@ -317,6 +325,20 @@ export class GenerateService {
     }
   }
 
+  /**
+   * Plan again for what is on screen, even though the resolution did not move.
+   *
+   * A product's templates are files the plan reads but the resolution does not:
+   * deleting one to take the builtin back changes the plan and nothing else.
+   */
+  async replan(): Promise<void> {
+    this.epoch += 1;
+    this.forKey = undefined;
+    this.inFlight = false;
+    this.update({ plan: undefined, written: undefined });
+    await this.ensurePlan();
+  }
+
   /** Write the planned tree. No-op when a gate is closed. */
   async apply(): Promise<GenerateApplyResult | undefined> {
     if (!this.engine.isConnected) {
@@ -343,6 +365,8 @@ export class GenerateService {
           // a product whose `templates = path(...)` changed between the two would
           // otherwise keep reporting the overlay it no longer uses.
           overridden_templates: outcome.overridden_templates,
+          // What the apply left in the product's templates directory.
+          templates: outcome.templates,
         },
         written: outcome.written,
         repository: undefined,

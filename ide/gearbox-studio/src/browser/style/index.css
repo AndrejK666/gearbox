@@ -1425,6 +1425,12 @@
 
 /* Generator diagnostics above the plan tree (GBX07xx: patched crates, overridden templates, stale files). */
 .gbx-generate-diagnostics { margin-top: 8px; max-height: 30%; overflow: auto; }
+.gbx-generate-templates { margin-top: 8px; }
+.gbx-generate-templates > summary { cursor: pointer; }
+.gbx-generate-templates ul { max-height: 30vh; overflow: auto; margin: 6px 0 0; padding: 0; list-style: none; }
+.gbx-generate-templates li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.gbx-generate-templates li .gbx-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gbx-generate-templates li .theia-button { margin: 0; min-width: 0; padding: 1px 8px; }
 
 /* Generate's file tree: one line per file, the name shortened rather than wrapped. */
 .gbx-generate-tree .gbx-row { flex-wrap: nowrap; padding-top: 2px; padding-bottom: 2px; }
