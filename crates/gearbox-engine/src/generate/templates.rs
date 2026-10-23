@@ -20,8 +20,12 @@
 //! | `main.rs` | host `<layout>/<p>/src/main.rs` |
 //! | `worker_main.rs` | worker `<layout>/<p>/src/main.rs` |
 //! | `registered_gears.rs` | `<layout>/<p>/src/registered_gears.rs` |
+//! | `rust-toolchain.toml` | `rust-toolchain.toml` |
 //! | `docker/Dockerfile` | `docker/<p>/Dockerfile` |
 //! | `docker/dockerignore` | `docker/<p>/Dockerfile.dockerignore` |
+//! | `docker/build.sh` | `docker/build.sh` |
+//! | `helm/umbrella/Chart.yaml` | `helm/<product>/Chart.yaml` |
+//! | `helm/Chart.yaml` | `helm/<product>/charts/<sub>/Chart.yaml` |
 //! | `helm/helpers.tpl` | `helm/<product>/charts/<sub>/templates/_helpers.tpl` |
 //! | `helm/deployment.yaml` | `helm/<product>/charts/<sub>/templates/deployment.yaml` |
 //! | `helm/service.yaml` | `helm/<product>/charts/<sub>/templates/service.yaml` |
@@ -53,6 +57,13 @@
 //! - `docker/Dockerfile`: `header`, `rust_channel`, `crate_name`, `bin_name`,
 //!   `application`, `out_rel`, `uid`, `home_dir`, `ports`
 //! - `docker/dockerignore`: `header`, `source_dirs`, `output_dir`, `secret_dirs`
+//! - `docker/build.sh`: `header`, `context` (the shell-quoted path to the build
+//!   context), `built` (`name`, quoted `image`) and `unit_charts` (`name`, quoted
+//!   `message`)
+//! - `rust-toolchain.toml`: `header`, `channel`
+//! - `helm/umbrella/Chart.yaml`: `header`, `product`, `version`, `dependencies`
+//!   (`name`, `key`, `version`)
+//! - `helm/Chart.yaml`: `header`, `name`, `version`
 //! - `helm/helpers.tpl`: `name`, `process`
 //! - `helm/deployment.yaml`: `name`, `process`, `config_filename`, `http_port`,
 //!   `liveness_path`, `readiness_path`, `home_dir`, `container_ports`, `directory_endpoint`, `bin_name`
@@ -80,6 +91,18 @@
 /// author is told the table is the contract, so the contract has to be checkable.
 #[cfg(test)]
 const HELM_CONTEXT_DOC: &[(&str, &[&str])] = &[
+    (
+        "helm/umbrella/Chart.yaml",
+        &[
+            "header",
+            "product",
+            "version",
+            "dependencies",
+            "name",
+            "key",
+        ],
+    ),
+    ("helm/Chart.yaml", &["header", "name", "version"]),
     ("helm/helpers.tpl", &["name", "application"]),
     (
         "helm/deployment.yaml",
@@ -117,6 +140,32 @@ use std::path::Path;
 use minijinja::{Environment, UndefinedBehavior};
 
 use super::GenerateError;
+
+/// Every key generation renders, as the module docs list them.
+///
+/// The one list: [`TemplateSet::builtin`] answers each of these, and writing a
+/// product's templates walks it.
+pub const KEYS: &[&str] = &[
+    "main.rs",
+    "worker_main.rs",
+    "registered_gears.rs",
+    "rust-toolchain.toml",
+    "docker/Dockerfile",
+    "docker/dockerignore",
+    "docker/build.sh",
+    "helm/umbrella/Chart.yaml",
+    "helm/Chart.yaml",
+    "helm/helpers.tpl",
+    "helm/deployment.yaml",
+    "helm/service.yaml",
+    "helm/configmap.yaml",
+    "helm/serviceaccount.yaml",
+    "ui/index.html",
+    "terraform/helm/main.tf",
+    "terraform/helm/variables.tf",
+    "terraform/helm/outputs.tf",
+    "terraform/helm/README.md",
+];
 
 /// A set of template sources, keyed as described in the module docs.
 ///
@@ -197,11 +246,17 @@ impl TemplateSet {
             "terraform/helm/README.md" => {
                 Some(include_str!("templates/terraform/helm/README.md.jinja"))
             }
+            "rust-toolchain.toml" => Some(include_str!("templates/rust-toolchain.toml.jinja")),
             "main.rs" => Some(include_str!("templates/main.rs.jinja")),
             "worker_main.rs" => Some(include_str!("templates/worker_main.rs.jinja")),
             "registered_gears.rs" => Some(include_str!("templates/registered_gears.rs.jinja")),
             "docker/Dockerfile" => Some(include_str!("templates/docker/Dockerfile.jinja")),
             "docker/dockerignore" => Some(include_str!("templates/docker/dockerignore.jinja")),
+            "docker/build.sh" => Some(include_str!("templates/docker/build.sh.jinja")),
+            "helm/umbrella/Chart.yaml" => {
+                Some(include_str!("templates/helm/umbrella/Chart.yaml.jinja"))
+            }
+            "helm/Chart.yaml" => Some(include_str!("templates/helm/Chart.yaml.jinja")),
             "helm/helpers.tpl" => Some(include_str!("templates/helm/helpers.tpl.jinja")),
             "helm/deployment.yaml" => Some(include_str!("templates/helm/deployment.yaml.jinja")),
             "helm/service.yaml" => Some(include_str!("templates/helm/service.yaml.jinja")),
@@ -359,7 +414,7 @@ mod tests {
     #[test]
     fn every_helm_context_variable_is_documented() {
         // Jinja's own vocabulary, plus loop bindings, which are not context.
-        const NOT_CONTEXT: &[&str] = &["for", "in", "endfor", "if", "endif", "else", "port"];
+        const NOT_CONTEXT: &[&str] = &["for", "in", "endfor", "if", "endif", "else", "port", "dep"];
 
         for (key, documented) in HELM_CONTEXT_DOC {
             let source = TemplateSet::builtin(key).expect("a builtin");
@@ -401,18 +456,7 @@ mod tests {
 
     #[test]
     fn every_declared_key_has_a_builtin() {
-        for key in [
-            "main.rs",
-            "worker_main.rs",
-            "registered_gears.rs",
-            "docker/Dockerfile",
-            "docker/dockerignore",
-            "helm/helpers.tpl",
-            "helm/deployment.yaml",
-            "helm/service.yaml",
-            "helm/configmap.yaml",
-            "helm/serviceaccount.yaml",
-        ] {
+        for key in KEYS {
             assert!(
                 TemplateSet::builtin(key).is_some(),
                 "`{key}` is in the contract but has no builtin"

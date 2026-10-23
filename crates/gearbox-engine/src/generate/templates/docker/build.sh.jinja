@@ -1,0 +1,38 @@
+#!/bin/sh
+{{ header }}
+#
+# The build context is the common ancestor of this tree and the
+# gears-rust sources. Generated Cargo.toml path-deps walk up out of
+# .gearbox/; `docker build` from this directory cannot see them.
+#
+# Docker reads .dockerignore from the context root by default. Ours
+# cannot live there -- generate() may not write outside out_root --
+# so each Dockerfile has an adjacent Dockerfile.dockerignore.
+#
+# Usage: ./build.sh [application ...]
+#   with no arguments, every application is built.
+set -eu
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+CONTEXT=$(CDPATH= cd -- {{ context }} && pwd)
+export DOCKER_BUILDKIT=1
+build_one() {
+  name=$1
+  image=$2
+  docker build \
+    -f "$SCRIPT_DIR/$name/Dockerfile" \
+    -t "$image" \
+    "$CONTEXT"
+}
+
+if [ "$#" -eq 0 ]; then
+{% for app in built %}  build_one {{ app.name }} {{ app.image }}
+{% endfor %}  exit 0
+fi
+
+for name in "$@"; do
+  case "$name" in
+{% for app in built %}    {{ app.name }}) build_one {{ app.name }} {{ app.image }} ;;
+{% endfor %}{% for app in unit_charts %}    {{ app.name }}) echo {{ app.message }} ;;
+{% endfor %}    *) echo "unknown application: $name" >&2; exit 1 ;;
+  esac
+done

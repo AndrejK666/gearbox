@@ -135,9 +135,10 @@ fn dockerignore(input: &GenerateInput<'_>, context: &Path) -> Result<String, Gen
 }
 
 /// Companion script so the operator does not have to reconstruct the
-/// context path. Not a template: the relative walk is computed, not
-/// styled, and an overlay that got the depth wrong would produce an
-/// image that cannot see `gears-rust`.
+/// context path. The relative walk is computed here and handed to the
+/// template as `context`, already quoted: an overlay styles the script, but it
+/// cannot get the depth wrong and produce an image that cannot see `gears-rust`.
+/// Image references arrive quoted the same way.
 fn build_script(input: &GenerateInput<'_>, context: &Path) -> Result<FileEntry, GenerateError> {
     let from_docker = input.out_root.join("docker");
     let to_context = match relative(&from_docker, context) {
@@ -145,85 +146,44 @@ fn build_script(input: &GenerateInput<'_>, context: &Path) -> Result<FileEntry, 
         None => to_slash(context),
     };
 
-    let mut body = String::new();
-    body.push_str("#!/bin/sh\n");
-    body.push_str(&header("#"));
-    body.push_str(
-        "#\n\
-         # The build context is the common ancestor of this tree and the\n\
-         # gears-rust sources. Generated Cargo.toml path-deps walk up out of\n\
-         # .gearbox/; `docker build` from this directory cannot see them.\n\
-         #\n\
-         # Docker reads .dockerignore from the context root by default. Ours\n\
-         # cannot live there -- generate() may not write outside out_root --\n\
-         # so each Dockerfile has an adjacent Dockerfile.dockerignore.\n\
-         #\n\
-         # Usage: ./build.sh [application ...]\n\
-         #   with no arguments, every application is built.\n",
-    );
-    body.push_str("set -eu\n");
-    body.push_str("SCRIPT_DIR=$(CDPATH= cd -- \"$(dirname \"$0\")\" && pwd)\n");
-    body.push_str("CONTEXT=$(CDPATH= cd -- ");
-    body.push_str(&context_cd(&to_context));
-    body.push_str(" && pwd)\n");
-    body.push_str("export DOCKER_BUILDKIT=1\n");
-    body.push_str("build_one() {\n");
-    body.push_str("  name=$1\n");
-    body.push_str("  image=$2\n");
-    body.push_str("  docker build \\\n");
-    body.push_str("    -f \"$SCRIPT_DIR/$name/Dockerfile\" \\\n");
-    body.push_str("    -t \"$image\" \\\n");
-    body.push_str("    \"$CONTEXT\"\n");
-    body.push_str("}\n\n");
-
-    body.push_str("if [ \"$#\" -eq 0 ]; then\n");
-    for application in input
+    let built: Vec<_> = input
         .lock
         .applications
         .iter()
         .filter(|application| application.unit_chart.is_none())
-    {
-        let image = image_reference(application, input);
-        body.push_str("  build_one ");
-        body.push_str(application.name.as_str());
-        body.push(' ');
-        body.push_str(&sh_single(&image));
-        body.push('\n');
-    }
-    body.push_str("  exit 0\n");
-    body.push_str("fi\n\n");
-    body.push_str("for name in \"$@\"; do\n");
-    body.push_str("  case \"$name\" in\n");
-    for application in input
+        .map(|application| {
+            context! {
+                name => application.name.as_str(),
+                image => sh_single(&image_reference(application, input)),
+            }
+        })
+        .collect();
+    let unit_charts: Vec<_> = input
         .lock
         .applications
         .iter()
-        .filter(|application| application.unit_chart.is_none())
-    {
-        let image = image_reference(application, input);
-        body.push_str("    ");
-        body.push_str(application.name.as_str());
-        body.push_str(") build_one ");
-        body.push_str(application.name.as_str());
-        body.push(' ');
-        body.push_str(&sh_single(&image));
-        body.push_str(" ;;\n");
-    }
-    for application in &input.lock.applications {
-        if let Some(chart) = &application.unit_chart {
-            body.push_str("    ");
-            body.push_str(application.name.as_str());
-            body.push_str(") echo ");
-            body.push_str(&sh_single(&format!(
-                "{} runs the unit image `{}`: build it with the Dockerfile beside {} in source {}",
-                application.name, chart.image, chart.path, chart.source
-            )));
-            body.push_str(" ;;\n");
-        }
-    }
-    body.push_str("    *) echo \"unknown application: $name\" >&2; exit 1 ;;\n");
-    body.push_str("  esac\n");
-    body.push_str("done\n");
+        .filter_map(|application| {
+            application.unit_chart.as_ref().map(|chart| {
+                context! {
+                    name => application.name.as_str(),
+                    message => sh_single(&format!(
+                        "{} runs the unit image `{}`: build it with the Dockerfile beside {} in source {}",
+                        application.name, chart.image, chart.path, chart.source
+                    )),
+                }
+            })
+        })
+        .collect();
+    let body = templates::render(
+        "docker/build.sh",
+        input.templates.get("docker/build.sh")?,
+        minijinja::context! {
+            header => header("#").trim_end(),
+            context => context_cd(&to_context),
+            built => built,
+            unit_charts => unit_charts,
+        },
+    )?;
 
     Ok(FileEntry::text(
         paths::rel(&["docker", "build.sh"])?,

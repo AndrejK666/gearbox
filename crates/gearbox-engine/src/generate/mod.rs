@@ -64,7 +64,7 @@ pub use apply::{
     ApplyOutcome, OUTPUT_DIR, apply_generate, base_root_for, default_out_root, plan,
     standalone_base_root, summarize,
 };
-pub use templates::TemplateSet;
+pub use templates::{KEYS as TEMPLATE_KEYS, TemplateSet};
 // Re-exported for the one caller outside generation that needs the same
 // arithmetic: a cloned description re-bases its relative paths, and a second
 // implementation of "relative, or absolute when there is none" would be a
@@ -330,7 +330,7 @@ pub fn generate(input: &GenerateInput<'_>) -> Result<Generated, GenerateError> {
         &mut files,
         workspace::workspace_manifest(&applications, input.layout(), input)?,
     )?;
-    insert(&mut files, workspace::toolchain()?)?;
+    insert(&mut files, workspace::toolchain(&input.templates)?)?;
     insert(&mut files, workspace::lock_file(input.lock)?)?;
     if let Some(cargo_lock) = workspace::cargo_lock(input.source_roots)? {
         insert(&mut files, cargo_lock)?;

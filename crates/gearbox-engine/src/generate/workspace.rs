@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use gearbox_ir::{FileEntry, FileKind, Ownership, ResolvedApplication, ResolvedProduct};
 use serde::Serialize;
 
+use super::templates::TemplateSet;
 use super::{GenerateError, GenerateInput, header, paths};
 
 /// The toolchain the generated crates build with.
@@ -115,19 +116,16 @@ pub fn workspace_manifest(
     ))
 }
 
-/// The toolchain pin.
-///
-/// Written by hand rather than through serde: the file has three lines, and a
-/// `#[derive(Serialize)]` for them would be longer than the file.
+/// The toolchain pin, from the `rust-toolchain.toml` template.
 ///
 /// # Errors
-/// Returns [`GenerateError`] only if the fixed path fails validation, which it
-/// cannot.
-pub fn toolchain() -> Result<FileEntry, GenerateError> {
-    let body = format!(
-        "{}\n[toolchain]\nchannel = \"{CHANNEL}\"\ncomponents = [\"rustfmt\", \"clippy\"]\n",
-        header("#")
-    );
+/// Returns [`GenerateError`] when the template is unknown or fails to render.
+pub fn toolchain(templates: &TemplateSet) -> Result<FileEntry, GenerateError> {
+    let body = super::templates::render(
+        "rust-toolchain.toml",
+        templates.get("rust-toolchain.toml")?,
+        minijinja::context! { header => header("#").trim_end(), channel => CHANNEL },
+    )?;
     Ok(FileEntry::text(
         paths::rel(&["rust-toolchain.toml"])?,
         body,
