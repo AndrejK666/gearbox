@@ -1,4 +1,4 @@
-//! Golden outputs of the repository's products (test case G0).
+//! Golden outputs of the repository's products.
 //!
 //! Every profile of every product in `products/` is resolved and generated in
 //! memory, and the files that decide what gets built and deployed -- the lock,
@@ -7,9 +7,9 @@
 //! fingerprint noise is normalized away, so a diff is a change in composition,
 //! linkage, configuration or deployment.
 //!
-//! This is the compatibility check for Phase 2B of the service-deployment
-//! roadmap (Gearbox ADR-0026, "Consequences"): a product that does not opt into
-//! the new dependency model must generate the same output. After an intended
+//! This is the compatibility check of Gearbox ADR-0026 ("Consequences"): a
+//! product that does not opt into the new dependency model must generate the
+//! same output. After an intended
 //! change, re-record with `GEARBOX_BLESS=1 cargo test -p gearbox-engine --test
 //! golden_products` and review the golden diff like any other.
 

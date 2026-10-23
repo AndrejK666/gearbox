@@ -615,7 +615,7 @@ fn under_an_embedded_profile_none_of_this_can_fire() {
 
 #[test]
 fn an_application_serving_rest_without_a_tenant_authenticator_is_refused() {
-    // G17: the runtime refuses to start it (gears-rust ADR-0011 section 3).
+    // The runtime refuses to start it (gears-rust ADR-0011 section 3).
     let cat = support::catalogue_of(vec![
         support::gear_with_caps("api", &[RuntimeCap::Rest, RuntimeCap::RestHost], &[]),
         support::gear_with_caps("worker-api", &[RuntimeCap::Rest], &[]),

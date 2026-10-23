@@ -190,9 +190,9 @@ fn a_struct_ident_that_is_not_the_gear_name_is_still_reported() {
 
 #[test]
 fn an_attribute_with_no_consume_record_is_reported() {
-    // G12, the reverse direction (ADR-0026 section 8): the runtime wires the
+    // The reverse direction (ADR-0026 section 8): the runtime wires the
     // edge, but the resolver builds edges from `consume(...)` only, so it was
-    // invisible -- Settings' AuthZ consumption sat like this until Phase 2A.
+    // invisible -- Settings' AuthZ consumption once sat like this.
     let path = root("Consumer", AGREEING);
     std::fs::write(
         path.join("consumer/gear.gdl"),

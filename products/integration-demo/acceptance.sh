@@ -1,12 +1,12 @@
 #!/bin/sh
-# Phase 4 acceptance of the integration product (tasks/service-deployment/phase-4.md).
+# The acceptance of the integration product on a cluster.
 #
 # Generates `kind`, installs it into its own namespace `gearbox-p4` (the issuer
 # in product.gdl names it) beside a mock IdP and a Postgres, and checks direct
 # routing and both authentication planes on a real cluster: what the edge
 # publishes, tenant and platform calls with their negatives, calls that keep
 # working when the edge stops routing, Flight Control and provider
-# replacement, two cluster replicas over one Postgres backend (R8), the AuthZ entrypoint from inside the cluster, and the embedded
+# replacement, two cluster replicas over one Postgres backend, the AuthZ entrypoint from inside the cluster, and the embedded
 # all-in-one binary. The namespace is refused if it exists, and removed at the
 # end unless KEEP=1.
 #
@@ -252,7 +252,7 @@ print(" ".join(sorted({str(i.get("gear") or i.get("name") or i.get("gear_name"))
 valid=$(token sign.key "$issuer" "$audience" 3600)
 bearer="Authorization: Bearer $valid"
 json="Content-Type: application/json"
-charge='{"amount_cents":100,"currency":"USD","description":"phase 4"}'
+charge='{"amount_cents":100,"currency":"USD","description":"acceptance"}'
 edge=http://flight-control:8087
 fc_internal=http://flight-control-internal:8088
 evaluate='{"subject":{"id":"f0000000-0000-4000-8000-000000000001","type":"user","properties":{}},"action":{"name":"get"},"resource":{"type":"gts.cf.core.users.user.v1~","properties":{}},"context":{}}'
@@ -311,7 +311,7 @@ for gear in $workers; do
   case " $gears " in *" $gear "*) ;; *) fail "the directory lists [$gears], not $gear" ;; esac
 done
 ok "the directory lists every worker: $gears"
-# todo-issues 1: payments keeps a record for its anchor (authz-resolver) and one
+# Payments keeps a record for its anchor (authz-resolver) and one
 # for the PaymentApi provider linked beside it, both at its Service, so checkout
 # finds PaymentApi under its own name.
 body "$fc_internal/service-discovery/v1/gears" -H "$bearer" | python3 -c '
@@ -353,7 +353,7 @@ eventually 60 200 "edge: routing again after its Service is restored" \
   POST "$edge/api-contracts-consumer/v1/charge" -H "$bearer" -H "$json" -d "$charge"
 
 echo "== Flight Control is down, then replaced (the directory restarts empty)"
-# todo-issues 18: held down rather than restarted, so the charge below is made
+# Held down rather than restarted, so the charge below is made
 # while the directory is unreachable -- its pods gone, its Service answering
 # nothing -- and after checkout's fresh cache (1.5 s) has expired, so only the
 # last-known-address fallback can answer it.
@@ -382,7 +382,7 @@ while :; do
 done
 ok "every worker re-registered with the new directory (after $(( $(date +%s) - start ))s)"
 
-echo "== cluster: two replicas on one shared backend (R8)"
+echo "== cluster: two replicas on one shared backend"
 cluster_pods=$(k get pod -l app.kubernetes.io/name=cluster -o jsonpath='{.items[*].metadata.name}')
 [ "$(printf '%s\n' $cluster_pods | wc -l | tr -d ' ')" = 2 ] || fail "cluster runs [$cluster_pods], not two replicas"
 ok "cluster runs two replicas: $cluster_pods"
@@ -448,7 +448,7 @@ expect 200 "AuthZ evaluate: the replacement credential" POST $payments_url/authz
 expect 401 "AuthZ evaluate: the retired one stays refused" POST $payments_url/authz-resolver/v1/evaluate \
   -H "x-toolkit-internal-token: $retired" -H "$json" -d "$evaluate"
 
-echo "== the same gears as the embedded all-in-one production binary (A20, G18)"
+echo "== the same gears as the embedded all-in-one production binary"
 cargo run -q -p gearbox-cli -- generate --root "$gears_rust" --source-id gears-rust \
   --product products/integration-demo/product.gdl --profile all-in-one >/dev/null
 aio=.gearbox/integration-demo/all-in-one

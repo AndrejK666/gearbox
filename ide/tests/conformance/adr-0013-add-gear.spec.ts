@@ -969,8 +969,8 @@ test.describe("a host that arrived only as a dependency", () => {
  * here `api-contracts-consumer` runs beside `api-contracts` (local) and on its
  * own in `audit` (remote over rest). The preview keyed bindings by consumer and
  * contract, so one copy's wiring was set against the other's and an addition
- * that touches neither showed "remote over rest → local" (2B review, follow-ups
- * 1 and 2). No shipped product has copies wired differently, so this one is
+ * that touches neither showed "remote over rest → local".
+ * No shipped product has copies wired differently, so this one is
  * derived: `payments-demo` with the consumer also included in `api-contracts`
  * and its explicit `remote` binding removed.
  */

@@ -295,7 +295,7 @@ export const DIAGNOSTIC_CATALOGUE: {
     title: "code resolves a contract it does not declare",
     severity: "warning",
     domain: "validate",
-    docs: "A gear's code resolves a contract from the `ClientHub` --\n`hub.get::<dyn Trait>()` -- that it neither consumes nor provides, and\nlinks no provider of through `deps`. The call compiles and finds nothing\nat run time, or finds a client the composition never planned: whether it\ncan be remote, and where its provider runs, are decided from declarations\nthis call does not have (test case G16). Read from syntax, so a warning.",
+    docs: "A gear's code resolves a contract from the `ClientHub` --\n`hub.get::<dyn Trait>()` -- that it neither consumes nor provides, and\nlinks no provider of through `deps`. The call compiles and finds nothing\nat run time, or finds a client the composition never planned: whether it\ncan be remote, and where its provider runs, are decided from declarations\nthis call does not have. Read from syntax, so a warning.",
     requiresEvidence: false,
   },
   GBX0301: {
@@ -469,7 +469,7 @@ export const DIAGNOSTIC_CATALOGUE: {
     title: "a production profile breaks a production rule",
     severity: "error",
     domain: "topology",
-    docs: "A production profile breaks a production rule (gears-rust ADR-0011\nsections 1 and 3, Gearbox ADR-0026 section 6; test case P4): the public\nlistener serves internal operations, a multi-process profile has no\nplatform auth of its kind (`kube` on Kubernetes, `shared_secret`\nself-hosted), an embedded hub binds TCP, a hub socket sits in a shared\ntemporary directory, a hub does not enforce platform auth, or tenant\n`AuthN` accepts everyone. Every profile is a production target unless it\nsays `development = True`, which reports the same findings as warnings.",
+    docs: "A production profile breaks a production rule (gears-rust ADR-0011\nsections 1 and 3, Gearbox ADR-0026 section 6): the public\nlistener serves internal operations, a multi-process profile has no\nplatform auth of its kind (`kube` on Kubernetes, `shared_secret`\nself-hosted), an embedded hub binds TCP, a hub socket sits in a shared\ntemporary directory, a hub does not enforce platform auth, or tenant\n`AuthN` accepts everyone. Every profile is a production target unless it\nsays `development = True`, which reports the same findings as warnings.",
     requiresEvidence: false,
   },
   GBX0326: {

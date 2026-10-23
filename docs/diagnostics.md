@@ -484,7 +484,7 @@ A gear's code resolves a contract from the `ClientHub` --
 links no provider of through `deps`. The call compiles and finds nothing
 at run time, or finds a client the composition never planned: whether it
 can be remote, and where its provider runs, are decided from declarations
-this call does not have (test case G16). Read from syntax, so a warning.
+this call does not have. Read from syntax, so a warning.
 
 ## `GBX03xx` — Process topology and structural constraints
 
@@ -817,7 +817,7 @@ corruption, and only the gear can say which it is
 **a production profile breaks a production rule**
 
 A production profile breaks a production rule (gears-rust ADR-0011
-sections 1 and 3, Gearbox ADR-0026 section 6; test case P4): the public
+sections 1 and 3, Gearbox ADR-0026 section 6): the public
 listener serves internal operations, a multi-process profile has no
 platform auth of its kind (`kube` on Kubernetes, `shared_secret`
 self-hosted), an embedded hub binds TCP, a hub socket sits in a shared

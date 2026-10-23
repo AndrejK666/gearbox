@@ -190,7 +190,7 @@ fn the_embedded_profile_generates_the_documented_output_set() {
             "rust-toolchain.toml",
         ],
         "the embedded profile's output set is the plan's section 7 table minus the \
-         Docker and Helm rows, which are M7, plus the source's Cargo.lock (Phase 5)"
+         Docker and Helm rows, which are M7, plus the source's Cargo.lock"
     );
 }
 
@@ -884,7 +884,7 @@ fn yaml(text: &str) -> serde_json::Value {
     serde_saphyr::from_str(text).expect("the generated configuration is YAML")
 }
 
-/// G18 (Gearbox ADR-0026 section 6): the embedded profile is the all-in-one
+/// Gearbox ADR-0026 section 6: the embedded profile is the all-in-one
 /// production binary. Its public listener serves only exposed operations, the
 /// gRPC hub binds nothing because no other process exists to dial it, and
 /// nothing is wired through the directory.
@@ -2774,7 +2774,7 @@ fn generated_file_audit_ignores_ui_dependency_and_build_directories() {
     assert!(!messages.contains("unowned.js"), "{messages}");
 }
 
-/// G10: every remote binding's criticality reaches the consumer's wiring, so
+/// Every remote binding's criticality reaches the consumer's wiring, so
 /// the runtime gates readiness on what resolution decided -- including a
 /// product's `bind(critical = False)`.
 #[test]
@@ -2932,13 +2932,13 @@ fn a_production_self_hosted_hub_refuses_a_shared_socket_directory() {
     }
 }
 
-/// P4 / ADR-0026 §6: a production Kubernetes profile with Kube platform auth.
+/// ADR-0026 §6: a production Kubernetes profile with Kube platform auth.
 /// The gateway gets an internal listener (advertised by its Service DNS, the
 /// port neighbours dial), an exposed-only public listener and an enforcing hub;
 /// every generated unit mounts the projected platform token and may call
 /// `TokenReview`. The repository's products are `development = True`, so this
 /// takes payments-demo `prod` and makes it production.
-/// Phase 4, found on a cluster: `kube` platform auth is compiled in, or the
+/// Found on a cluster: `kube` platform auth is compiled in, or the
 /// runtime refuses `internal_auth.provider = kube` at startup.
 fn assert_toolkit_compiles_in_k8s_auth(files: &FileSet, application: &str) {
     let manifest = text(files, &format!("apps/{application}/Cargo.toml"));
@@ -3117,7 +3117,7 @@ fn a_production_kubernetes_profile_gets_the_production_shape() {
     assert_every_container_hardened(&rendered);
 }
 
-/// Phase 5: the generated workspace carries the source's `Cargo.lock`, so every
+/// The generated workspace carries the source's `Cargo.lock`, so every
 /// build of it -- the Dockerfile's included -- uses the versions the source was
 /// tested with rather than whatever the registry holds that day.
 #[test]
@@ -3152,7 +3152,7 @@ fn the_generated_workspace_builds_the_sources_locked_versions() {
     );
 }
 
-/// Phase 3 item 17, per container: every container of every workload the
+/// Per container: every container of every workload the
 /// chart renders -- generated subcharts and the hand-written unit charts alike,
 /// init containers and hooks included -- runs as non-root on a read-only root
 /// with no privilege escalation and every capability dropped, and asks for
@@ -3248,7 +3248,7 @@ fn helm_render(
     Some(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Review of Phase 3, finding 8: a production single-node self-hosted hub is a
+/// A production single-node self-hosted hub is a
 /// socket in a private directory under the product's home, not TCP; the
 /// description's own `uds://` path wins.
 #[test]
@@ -3310,7 +3310,7 @@ fn a_production_self_hosted_hub_is_a_private_socket() {
     assert_eq!(hub_address(&intent), "uds:///run/payments/hub.sock");
 }
 
-/// Review of Phase 3, finding 5: a product whose process is exactly Flight
+/// A product whose process is exactly Flight
 /// Control ships Flight Control's chart and image, Types Registry's database
 /// included -- it reaches the chart in `configOverlay`, its password through
 /// `secretEnv` from the description's existing Secret.
@@ -3391,7 +3391,7 @@ fn an_exact_flight_control_ships_its_unit_chart() {
     );
 }
 
-/// Review of Phase 3 follow-up: an exact Flight Control and a separate cluster
+/// An exact Flight Control and a separate cluster
 /// unit ship both hand-written charts, and the topology names what those charts
 /// create -- workers dial `flight-control-grpc:50051` for the directory, and
 /// cluster is advertised by its own Service. The description's OIDC settings
@@ -3527,7 +3527,7 @@ fn flight_control_and_cluster_units_render_together() {
     assert_every_container_hardened(&rendered);
 }
 
-/// Review of Phase 3 follow-ups 2 and 3: two production self-hosted hubs never
+/// Two production self-hosted hubs never
 /// share a socket -- one per process by default, and an authored `uds://` path
 /// is the directory's hub only -- in a profile that resolves without errors,
 /// its production auth configured.
@@ -3639,7 +3639,7 @@ fn two_self_hosted_hubs_get_distinct_sockets() {
     );
 }
 
-/// Phase 4, found on a cluster: a process that reaches `cluster` over gRPC links
+/// Found on a cluster: a process that reaches `cluster` over gRPC links
 /// the SDK's remote half. Without `grpc-client` the SDK registers no client and
 /// every call reports its profile unbound; without the `use` line the linker
 /// may drop the registration.
@@ -3671,7 +3671,7 @@ fn a_remote_cluster_requester_links_the_sdk_client() {
     }
 }
 
-/// ADR-0010 section 6, todo-issues 1: a REST provider beside the worker's
+/// ADR-0010 section 6: a REST provider beside the worker's
 /// anchor gets a directory record of its own. The worker lists it in
 /// `oop_http.directory_gears`, the consumer finds it under its own name (no
 /// `directory_name`), and the directory admits the worker for it.

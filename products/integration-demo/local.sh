@@ -1,5 +1,5 @@
 #!/bin/sh
-# A23 (tasks/service-deployment/test-cases.md): the integration product's
+# The integration product's
 # `local` profile on one machine -- Flight Control spawning its workers as local
 # processes, the hub on a Unix socket, one shared secret for the platform plane.
 #
@@ -46,8 +46,8 @@ host_pid=
 log=
 cleanup() {
   if [ -n "$host_pid" ]; then
-    # The workers too: one whose host was killed outlives it (recorded in
-    # todo-issues), and would hold its port against the next run.
+    # The workers too: one whose host was killed outlives it, and would hold
+    # its port against the next run.
     workers=$(pgrep -P "$host_pid" || true)
     kill "$host_pid" 2>/dev/null || true
     wait "$host_pid" 2>/dev/null || true
@@ -288,7 +288,7 @@ while :; do
   [ $(( $(date +%s) - start )) -lt 60 ] || fail "with payments dead the charge still answers $got"
   sleep 1
 done
-ok "with payments killed the charge fails with $got rather than hanging (no worker is respawned: todo-issues)"
+ok "with payments killed the charge fails with $got rather than hanging (no worker is respawned)"
 workers=$(pgrep -P "$host_pid" || true)
 kill "$host_pid"
 wait "$host_pid" 2>/dev/null || true

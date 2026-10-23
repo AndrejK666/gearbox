@@ -1386,8 +1386,7 @@ fn existing_secret(
 /// `secretEnv` is the one way a value reaches it, so without a source a Flight
 /// Control unit's `AuthN` tokens, say, reached the pod unfilled. A generated
 /// chart keeps its opt-in: `existingSecret` in the operator's values, beside
-/// the `extraEnv` an installation may supply instead (review of the Phase 5
-/// split).
+/// the `extraEnv` an installation may supply instead.
 fn unit_secret(
     application: &ResolvedApplication,
     input: &GenerateInput<'_>,

@@ -3,7 +3,7 @@
 //! A gear says what it consumes with `#[toolkit::consumes]` and `consume(...)`;
 //! what it *calls* is `hub.get::<dyn Trait>()` in a function body, and nothing
 //! made the two agree. This reads the second so the catalogue can compare it
-//! with the first (Phase 4 of the service-deployment roadmap, test case G16).
+//! with the first.
 //!
 //! Syntax, not resolution: the trait is named by its last path segment, the way
 //! `#[toolkit::consumes(contract = ...)]` is read. Test code is skipped -- a test

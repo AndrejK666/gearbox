@@ -1,5 +1,5 @@
 //! GBX0215: a contract a gear's code resolves from the `ClientHub` without
-//! declaring it (test case G16 of the service-deployment roadmap).
+//! declaring it.
 
 #![allow(
     clippy::unwrap_used,

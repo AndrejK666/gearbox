@@ -1,5 +1,5 @@
 //! The production rules a profile is held to (gears-rust ADR-0011 sections 1 and 3,
-//! Gearbox ADR-0026 section 6; test case P4).
+//! Gearbox ADR-0026 section 6).
 //!
 //! Every profile is a production target unless the description marks it
 //! `development = True`. Production: each broken rule is an error, reported

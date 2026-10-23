@@ -418,7 +418,7 @@ fn a_credential_on_a_plugin_is_refused_as_well() {
 
 /// A plugin config key its schema does not declare is GBX0115, as for a gear:
 /// the generator writes only declared keys, so it would otherwise be dropped
-/// in silence (a private `IdP` CA path was, in the Phase 4 integration product).
+/// in silence (a private `IdP` CA path was, in the integration product).
 #[test]
 fn an_undeclared_plugin_config_key_is_refused() {
     let mut catalogue = catalogue_with_a_secret();

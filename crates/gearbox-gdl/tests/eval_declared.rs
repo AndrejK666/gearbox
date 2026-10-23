@@ -226,7 +226,7 @@ gear(
 
 #[test]
 fn consume_is_critical_unless_it_says_otherwise() {
-    // G11 (ADR-0026 section 5): the default matches the runtime, which gates
+    // ADR-0026 section 5: the default matches the runtime, which gates
     // every consumed dependency when nothing says otherwise.
     let src = r#"
 SDK = cargo(crate_name = "s", lib = "s")

@@ -8,7 +8,7 @@
 // `NotificationMain` and `LoggerMain` on a connection that no longer exists,
 // logging each failure through the same dead connection. In a conformance run
 // that was ~97,000 errors over forty minutes from one window closed early, and
-// the two claims that ran under that load timed out (todo-issues 14).
+// the two claims that ran under that load timed out.
 //
 // Bound per connection, after `@theia/plugin-ext`'s own connection module.
 

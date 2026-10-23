@@ -522,7 +522,7 @@ fn the_declared_provider_being_the_selected_one_is_silent() {
 
 #[test]
 fn a_product_overrides_a_consumes_criticality_per_binding() {
-    // G10: `bind(critical = False)` makes a remote binding optional; without it
+    // `bind(critical = False)` makes a remote binding optional; without it
     // the gear's `consume(critical = ...)` stands (true in the fixtures).
     let cat = support::catalogue_with_declared_edge();
     let mut intent = support::self_hosted(&["host", "provider"], Discovery::Directory, Some("t"));
@@ -583,7 +583,7 @@ fn contradicted(r: &gearbox_engine::resolve::Resolution) -> Vec<&str> {
 
 #[test]
 fn bind_local_places_the_provider_with_its_consumer() {
-    // G1: left alone the resolver gives the provider its own worker; `mode =
+    // Left alone the resolver gives the provider its own worker; `mode =
     // local` puts it in the consumer's process instead, and the request is
     // honoured rather than recorded and ignored.
     let cat = support::catalogue_with_declared_edge();
@@ -607,7 +607,7 @@ fn bind_local_places_the_provider_with_its_consumer() {
 
 #[test]
 fn bind_local_follows_a_chain_into_every_process_of_its_consumer() {
-    // Review 2B, finding 1: `lab` runs in its own worker; it asks for
+    // `lab` runs in its own worker; it asks for
     // `settings` locally, and `settings` asks for `authz` locally. One pass put
     // `settings` in the worker and `authz` only in the host, so the worker's
     // copy of `settings` had no `authz` beside it and no wiring to one either.
@@ -661,7 +661,7 @@ fn bind_local_follows_a_chain_into_every_process_of_its_consumer() {
 
 #[test]
 fn bind_local_against_a_pin_is_a_contradiction() {
-    // G2: the provider is pinned to its own application, so it cannot also be
+    // The provider is pinned to its own application, so it cannot also be
     // local to its consumer.
     let cat = support::catalogue_with_declared_edge();
     let mut intent = support::self_hosted(&["host", "provider"], Discovery::Directory, Some("t"));
@@ -685,7 +685,7 @@ fn bind_local_against_a_pin_is_a_contradiction() {
 
 #[test]
 fn bind_remote_forced_together_by_deps_is_a_contradiction_except_when_embedded() {
-    // G3: a `deps` chain links the provider into the consumer's binary, where
+    // A `deps` chain links the provider into the consumer's binary, where
     // the hub finds it before any remote client runs. An error naming the chain
     // outside an embedded profile; inapplicable (GBX0407) inside one.
     let cat = support::catalogue_with_declared_edge_and_dep();

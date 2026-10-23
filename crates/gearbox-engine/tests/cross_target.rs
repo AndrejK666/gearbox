@@ -1,4 +1,4 @@
-//! One description, every target (test case G13, Gearbox ADR-0026 section 6).
+//! One description, every target (Gearbox ADR-0026 section 6).
 //!
 //! A product resolves to the same gears and the same contract bindings under
 //! every profile it declares -- local in `embedded`, local or remote elsewhere --
@@ -34,7 +34,7 @@ struct Intent {
     /// `(consumer, contract, provider)`.
     bindings: BTreeSet<(String, String, String)>,
     /// `(requester, scope, primitive)`. The cluster edge is recorded as a
-    /// binding only where the requester runs apart from `cluster` (G6), which
+    /// binding only where the requester runs apart from `cluster`, which
     /// is placement; the request itself is the same in every profile.
     cluster: BTreeSet<(String, String, String)>,
 }

@@ -1,4 +1,4 @@
-//! The production rules (GBX0325; gears-rust ADR-0011 §1/§3, test case P4):
+//! The production rules (GBX0325; gears-rust ADR-0011 §1/§3):
 //! each is an error on a production profile, a warning on a `development = True`
 //! one, and silent when the description conforms.
 

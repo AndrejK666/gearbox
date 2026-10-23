@@ -33,7 +33,7 @@ declared. In the corpus:
 
 Because a worker's process is the `topo_sort` of its anchor's deps closure (`resolve/partition.rs:822-895`), placing
 OAGW in its own application while `lab-ui-backend` still `deps` on it gives **two OAGW processes**. The description
-looks as if it separated them. The inventory is `tasks/service-deployment/edge-matrix.md` §3, and the platform's
+looks as if it separated them. The platform's
 rules for moving an edge out of `deps` are gears-rust `cpt-cf-adr-severable-dependency-edges` §2.
 
 ### `bind(mode = ...)` asks, and nothing answers
@@ -124,10 +124,10 @@ It requires:
   a record cannot carry, and for a gear another application already registers.
 * `write_cluster` keeps writing the profiles into the `cluster` gear's section, wherever it is
   (`generate/config.rs:376-436`).
-* A generic contract edge stays REST-only (GBX0402 stands). No gRPC resolving client is generated in this roadmap.
-* **As implemented (2B).** A remote cluster binding is recorded only where a requester runs apart from `cluster`, so a
+* A generic contract edge stays REST-only (GBX0402 stands). No gRPC resolving client is generated.
+* **As implemented.** A remote cluster binding is recorded only where a requester runs apart from `cluster`, so a
   product that keeps them together writes the lock it wrote before. Event Broker no longer has `deps = [cluster]`
-  (gears-rust R6, as cluster's DESIGN §3.17.7 already required of every consumer), so a product with EB selects
+  (removed in gears-rust, as cluster's DESIGN §3.17.7 already required of every consumer), so a product with EB selects
   `cluster` and places it. The cluster unit needs no tenant authenticator: cluster declares `rest_planes = []` (§8).
 
 ### 5. Criticality is resolved here and written for the runtime
@@ -139,7 +139,7 @@ It requires:
   Absent still means critical (gears-rust ADR-0010 §3).
 * For a remote cluster binding, the generator writes the process-wide
   `gears.cluster-sdk.config.consumer_wiring.cluster.critical`. Its value is the OR over the application's cluster
-  requesters, which means true in this roadmap.
+  requesters, which today is always true.
 * **Criticality gates readiness only for directory-resolved bindings.** Kubernetes with `discovery = static` pins
   endpoints through the runtime's static override (`resolve/bindings.rs:276-306`). The runtime marks those resolved
   without contacting the provider and labels them "MUST NOT be used in production"
@@ -157,7 +157,7 @@ It requires:
 * `embedded` (the all-in-one binary): one process, and placement declarations are inert (GBX0307). The hub is written
   as `listen_addr: none`, or as UDS in a private runtime directory until that mode exists. No internal listener is
   generated.
-* **As implemented (2B, Phase 3).** Every profile is production unless it says `development = True` (GDL 1.3).
+* **As implemented.** Every profile is production unless it says `development = True` (GDL 1.3).
   The production rules are **GBX0325**: errors on a production profile, warnings on a development one. The generator
   writes `public.exposed_only: true` under the description's value for `embedded` and every production profile; a
   production multi-process gateway gets an internal listener (`internal_bind_addr`, advertised by its Service DNS or
@@ -165,14 +165,14 @@ It requires:
   `internal_auth_enforcement: required`; with `kube` platform auth every generated unit mounts the projected token for
   its audience and is granted TokenReview. The embedded hub is `listen_addr: none`. A development multi-process profile
   keeps the single listener. The cross-target invariant is checked over the repository's
-  products (`crates/gearbox-engine/tests/cross_target.rs`, G13); a cluster edge is compared by its request, because it
+  products (`crates/gearbox-engine/tests/cross_target.rs`); a cluster edge is compared by its request, because it
   is recorded as a binding only where the requester runs apart from `cluster` (§4).
-* **As implemented (Phase 3).** A unit with a hand-written chart (gears-rust ADR-0004 amendment: Flight Control,
+* **As implemented.** A unit with a hand-written chart (gears-rust ADR-0004 amendment: Flight Control,
   `cluster-oop`) is named by its anchor gear's `deploy = helm_chart(...)` (GDL 1.3). On a `kubernetes` profile an
   application that is exactly that unit ships the chart and the unit's image instead of a generated subchart and crate;
   the description supplies only its gears' configuration (`configOverlay`) and Secret-backed placeholders
   (`secretEnv`). Every other application keeps a generated chart.
-* **As implemented (after Phase 3).** Platform auth is a property of the profile: `kubernetes(platform_auth = "kube"
+* **As implemented.** Platform auth is a property of the profile: `kubernetes(platform_auth = "kube"
   | "shared_secret")`, `self_hosted(platform_auth = "shared_secret")` (GDL 1.3). Resolution writes it into
   `api-gateway`'s `internal_auth` (fields the description set there are kept; another `provider`, or no gateway to
   carry it, is **GBX0326**), and the generator carries that to every hub and worker, so one description holds
@@ -185,7 +185,7 @@ It requires:
 * `one_per_installation` stays checked within the product: duplicate registration and replicated singletons, GBX0320
   (`resolve/structural.rs:61-196`).
 * Referencing another product's lock (`cpt-gearbox-adr-installation-and-application` §1,
-  `cpt-gearbox-adr-one-per-installation` §7) is not built in this roadmap.
+  `cpt-gearbox-adr-one-per-installation` §7) is not built yet.
 * A packaged platform preset that enables both a bundled and a standalone directory is rejected by its chart
   validation (gears-rust ADR-0004 amendment). Gearbox does not claim to see independently installed releases.
 
@@ -200,11 +200,11 @@ It requires:
   replicated Types Registry. Gearbox reports such an application before generation as **GBX0417**
   `ApplicationWithoutAuthenticator` (error). The help names the gear whose routes need it and suggests
   `include = ["authn-resolver"]` with a plugin.
-* **As implemented (2B).** Gearbox cannot see a gear's operations, only its `rest` capability, which cluster has for its
+* **As implemented.** Gearbox cannot see a gear's operations, only its `rest` capability, which cluster has for its
   readiness check alone. `gear(rest_planes = [...])` (GDL 1.3) says which planes a gear's REST serves: `"tenant"`,
   `"platform"`, or `[]` for probes only. Absent is read as `["tenant"]`, so an undeclared gear is checked as the
   runtime would find it. The runtime's start check is what verifies the claim.
-* **As implemented (2B).** `lab-ui-backend` no longer has `deps = [oagw]`. The echo declarations it registered into its
+* **As implemented.** `lab-ui-backend` no longer has `deps = [oagw]`. The echo declarations it registered into its
   own Types Registry for OAGW moved to `family-labs-outbound`, a gear that genuinely belongs with OAGW, so the GBX0414
   case above no longer arises with these gears.
 
@@ -228,10 +228,10 @@ The only addition is `critical` on `bind`. Codes GBX0413-0417 are the next free 
 
 * A product can combine gears co-located or out of process with the declarations it already has. The resolver either
   produces that placement or says why not.
-* Products that do not use `mode = local`, Cluster separation or `critical` resolve to the same applications. Before
-  2B changes anything, golden outputs of the repository's products are
-  recorded: `product.lock`, generated Cargo manifests, config and Helm, normalized for versions and source
-  fingerprints. 2B's diff against them is the compatibility check.
+* Products that do not use `mode = local`, Cluster separation or `critical` resolve to the same applications. Golden
+  outputs of the repository's products are recorded
+  (`crates/gearbox-engine/tests/golden_products.rs`): `product.lock`, generated Cargo manifests, config and Helm,
+  normalized for versions and source fingerprints. A diff against them is the compatibility check.
 * Flipping the `critical` default changes the lock field for existing consumptions. It does not change runtime
   behaviour, because the runtime already treated them as critical.
 * `mode = remote` forced together changes from info to error. `payments-demo`'s one `bind(mode = remote)` must still
@@ -257,4 +257,5 @@ The only addition is `critical` on `bind`. Codes GBX0413-0417 are the next free 
   separated, by refusing a description that pretends otherwise (§3).
 * **References** gears-rust `cpt-cf-adr-severable-dependency-edges` (what may be separated, readiness) and
   `cpt-cf-adr-public-and-internal-listeners` (how separated REST is served).
-* Evidence: `tasks/service-deployment/edge-matrix.md`. Test cases: `tasks/service-deployment/test-cases.md`.
+* Tests: `crates/gearbox-engine/tests/resolve_partition.rs`, `resolve_bindings.rs`, `resolve_cluster.rs`,
+  `cross_target.rs`, `golden_products.rs`.

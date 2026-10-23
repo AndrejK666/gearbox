@@ -394,8 +394,7 @@ pub fn app_config(
 }
 
 /// The REST host's public listener serves only exposed operations in an
-/// embedded profile and in every production one (Gearbox ADR-0026 section 6,
-/// test cases G18 and P4).
+/// embedded profile and in every production one (Gearbox ADR-0026 section 6).
 ///
 /// The all-in-one binary has no other process, so nothing but the public
 /// surface should answer. A production multi-process gateway also has the
@@ -409,7 +408,7 @@ pub fn app_config(
 ///
 /// On Kubernetes Flight Control's chart sets `gateway_proxy` itself. A generated
 /// self-hosted host had none, so its edge published nothing a worker served and
-/// answered 404 for every worker route (A23). The hub is addressed as it
+/// answered 404 for every worker route. The hub is addressed as it
 /// listens: `uds://~/...` (the gateway expands `~` as the hub does) or a TCP
 /// address. A `gateway_proxy` the description wrote is kept.
 fn write_gateway_proxy(input: &GenerateInput<'_>, gears: &mut BTreeMap<String, GearSection>) {

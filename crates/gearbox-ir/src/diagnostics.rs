@@ -684,7 +684,7 @@ diagnostic_codes! {
     /// links no provider of through `deps`. The call compiles and finds nothing
     /// at run time, or finds a client the composition never planned: whether it
     /// can be remote, and where its provider runs, are decided from declarations
-    /// this call does not have (test case G16). Read from syntax, so a warning.
+    /// this call does not have. Read from syntax, so a warning.
     ValidateUndeclaredClientUse = "GBX0215", Validate, Warning, false, "code resolves a contract it does not declare";
 
     // ---------------------------------------------------------------- GBX03xx
@@ -904,7 +904,7 @@ diagnostic_codes! {
     TopologyDuplicateRegistration = "GBX0320", Topology, Warning, false, "two applications register the same directory name";
 
     /// A production profile breaks a production rule (gears-rust ADR-0011
-    /// sections 1 and 3, Gearbox ADR-0026 section 6; test case P4): the public
+    /// sections 1 and 3, Gearbox ADR-0026 section 6): the public
     /// listener serves internal operations, a multi-process profile has no
     /// platform auth of its kind (`kube` on Kubernetes, `shared_secret`
     /// self-hosted), an embedded hub binds TCP, a hub socket sits in a shared

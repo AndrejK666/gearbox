@@ -112,7 +112,7 @@ fn nothing_in_the_slice_is_severable_if_declared_and_that_is_the_finding() {
     // emptiness. `authz-resolver` grew one: it provides `AuthZResolverApi` over
     // REST, and `account-management` reaches it through `deps`
     // (`resource-group`, `credstore`, `oagw` and `event-broker` consume it as a
-    // contract since the service-deployment roadmap's Phase 2A). `cluster` now
+    // contract). `cluster` now
     // provides its four coordination contracts over gRPC and `settings-service`
     // its read contract; `event-broker`'s `deps = [cluster]` is reported by
     // GBX0607 rather than as a cut.

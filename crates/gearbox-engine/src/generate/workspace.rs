@@ -143,8 +143,8 @@ pub fn toolchain() -> Result<FileEntry, GenerateError> {
 /// and every `cargo build` of it -- the Dockerfile's included -- resolved the
 /// registry afresh: the same description built different dependency versions
 /// on different days. A product's gateway picked up `pingora-core` 0.8.1, a
-/// release `gears-rust` had never run, and OAGW's proxy panicked on every call
-/// (Phase 5). Cargo keeps every version a lock pins and only adds the generated
+/// release `gears-rust` had never run, and OAGW's proxy panicked on every call.
+/// Cargo keeps every version a lock pins and only adds the generated
 /// packages, so the source's lock is the right seed.
 ///
 /// Copied only when exactly one source root has a lock: two would pin one crate

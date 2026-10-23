@@ -1,5 +1,4 @@
-//! Contracts a gear's code resolves without declaring them (GBX0215; test case
-//! G16 of the service-deployment roadmap).
+//! Contracts a gear's code resolves without declaring them (GBX0215).
 //!
 //! The catalogue knows what a gear *declares* -- `#[toolkit::consumes]`,
 //! `consume(...)`, `deps` -- and, from `gearbox_project::project_client_uses`,

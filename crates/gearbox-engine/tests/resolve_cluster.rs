@@ -751,7 +751,7 @@ fn messages_of(r: &gearbox_engine::resolve::Resolution, code: DiagnosticCode) ->
 
 #[test]
 fn a_requester_apart_from_cluster_gets_a_remote_grpc_binding() {
-    // G6: `cluster` in its own application, the requester elsewhere,
+    // `cluster` in its own application, the requester elsewhere,
     // Kubernetes: a gRPC binding the SDK addresses.
     let cat = support::remote_cluster_catalogue();
     let r = resolve(&cat, &remote_cluster_intent(true), &pid("prod"));
@@ -782,7 +782,7 @@ fn a_requester_apart_from_cluster_gets_a_remote_grpc_binding() {
 
 #[test]
 fn a_remote_cluster_needs_its_contracts_provided_over_grpc() {
-    // Review 2B, finding 5: the binding used to need only that the contract
+    // The binding used to need only that the contract
     // existed somewhere. Without cluster providing it over gRPC -- and the
     // profile contract the SDK resolves scopes through -- it is refused.
     for drop in ["cluster/ClusterCacheApi@v1", "cluster/ClusterProfileApi@v1"] {
@@ -810,7 +810,7 @@ fn a_remote_cluster_needs_its_contracts_provided_over_grpc() {
 
 #[test]
 fn cluster_in_two_kubernetes_applications_is_refused_even_with_no_one_remote() {
-    // Review 2B, finding 3: each process linking cluster renders a Service
+    // Each process linking cluster renders a Service
     // named `cluster`, so two cannot install even when every requester has
     // its own copy.
     let cat = support::remote_cluster_catalogue();
@@ -845,7 +845,7 @@ fn cluster_in_two_kubernetes_applications_is_refused_even_with_no_one_remote() {
 
 #[test]
 fn a_remote_cluster_outside_kubernetes_is_refused() {
-    // G7: the SDK has only Kubernetes DNS to find cluster by.
+    // The SDK has only Kubernetes DNS to find cluster by.
     let cat = support::remote_cluster_catalogue();
     let r = resolve(&cat, &remote_cluster_intent(false), &pid("local"));
     assert!(!messages_of(&r, DiagnosticCode::RemoteClusterNeedsKubernetes).is_empty());
@@ -854,7 +854,7 @@ fn a_remote_cluster_outside_kubernetes_is_refused() {
 
 #[test]
 fn cluster_in_two_applications_while_reached_remotely_is_refused() {
-    // G8: two Services named `cluster` cannot exist.
+    // Two Services named `cluster` cannot exist.
     let cat = support::remote_cluster_catalogue();
     let mut intent = remote_cluster_intent(true);
     intent.selected_gears.push(intent.selected_gears[0].clone());
@@ -876,7 +876,7 @@ fn cluster_in_two_applications_while_reached_remotely_is_refused() {
 
 #[test]
 fn a_cluster_hub_off_the_network_is_refused() {
-    // G9: remote requesters dial TCP; a UDS hub serves nobody outside.
+    // Remote requesters dial TCP; a UDS hub serves nobody outside.
     let cat = support::remote_cluster_catalogue();
     let mut intent = remote_cluster_intent(true);
     let hub = intent
@@ -896,7 +896,7 @@ fn a_cluster_hub_off_the_network_is_refused() {
     );
 }
 
-/// Phase 4: a process-local backend in its own unreplicated cluster unit is one
+/// A process-local backend in its own unreplicated cluster unit is one
 /// copy of the state -- every requester reaches it over gRPC -- so it is not
 /// GBX0503. The same unit replicated is.
 #[test]
@@ -972,7 +972,7 @@ fn one_unreplicated_cluster_unit_holds_the_only_copy() {
 
 #[test]
 fn a_remote_grpc_binding_into_a_builtin_host_process_is_not_gbx0305() {
-    // todo-issues 9: GBX0305 refuses a remote consumer of a process the
+    // GBX0305 refuses a remote consumer of a process the
     // built-in HTTP host serves, because that host is a public listener and a
     // contract's REST routes are internal. A gRPC binding is served by the
     // process's hub, not its HTTP host, so it must not be refused -- even

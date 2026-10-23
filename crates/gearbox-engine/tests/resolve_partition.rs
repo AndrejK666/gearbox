@@ -479,7 +479,7 @@ fn two_pins_differing_by_role_are_not_a_duplicate() {
     );
 }
 
-/// todo-issues 1: an `include` places the gear. A provider of a severable edge
+/// An `include` places the gear. A provider of a severable edge
 /// used to become a worker of its own as well, so the gear ran in two processes
 /// and its remote consumer was bound to the stray copy.
 #[test]
@@ -613,7 +613,7 @@ fn duplicated(r: &gearbox_engine::resolve::Resolution) -> Vec<&str> {
 
 #[test]
 fn a_pinned_gear_a_deps_chain_also_links_is_refused() {
-    // G4: OAGW is given its own application while `lab-ui-backend` still
+    // OAGW is given its own application while `lab-ui-backend` still
     // `deps` on it, so the gateway would run a second OAGW.
     let cat = support::catalogue_of(vec![
         support::gear_with_caps("lab-ui-backend", &[], &["oagw"]),
@@ -634,7 +634,7 @@ fn a_pinned_gear_a_deps_chain_also_links_is_refused() {
         "{messages:?}"
     );
 
-    // G5: without the dep there is one OAGW and nothing to report.
+    // Without the dep there is one OAGW and nothing to report.
     let cat = support::catalogue_of(vec![
         support::gear_with_caps("lab-ui-backend", &[], &[]),
         support::gear_with_caps("oagw", &[], &[]),
