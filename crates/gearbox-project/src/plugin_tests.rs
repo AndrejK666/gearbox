@@ -424,14 +424,23 @@ fn default_vendor() -> String { "keycloak".to_owned() }
 #[test]
 fn a_selector_path_reads_the_default_of_the_field_it_names() {
     let files = [file(TWO_VENDORS)];
-    assert_eq!(project_field_str_default(&files, "idp.vendor").unwrap().as_deref(), Some("cf"));
     assert_eq!(
-        project_field_str_default(&files, "tr_plugin.vendor").unwrap().as_deref(),
+        project_field_str_default(&files, "idp.vendor")
+            .unwrap()
+            .as_deref(),
+        Some("cf")
+    );
+    assert_eq!(
+        project_field_str_default(&files, "tr_plugin.vendor")
+            .unwrap()
+            .as_deref(),
         Some("constructorfabric")
     );
     // Through `Option<..>`, and through `#[serde(default = "fn")]`.
     assert_eq!(
-        project_field_str_default(&files, "keycloak.vendor").unwrap().as_deref(),
+        project_field_str_default(&files, "keycloak.vendor")
+            .unwrap()
+            .as_deref(),
         Some("keycloak")
     );
 }
@@ -452,5 +461,10 @@ fn the_real_account_management_selects_by_idp_vendor() {
     // The corpus case this exists for: the first `vendor` default in the crate
     // is `tr_plugin`'s, the one the runtime selects the IdP plugin by is not.
     let files = require!(tree("gears/system/account-management/account-management"));
-    assert_eq!(project_field_str_default(&files, "idp.vendor").unwrap().as_deref(), Some("cf"));
+    assert_eq!(
+        project_field_str_default(&files, "idp.vendor")
+            .unwrap()
+            .as_deref(),
+        Some("cf")
+    );
 }

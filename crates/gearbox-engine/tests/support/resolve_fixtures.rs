@@ -35,6 +35,7 @@ pub fn source() -> SourceId {
 /// case rather than inherited from a fixture.
 pub fn descriptor(id: &str) -> GearDescriptor {
     GearDescriptor {
+        ui: None,
         maturity: gearbox_ir::Maturity::Stable,
         one_per_installation: false,
         id: gid(id),
@@ -44,6 +45,11 @@ pub fn descriptor(id: &str) -> GearDescriptor {
         visibility: Visibility::default(),
         source: source(),
         gdl_path: RelPath::new(format!("{id}/gear.gdl")).unwrap(),
+        sdks: Vec::new(),
+        implementation: None,
+        scenarios: Vec::new(),
+        origin: None,
+        tests: Vec::new(),
         package: CargoRef {
             crate_name: format!("cf-{id}"),
             lib_ident: id.replace('-', "_"),
@@ -60,6 +66,8 @@ pub fn descriptor(id: &str) -> GearDescriptor {
         requires: Vec::new(),
         serves: Vec::new(),
         client_trait: None,
+        rest_planes: None,
+        unit_chart: None,
         cluster_providers: Vec::new(),
         extension_points: Vec::new(),
         implements: None,
@@ -71,6 +79,8 @@ pub fn descriptor(id: &str) -> GearDescriptor {
         docs: None,
         gts_types: Vec::new(),
         declared_at: None,
+        permissions: std::collections::BTreeSet::new(),
+        unreadable_permissions: Vec::new(),
     }
 }
 
@@ -78,6 +88,7 @@ pub fn descriptor(id: &str) -> GearDescriptor {
 pub fn intent(gears: &[&str]) -> ProductIntent {
     let dev = ProfileId::new("dev").unwrap();
     ProductIntent {
+        ui: None,
         templates: None,
         layout: None,
         id: "fixture".to_owned(),
@@ -88,7 +99,10 @@ pub fn intent(gears: &[&str]) -> ProductIntent {
         profiles: [(
             dev.clone(),
             gearbox_ir::DeploymentProfileDecl::Embedded {
+                database: None,
+                sqlite_databases: BTreeMap::new(),
                 id: dev.clone(),
+                development: false,
                 declared_at: None,
             },
         )]
@@ -104,6 +118,7 @@ pub fn intent(gears: &[&str]) -> ProductIntent {
                 package: None,
                 features: Vec::new(),
                 config: BTreeMap::new(),
+                profile_config: BTreeMap::new(),
                 plugins: Vec::new(),
                 declared_at: None,
             })
@@ -112,6 +127,7 @@ pub fn intent(gears: &[&str]) -> ProductIntent {
         cluster_scopes: Vec::new(),
         application_pins: Vec::new(),
         preferences: Vec::new(),
+        permissions: std::collections::BTreeMap::new(),
     }
 }
 
@@ -323,11 +339,15 @@ pub fn self_hosted_intent(gears: &[&str]) -> ProductIntent {
     intent.profiles.insert(
         local.clone(),
         gearbox_ir::DeploymentProfileDecl::SelfHosted {
+            database: None,
+            sqlite_databases: BTreeMap::new(),
             id: local,
             host: gearbox_ir::ApplicationId::new("gateway").unwrap(),
             discovery: gearbox_ir::Discovery::Static,
             target_dir: None,
             cargo_profile: None,
+            platform_auth: None,
+            development: false,
             declared_at: None,
         },
     );
@@ -366,11 +386,15 @@ pub fn self_hosted(
     intent.profiles.insert(
         local.clone(),
         gearbox_ir::DeploymentProfileDecl::SelfHosted {
+            database: None,
+            sqlite_databases: BTreeMap::new(),
             id: local,
             host: gearbox_ir::ApplicationId::new("host").unwrap(),
             discovery,
             target_dir: target_dir.map(ToOwned::to_owned),
             cargo_profile: None,
+            platform_auth: None,
+            development: false,
             declared_at: None,
         },
     );
@@ -384,10 +408,14 @@ pub fn kubernetes(gears: &[&str], discovery: gearbox_ir::Discovery) -> ProductIn
     intent.profiles.insert(
         prod.clone(),
         gearbox_ir::DeploymentProfileDecl::Kubernetes {
+            database: None,
+            sqlite_databases: BTreeMap::new(),
             id: prod,
             discovery,
             namespace: None,
             image_registry: None,
+            platform_auth: None,
+            development: false,
             declared_at: None,
         },
     );
@@ -424,6 +452,7 @@ pub fn pin_role(
     intent.application_pins.push(gearbox_ir::ApplicationPin {
         name: gearbox_ir::ApplicationId::new(name).unwrap(),
         anchor: gid(anchor),
+        include: BTreeSet::new(),
         role: role.map(str::to_owned),
         replicas,
         profiles: BTreeSet::new(),
@@ -575,4 +604,83 @@ pub fn bind_cluster(
         declared_at: None,
         entry_index: intent.cluster_scopes.len(),
     });
+}
+
+/// `cluster_catalogue` with the requester free to live apart: no `deps` on
+/// cluster, cluster serving its cache contract over gRPC, and a gRPC hub.
+pub fn remote_cluster_catalogue() -> Catalogue {
+    let mut catalogue = cluster_catalogue(vec![(ClusterPrimitive::Cache, "app", &[])]);
+    catalogue
+        .gears
+        .get_mut(&gid("app"))
+        .unwrap()
+        .colocated_deps
+        .clear();
+    catalogue
+        .gears
+        .get_mut(&gid("cluster"))
+        .unwrap()
+        .runtime_caps
+        .insert(RuntimeCap::Grpc);
+    catalogue.gears.insert(
+        gid("grpc-hub"),
+        gear_with_caps("grpc-hub", &[RuntimeCap::GrpcHub], &[]),
+    );
+    catalogue.gears.insert(gid("other"), descriptor("other"));
+    // What the SDK's remote client needs: the primitive's service and the
+    // profile service, both over gRPC.
+    for base in ["ClusterCacheApi", "ClusterProfileApi"] {
+        let mut c = contract(base, 1, ContractKind::Api);
+        c.id = cid(&format!("cluster/{base}@v1"));
+        c.owner = gid("cluster");
+        let mut p = provides(&c, &[Transport::Local, Transport::Grpc]);
+        p.provider_gear = gid("cluster");
+        catalogue
+            .gears
+            .get_mut(&gid("cluster"))
+            .unwrap()
+            .provides
+            .push(p);
+        catalogue.contracts.insert(c.id.clone(), c);
+    }
+    catalogue
+}
+
+/// `lab -> settings -> authz`, each edge a declared contract: the chain
+/// `bind(mode = local)` has to follow from one process into the next.
+pub fn catalogue_with_contract_chain() -> Catalogue {
+    let mut catalogue = Catalogue::default();
+    catalogue
+        .gears
+        .insert(gid("host"), gear_with_caps("host", &[], &[]));
+    for (consumer, provider, base) in [
+        ("lab", "settings", "Settings"),
+        ("settings", "authz", "Authz"),
+    ] {
+        let mut c = contract(base, 1, ContractKind::Api);
+        c.id = cid(&format!("{provider}/{base}@v1"));
+        c.owner = gid(provider);
+        let mut p = provides(&c, &[Transport::Local, Transport::Rest]);
+        p.provider_gear = gid(provider);
+        let mut r = consumes(&c.id);
+        r.id = RequirementId::new(format!("{consumer}#contract.consumes[0]")).unwrap();
+        r.requester = gid(consumer);
+        if let RequirementKind::Contract { from, .. } = &mut r.kind {
+            *from = gid(provider);
+        }
+        catalogue
+            .gears
+            .entry(gid(provider))
+            .or_insert_with(|| descriptor(provider))
+            .provides
+            .push(p);
+        catalogue
+            .gears
+            .entry(gid(consumer))
+            .or_insert_with(|| descriptor(consumer))
+            .consumes
+            .push(r);
+        catalogue.contracts.insert(c.id.clone(), c);
+    }
+    catalogue
 }

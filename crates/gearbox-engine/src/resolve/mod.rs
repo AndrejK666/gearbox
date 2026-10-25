@@ -15,10 +15,13 @@ pub mod closure;
 pub mod cluster;
 pub mod cluster_options;
 pub mod cuts;
+pub mod database;
 pub mod partition;
 pub mod product;
+pub mod production;
 pub mod profile;
 pub mod structural;
+mod ui;
 
 use std::collections::BTreeSet;
 
@@ -48,6 +51,10 @@ fn unknown_profile(intent: &ProductIntent, profile: &ProfileId, uri: &str) -> Di
 
 /// Everything one resolution produced.
 pub struct Resolution {
+    pub ui: Option<gearbox_ir::ui::ResolvedUi>,
+    pub database: Option<gearbox_ir::PostgresDatabase>,
+    pub sqlite_databases:
+        std::collections::BTreeMap<gearbox_ir::GearId, gearbox_ir::SqliteDatabase>,
     /// Which profile this is for.
     pub profile: ProfileId,
     /// The closure of gears, with why each is present.
@@ -108,6 +115,11 @@ pub fn resolve_at(
         None => gearbox_ir::file_uri(std::path::Path::new(intent.gdl_path.as_str())),
     };
 
+    // Step 0 -- the configuration this profile runs: `profile_config` merged
+    // over `config`, the profile's `platform_auth` written where it is carried.
+    let effective = profile::effective(intent, profile, &uri, &mut diagnostics);
+    let intent: &ProductIntent = &effective;
+
     // Step 1 -- narrow to the profile. Done first because everything after it
     // reads the narrowed view, and because a duplicate that only appears once
     // narrowed is a contradiction the description could not have shown.
@@ -123,6 +135,10 @@ pub fn resolve_at(
         &uri,
         &mut diagnostics,
     );
+
+    let database = intent.profiles.get(profile).and_then(|declaration| {
+        database::resolve(catalogue, &closure, declaration, &uri, &mut diagnostics)
+    });
 
     // Step 3 -- which edges could carry a boundary.
     let cuts = cuts::classify(catalogue, &closure, &uri, &mut diagnostics);
@@ -187,6 +203,12 @@ pub fn resolve_at(
             Preference::ExistingInfrastructure | Preference::FewerApplications => None,
         })
         .collect();
+    let hub_listen = intent
+        .selected_gears
+        .iter()
+        .find(|s| s.gear.as_str() == "grpc-hub")
+        .and_then(|s| s.config.get("listen_addr"))
+        .and_then(serde_json::Value::as_str);
     let input = partition::Inputs {
         catalogue,
         closure: &closure,
@@ -194,6 +216,7 @@ pub fn resolve_at(
         scoped: &scoped,
         selected: &selected,
         isolates: &isolates,
+        hub_listen,
     };
     let partition = if let Some(declaration) = intent.profiles.get(profile) {
         let partition = partition::partition(
@@ -206,6 +229,24 @@ pub fn resolve_at(
         );
         // Step 5 -- what the runtime will refuse, said before a binary exists.
         structural::check(catalogue, &partition, declaration, &uri, &mut diagnostics);
+        production::check(
+            intent,
+            profile,
+            declaration,
+            partition.applications.len() > 1,
+            &uri,
+            &mut diagnostics,
+        );
+        database::check_sqlite_placement(&partition, declaration, &uri, &mut diagnostics);
+        // The product's permission mapping against every gear it contains.
+        crate::permission_check::check(
+            catalogue,
+            closure.members.keys(),
+            intent,
+            declaration,
+            &uri,
+            &mut diagnostics,
+        );
         partition
     } else {
         diagnostics.push(unknown_profile(intent, profile, &uri));
@@ -213,7 +254,7 @@ pub fn resolve_at(
     };
 
     // Step 6 -- bindings, derived from placement rather than declared.
-    let bindings = intent.profiles.get(profile).map_or_else(Vec::new, |d| {
+    let mut bindings = intent.profiles.get(profile).map_or_else(Vec::new, |d| {
         let mut derived = bindings::derive(
             catalogue,
             &cuts,
@@ -226,6 +267,7 @@ pub fn resolve_at(
         bindings::pin_static_endpoints(&mut derived, &partition, d);
         bindings::report_env_limits(&derived, &uri, &mut diagnostics);
         bindings::report_wiring_key_skew(catalogue, &derived, &uri, &mut diagnostics);
+        structural::check_builtin_host_providers(&partition, &derived, &uri, &mut diagnostics);
         derived
     });
 
@@ -240,9 +282,40 @@ pub fn resolve_at(
         &mut diagnostics,
     );
     cluster::report_stateful_replicas(catalogue, &partition, &cluster, &uri, &mut diagnostics);
+    // A requester apart from `cluster` reaches it over gRPC (ADR-0026 section 4).
+    if let Some(declaration) = intent.profiles.get(profile) {
+        bindings.extend(cluster::remote_bindings(
+            catalogue,
+            &partition,
+            &cluster,
+            intent,
+            declaration,
+            &uri,
+            &mut diagnostics,
+        ));
+        bindings.sort_by(|a, b| {
+            (&a.consumer, &a.contract, &a.consumer_application).cmp(&(
+                &b.consumer,
+                &b.contract,
+                &b.consumer_application,
+            ))
+        });
+    }
+    // Last, once every binding and its endpoint are known.
+    for binding in &mut bindings {
+        binding.gates_readiness = binding.derive_gates_readiness();
+    }
 
+    let ui = ui::resolve(catalogue, intent, &closure, &uri, &mut diagnostics);
     diagnostics.finish();
     Resolution {
+        ui,
+        database,
+        sqlite_databases: intent
+            .profiles
+            .get(profile)
+            .map(|decl| decl.sqlite_databases().clone())
+            .unwrap_or_default(),
         profile: profile.clone(),
         closure,
         cuts,

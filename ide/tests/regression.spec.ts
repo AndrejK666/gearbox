@@ -321,9 +321,14 @@ test.describe("every view has an icon, and the icon exists", () => {
 
   test("every codicon named in the frontend is a real codicon", () => {
     const css = readFileSync(CODICON_CSS, "utf8");
-    const known = new Set(
-      [...css.matchAll(/^\.codicon-([a-z0-9-]+):/gm)].map((m) => m[1]),
-    );
+    // Glyphs (`.codicon-x:before`) and modifiers. A modifier such as
+    // `codicon-modifier-spin` has no glyph: it is defined in compound selectors
+    // (`.codicon-loading.codicon-modifier-spin`) and its own rule, so the glyph
+    // pattern alone never knew it and reported a real class as unknown.
+    const known = new Set([
+      ...[...css.matchAll(/^\.codicon-([a-z0-9-]+):/gm)].map((m) => m[1]),
+      ...[...css.matchAll(/\.codicon-(modifier-[a-z0-9-]+)/g)].map((m) => m[1]),
+    ]);
     // A sanity floor: if the stylesheet moved or its format changed, an empty
     // `known` set would make this test pass by knowing nothing.
     expect(known.size).toBeGreaterThan(400);
@@ -541,6 +546,9 @@ test.describe("a product is a session, not a panel", () => {
    * gets attributed to the test.
    */
   test("a product closed and opened again opens", async ({ freshStudio }) => {
+    // **Slow by nature, not by defect.** A fresh Studio plus two product loads:
+    // 40 s alone, and past the default budget in a loaded full run.
+    test.slow();
     const { page } = freshStudio;
     await settled(page);
 
@@ -907,6 +915,9 @@ test.describe("the diagnostics count is a signpost, not a hijack", () => {
   });
 
   test("rebuilding the panel comes back to Composition", async ({ freshStudio }) => {
+    // **Slow by nature, not by defect.** A fresh Studio plus two product loads:
+    // 40 s alone, and past the default budget in a loaded full run.
+    test.slow();
     // The subscription covers a product arriving at a panel that already
     // exists. This is the other order: the panel is built while the product is
     // already resolved, so no store event follows and nothing would set the

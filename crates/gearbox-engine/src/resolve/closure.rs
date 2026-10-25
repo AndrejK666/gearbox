@@ -76,9 +76,8 @@ pub fn expand(
                 .find(|s| &s.gear == gear)
                 .and_then(|s| s.declared_at.clone());
             let at = gearbox_ir::Location::or_file(declared_at.as_ref(), uri);
-            diagnostics.push(
-                at_design(catalogue, gear, &at).unwrap_or_else(|| unknown(gear, None, at)),
-            );
+            diagnostics
+                .push(at_design(catalogue, gear, &at).unwrap_or_else(|| unknown(gear, None, at)));
             continue;
         }
         closure
@@ -194,7 +193,11 @@ fn applies(
 /// GBX0301 says to look for a typo or a closed source root, and for a design
 /// gear neither is the answer. Shared with `validate`, which checks
 /// selections without resolving.
-pub(crate) fn at_design(catalogue: &Catalogue, gear: &GearId, at: &gearbox_ir::Location) -> Option<Diagnostic> {
+pub(crate) fn at_design(
+    catalogue: &Catalogue,
+    gear: &GearId,
+    at: &gearbox_ir::Location,
+) -> Option<Diagnostic> {
     let design = catalogue.designs.get(gear)?;
     Some(
         Diagnostic::error(
@@ -204,7 +207,7 @@ pub(crate) fn at_design(catalogue: &Catalogue, gear: &GearId, at: &gearbox_ir::L
                  build yet"
             ),
             format!(
-                "`{}` in source `{}` says `maturity = \"design\"`; leave the gear out of the \
+                "`{}` in source `{}` says `implementation = \"design\"`; leave the gear out of the \
                  product until it has code{}",
                 design.gdl_path,
                 design.source,

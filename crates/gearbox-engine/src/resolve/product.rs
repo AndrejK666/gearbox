@@ -36,15 +36,27 @@ pub fn assemble(
     resolution: &Resolution,
     sources: BTreeMap<SourceId, ResolvedSource>,
 ) -> ResolvedProduct {
+    // The configuration this profile runs, as the resolution saw it; what it
+    // reported about it is already in `resolution.diagnostics`.
+    let effective = super::profile::effective(
+        intent,
+        &resolution.profile,
+        "",
+        &mut gearbox_ir::Diagnostics::new(),
+    );
+    let intent: &ProductIntent = &effective;
     let declaration = intent.profiles.get(&resolution.profile);
 
     let mut product = ResolvedProduct {
+        sqlite_databases: resolution.sqlite_databases.clone(),
+        database: resolution.database.clone(),
         schema_version: LOCK_SCHEMA_VERSION,
         product: ResolvedProductHeader {
             id: intent.id.clone(),
             version: intent.version.clone(),
             profile: resolution.profile.clone(),
             profile_kind: declaration.map_or("unknown", |d| d.kind()).to_owned(),
+            development: declaration.is_some_and(gearbox_ir::DeploymentProfileDecl::development),
             layout: intent
                 .layout
                 .clone()
@@ -64,6 +76,8 @@ pub fn assemble(
         cuttable_if_declared: resolution.cuts.blocked.clone(),
         provenance: explain(catalogue, intent, resolution).edges,
         diagnostics: resolution.diagnostics.clone(),
+        ui: resolution.ui.clone(),
+        permissions: intent.permissions.clone(),
     };
 
     gearbox_lock::canonicalize_order(&mut product);
@@ -148,7 +162,7 @@ fn gears(
                     // and then dropped here -- the generated file carried
                     // `config: {}` and the plugin failed at startup on a field
                     // the description had supplied. Found by running the thing.
-                    config: declared_config(intent, id),
+                    config: declared_config(intent, id, &resolution.profile),
                     selected_features: declared_features(intent, id),
                 },
             ))
@@ -161,7 +175,16 @@ fn gears(
 /// A plugin is a gear the product selected *under* a host rather than on its own
 /// terms, so its configuration arrives on the `plugin(...)` call. Looking only at
 /// `selected_gears` misses it entirely.
-fn declared_config(intent: &ProductIntent, id: &GearId) -> BTreeMap<String, serde_json::Value> {
+///
+/// **The `plugin(...)` entry for this profile.** One plugin may be listed twice
+/// with different `profiles` and different configuration -- one issuer on a
+/// laptop, another in the cluster. The first entry used to win in every
+/// profile, so the cluster's plugin trusted the laptop's issuer.
+fn declared_config(
+    intent: &ProductIntent,
+    id: &GearId,
+    profile: &gearbox_ir::ProfileId,
+) -> BTreeMap<String, serde_json::Value> {
     if let Some(selection) = intent.selected_gears.iter().find(|s| &s.gear == id) {
         return selection.config.clone();
     }
@@ -169,7 +192,7 @@ fn declared_config(intent: &ProductIntent, id: &GearId) -> BTreeMap<String, serd
         .selected_gears
         .iter()
         .flat_map(|selection| &selection.plugins)
-        .find(|plugin| &plugin.gear == id)
+        .find(|plugin| &plugin.gear == id && ProductIntent::applies(&plugin.profiles, profile))
         .map(|plugin| plugin.config.clone())
         .unwrap_or_default()
 }

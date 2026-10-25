@@ -120,6 +120,22 @@ fn export_typescript_bindings() {
 
     let cfg = Config::new().with_out_dir(&out);
     export_roots(&cfg);
+    // ts-rs can leave spaces before a documentation newline in an inline type.
+    for file in generated_files(&out).into_iter().filter(|file| {
+        matches!(
+            file.file_name().and_then(|name| name.to_str()),
+            Some("ProductUi.ts" | "ResolvedUi.ts")
+        )
+    }) {
+        let text = std::fs::read_to_string(&file).expect("read binding");
+        let normalized = text
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        std::fs::write(file, normalized).expect("normalize binding whitespace");
+    }
 
     let files = generated_files(&out);
     assert!(

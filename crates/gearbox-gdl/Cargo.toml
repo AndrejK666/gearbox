@@ -16,6 +16,7 @@ serde_json.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
+minijinja.workspace = true
 
 # The Starlark host. Pinned exactly: this crate is pre-1.0 and 0.14 was a hard
 # break from 0.13 (private `Module::new`, `Heap<'v>` by value, a third Evaluator
@@ -24,3 +25,4 @@ anyhow.workspace = true
 starlark.workspace = true
 starlark_syntax.workspace = true
 allocative.workspace = true
+either.workspace = true

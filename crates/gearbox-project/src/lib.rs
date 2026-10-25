@@ -16,6 +16,7 @@
 //! testable against a fixture tree and keeps the merge rule in one place.
 
 pub mod attribute;
+pub mod client_uses;
 pub mod cluster;
 pub mod config;
 pub mod contract;
@@ -23,6 +24,7 @@ pub mod error_enum;
 pub mod gear;
 pub mod gts;
 pub mod manifest;
+pub mod permissions;
 pub mod plugin;
 pub mod profile;
 pub mod scan;
@@ -35,6 +37,7 @@ mod test_corpus;
 pub use attribute::{
     AttributeSite, LocateError, files_owned_by, gear_attribute_sites, locate_gear_attribute,
 };
+pub use client_uses::project_client_uses;
 pub use cluster::{
     ClusterProjectionError, FeatureGate, ProjectedClusterProvider, SdkDefaultRule,
     project_backend_capabilities, project_provider_name, project_provider_registry,
@@ -51,6 +54,7 @@ pub use error_enum::{ProjectedErrorEnum, ProjectedErrorVariant, project_error_en
 pub use gear::{ProjectedGear, ProjectedLifecycle, project_gear};
 pub use gts::{GtsError, GtsType, gts_type_from_schema, project_gts_types};
 pub use manifest::{CrateManifest, ManifestError, project_manifest};
+pub use permissions::{ProjectedPermissions, project_permissions};
 pub use plugin::{
     VendorDefault, implemented_traits, project_field_str_default, project_vendor_default,
     public_traits,

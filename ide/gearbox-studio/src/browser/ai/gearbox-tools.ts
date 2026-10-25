@@ -25,7 +25,7 @@
 
 import { inject, injectable } from "@theia/core/shared/inversify";
 import { createToolCallError } from "@theia/ai-core";
-import type { ToolCallResult, ToolProvider, ToolRequest } from "@theia/ai-core";
+import type { ToolCallResult, ToolProvider } from "@theia/ai-core";
 
 import { GearboxService } from "../../common/protocol";
 import type { ProductEdit } from "../../common/generated";
@@ -34,6 +34,8 @@ import { ProductEditService } from "../product-edit-service";
 import { ProductStore } from "../product-store";
 import { SelectionService } from "../shell/selection-service";
 import { effectiveConfigOf } from "../inspector/effective-config";
+import type { TitledToolRequest } from "../../common/tool-presentation";
+import { GenerateService } from "../generate/generate-service";
 import { explainDiagnostic } from "./generated/diagnostic-catalogue";
 import {
   LIST_CAP,
@@ -75,7 +77,7 @@ abstract class GearboxTool implements ToolProvider {
   @inject(ProductEditService) protected readonly edits!: ProductEditService;
   @inject(GearboxService) protected readonly service!: GearboxService;
 
-  abstract getTool(): ToolRequest;
+  abstract getTool(): TitledToolRequest;
 
   /** The open product's path, or the sentence explaining why there is none. */
   protected openPath(): string | { error: string } {
@@ -99,10 +101,11 @@ abstract class GearboxTool implements ToolProvider {
 export class GetSelectionTool extends GearboxTool {
   static ID = "gearbox_get_selection";
 
-  getTool(): ToolRequest {
+  getTool(): TitledToolRequest {
     return {
       id: GetSelectionTool.ID,
       name: GetSelectionTool.ID,
+      title: "Read selection",
       description:
         "What the operator has selected in Studio right now: a gear, an application, a " +
         "binding, or a catalogue row that has not been projected yet. Returns `kind: " +
@@ -118,10 +121,11 @@ export class GetSelectionTool extends GearboxTool {
 export class GetProductTool extends GearboxTool {
   static ID = "gearbox_get_product";
 
-  getTool(): ToolRequest {
+  getTool(): TitledToolRequest {
     return {
       id: GetProductTool.ID,
       name: GetProductTool.ID,
+      title: "Read product configuration",
       description:
         "The open product: its id, the profile being shown, the profile family, the " +
         "generated-crate layout directory, and the resolution's lock hash. `resolved: " +
@@ -136,10 +140,11 @@ export class GetProductTool extends GearboxTool {
 export class ListGearsTool extends GearboxTool {
   static ID = "gearbox_list_gears";
 
-  getTool(): ToolRequest {
+  getTool(): TitledToolRequest {
     return {
       id: ListGearsTool.ID,
       name: ListGearsTool.ID,
+      title: "Search gear catalogue",
       description:
         "Gears in the catalogue, as ids and names only. `selectedDirectly` means named as a " +
         "top-level gear, which a plugin never is -- use `gearbox_get_gear` for real " +
@@ -184,10 +189,11 @@ export class ListGearsTool extends GearboxTool {
 export class GetGearTool extends GearboxTool {
   static ID = "gearbox_get_gear";
 
-  getTool(): ToolRequest {
+  getTool(): TitledToolRequest {
     return {
       id: GetGearTool.ID,
       name: GetGearTool.ID,
+      title: "Inspect gear",
       description:
         "One gear in full: what it declares, the Cargo features it offers, the features " +
         "this product selected, and its effective configuration with each value's " +
@@ -284,10 +290,11 @@ export class GetGearTool extends GearboxTool {
 export class GetDiagnosticsTool extends GearboxTool {
   static ID = "gearbox_get_diagnostics";
 
-  getTool(): ToolRequest {
+  getTool(): TitledToolRequest {
     return {
       id: GetDiagnosticsTool.ID,
       name: GetDiagnosticsTool.ID,
+      title: "Read diagnostics",
       description:
         "Every diagnostic the last resolution and the catalogue load reported, worst " +
         "severity first. Each carries its code, message, the node it is about, and its " +
@@ -319,10 +326,11 @@ export class GetDiagnosticsTool extends GearboxTool {
 export class ExplainDiagnosticTool extends GearboxTool {
   static ID = "gearbox_explain_diagnostic";
 
-  getTool(): ToolRequest {
+  getTool(): TitledToolRequest {
     return {
       id: ExplainDiagnosticTool.ID,
       name: ExplainDiagnosticTool.ID,
+      title: "Explain diagnostic",
       description:
         "What a diagnostic code means in general, from the engine's own catalogue: its " +
         "title, default severity, domain, and the prose that defines it. Always use this " +
@@ -361,10 +369,11 @@ export class ExplainDiagnosticTool extends GearboxTool {
 export class ResolvePreviewTool extends GearboxTool {
   static ID = "gearbox_resolve_preview";
 
-  getTool(): ToolRequest {
+  getTool(): TitledToolRequest {
     return {
       id: ResolvePreviewTool.ID,
       name: ResolvePreviewTool.ID,
+      title: "Preview product resolution",
       description:
         "What the product would become. Applies the proposed addition and edits to the " +
         "description in memory and resolves that; nothing is written and the lock is not " +
@@ -443,14 +452,17 @@ export class ResolvePreviewTool extends GearboxTool {
 @injectable()
 export class GeneratePreviewTool extends GearboxTool {
   static ID = "gearbox_generate_preview";
+  @inject(GenerateService) protected readonly generate!: GenerateService;
 
-  getTool(): ToolRequest {
+  getTool(): TitledToolRequest {
     return {
       id: GeneratePreviewTool.ID,
       name: GeneratePreviewTool.ID,
+      title: "Preview generated files",
       description:
         "What generation would write: one line per file, with the action (`create`, " +
         "`update`, `unchanged`, `conflict`, `kept`), who owns it, and what kind it is. " +
+        "Uses the Generate panel's configured output folder for this product/profile. " +
         "Nothing is written. File contents are not included; the operator reads those in " +
         "the Generate panel's diff editor.",
       parameters: {
@@ -471,9 +483,7 @@ export class GeneratePreviewTool extends GearboxTool {
           typeof args.profile === "string" && args.profile.trim() !== ""
             ? args.profile
             : this.products.current.profile;
-        // No `out`: the engine's default is the tree the CLI writes, and Studio
-        // sending its own would put the plan somewhere the panel does not look.
-        const plan = await this.service.planGenerate(path, profile);
+        const plan = await this.generate.planFor(path, profile);
         return json({
           written: false,
           out_root: plan.out_root,

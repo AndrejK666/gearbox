@@ -41,43 +41,89 @@ pub fn derive(
         };
         let request = requested(scoped, &edge.consumer, &edge.contract);
 
-        // Placement decides the mode. Both being in one process is not a
-        // preference the resolver expressed; it is where they ended up.
-        let together = partition.share_an_application(&edge.consumer, &edge.provider);
-        let Some(consumer_application) = application_of(partition, &edge.consumer) else {
+        // One binding per process the consumer is in. A gear linked into
+        // several binaries calls from each of them, and each needs its own
+        // answer -- local where the provider is beside it, wired where it is
+        // not. Recording only the first would leave the other copies with no
+        // wiring at all.
+        let Some(provider_home) = application_of(partition, &edge.provider) else {
             continue;
         };
-        let Some(provider_application) = application_of(partition, &edge.provider) else {
-            continue;
-        };
+        for consumer_app in partition
+            .applications
+            .iter()
+            .filter(|a| a.contains(&edge.consumer))
+        {
+            // Placement decides the mode. Both being in one process is not a
+            // preference the resolver expressed; it is where they ended up.
+            let together = consumer_app.contains(&edge.provider);
+            let consumer_application = consumer_app.name.clone();
+            let provider_application = if together {
+                consumer_application.clone()
+            } else {
+                provider_home.clone()
+            };
 
-        let binding = if together {
-            local(
-                edge,
-                contract,
-                consumer_application,
-                request,
-                uri,
-                diagnostics,
-            )
-        } else {
-            remote(
-                edge,
-                contract,
-                consumer_application,
-                provider_application,
-                request,
-                declaration,
-                uri,
-                diagnostics,
-            )
-        };
-        bindings.push(binding);
+            let binding = if together {
+                let forced_by = request
+                    .is_some_and(|r| r.mode == BindingMode::Remote)
+                    .then(|| {
+                        why_together(
+                            catalogue,
+                            scoped,
+                            &edge.consumer,
+                            &edge.provider,
+                            &consumer_application,
+                        )
+                    });
+                local(
+                    edge,
+                    contract,
+                    consumer_application,
+                    request,
+                    forced_by
+                        .as_deref()
+                        .filter(|_| !matches!(declaration, DeploymentProfileDecl::Embedded { .. })),
+                    uri,
+                    diagnostics,
+                )
+            } else {
+                if request.is_some_and(|r| r.mode == BindingMode::Local) {
+                    report_local_contradicted(
+                        edge,
+                        scoped,
+                        &provider_application,
+                        uri,
+                        diagnostics,
+                    );
+                }
+                remote(
+                    edge,
+                    contract,
+                    consumer_application,
+                    provider_application,
+                    request,
+                    declaration,
+                    uri,
+                    diagnostics,
+                )
+            };
+            bindings.push(binding);
+        }
     }
 
+    if !matches!(declaration, DeploymentProfileDecl::Embedded { .. }) {
+        report_remote_forced_by_deps(catalogue, cuts, scoped, uri, diagnostics);
+    }
     report_unhonoured_endpoints(scoped, uri, diagnostics);
 
-    bindings.sort_by(|a, b| (&a.consumer, &a.contract).cmp(&(&b.consumer, &b.contract)));
+    bindings.sort_by(|a, b| {
+        (&a.consumer, &a.contract, &a.consumer_application).cmp(&(
+            &b.consumer,
+            &b.contract,
+            &b.consumer_application,
+        ))
+    });
     bindings
 }
 
@@ -141,7 +187,145 @@ fn requested(
         .map(|b| BindingRequest {
             mode: b.mode,
             transport: b.transport,
+            critical: b.critical,
         })
+}
+
+/// What puts `provider` in `consumer`'s application: an `include`, a `deps`
+/// chain, or (failing both) the default host gathering both.
+fn why_together(
+    catalogue: &Catalogue,
+    scoped: &ProfileScoped<'_>,
+    consumer: &GearId,
+    provider: &GearId,
+    application: &ApplicationId,
+) -> String {
+    if let Some(pin) = scoped
+        .application_pins
+        .iter()
+        .find(|p| p.name == *application && p.include.contains(provider))
+    {
+        return format!("`application(\"{}\")` includes `{provider}`", pin.name);
+    }
+    if let Some(chain) = deps_chain(catalogue, consumer, provider) {
+        return format!("the `deps` chain {}", chain.join(" -> "));
+    }
+    format!("both are placed in application `{application}`")
+}
+
+/// The shortest `deps` path from `from` to `to`, by gear id.
+fn deps_chain(catalogue: &Catalogue, from: &GearId, to: &GearId) -> Option<Vec<String>> {
+    let mut previous: std::collections::BTreeMap<&GearId, &GearId> =
+        std::collections::BTreeMap::new();
+    let mut queue = std::collections::VecDeque::from([from]);
+    let mut seen = std::collections::BTreeSet::from([from]);
+    while let Some(gear) = queue.pop_front() {
+        if gear == to {
+            let mut chain = vec![to.to_string()];
+            let mut at = to;
+            while let Some(prev) = previous.get(at) {
+                chain.push(prev.to_string());
+                at = prev;
+            }
+            chain.reverse();
+            return Some(chain);
+        }
+        for dep in catalogue
+            .gears
+            .get(gear)
+            .into_iter()
+            .flat_map(|g| &g.colocated_deps)
+        {
+            if seen.insert(dep) {
+                previous.insert(dep, gear);
+                queue.push_back(dep);
+            }
+        }
+    }
+    None
+}
+
+/// `bind(mode = remote)` on an edge a `deps` chain makes unseverable: the
+/// provider is linked into the consumer's binary whatever the placement says, so
+/// no binding is even derived (GBX0413; GBX0407 still describes the edge).
+fn report_remote_forced_by_deps(
+    catalogue: &Catalogue,
+    cuts: &Cuts,
+    scoped: &ProfileScoped<'_>,
+    uri: &str,
+    diagnostics: &mut Diagnostics,
+) {
+    for request in scoped
+        .bindings
+        .iter()
+        .filter(|b| b.mode == BindingMode::Remote)
+    {
+        let Some(blocked) = cuts.blocked.iter().find(|c| {
+            c.consumer == request.consumer
+                && c.contract.as_ref() == Some(&request.contract)
+                && c.blocked_by == gearbox_ir::CutBlocker::ColocationClosure
+        }) else {
+            continue;
+        };
+        let chain = deps_chain(catalogue, &blocked.consumer, &blocked.provider).map_or_else(
+            || format!("`{}` co-locates `{}`", blocked.consumer, blocked.provider),
+            |chain| format!("the `deps` chain {}", chain.join(" -> ")),
+        );
+        diagnostics.push(
+            Diagnostic::error(
+                DiagnosticCode::BindingModeContradicted,
+                format!(
+                    "`{}` asks for `{}` remotely, but {chain} links `{}` into its binary",
+                    request.consumer, request.contract, blocked.provider
+                ),
+                "the client hub finds the in-process instance before any remote client runs; \
+                 make the edge severable at its source (`#[toolkit::consumes]` plus \
+                 `consume(...)` instead of `deps`), or drop `mode = binding_mode.remote`",
+            )
+            .at(Location::or_file(request.declared_at.as_ref(), uri)),
+        );
+    }
+}
+
+/// `bind(mode = local)` that placement could not honour: an `application(...)`
+/// pins the provider elsewhere (GBX0413).
+fn report_local_contradicted(
+    edge: &super::cuts::CuttableEdge,
+    scoped: &ProfileScoped<'_>,
+    provider_application: &ApplicationId,
+    uri: &str,
+    diagnostics: &mut Diagnostics,
+) {
+    let because = scoped
+        .application_pins
+        .iter()
+        .find(|p| p.anchor == edge.provider)
+        .map_or_else(
+            || {
+                format!(
+                    "`{}` is isolated in application `{provider_application}`",
+                    edge.provider
+                )
+            },
+            |pin| {
+                format!(
+                    "`application(\"{}\", anchor = \"{}\")` pins it there",
+                    pin.name, pin.anchor
+                )
+            },
+        );
+    diagnostics.push(
+        Diagnostic::error(
+            DiagnosticCode::BindingModeContradicted,
+            format!(
+                "`{}` asks for `{}` locally, but `{}` is in application `{provider_application}`: {because}",
+                edge.consumer, edge.contract, edge.provider
+            ),
+            "drop the pin (or the isolate) to let the provider join its consumer, or drop \
+             `mode = binding_mode.local`",
+        )
+        .at(Location::file(uri.to_owned())),
+    );
 }
 
 /// Consumer and provider share a binary.
@@ -150,13 +334,33 @@ fn local(
     contract: &ContractDescriptor,
     application: ApplicationId,
     request: Option<BindingRequest>,
+    forced_by: Option<&str>,
     uri: &str,
     diagnostics: &mut Diagnostics,
 ) -> ResolvedBinding {
+    // `mode = remote` against a placement that puts them together: a
+    // contradiction outside an embedded profile (GBX0413), an inapplicable
+    // request inside one (GBX0407, below).
+    if let Some(because) = forced_by {
+        diagnostics.push(
+            Diagnostic::error(
+                DiagnosticCode::BindingModeContradicted,
+                format!(
+                    "`{}` asks for `{}` remotely, but `{}` is in its own application `{application}`: {because}",
+                    edge.consumer, edge.contract, edge.provider
+                ),
+                "the client hub finds the in-process instance before any remote client runs; \
+                 make the edge severable at its source (`#[toolkit::consumes]` plus \
+                 `consume(...)` instead of `deps`), drop the `include`, or drop \
+                 `mode = binding_mode.remote`",
+            )
+            .at(Location::file(uri.to_owned())),
+        );
+    }
     // A request to separate them that placement did not honour. Recorded on the
     // binding *and* reported, because the lock alone would show a local binding
     // with no hint that anyone wanted otherwise.
-    let downgraded = request.is_some_and(|r| r.mode == BindingMode::Remote);
+    let downgraded = request.is_some_and(|r| r.mode == BindingMode::Remote) && forced_by.is_none();
     if downgraded {
         diagnostics.push(
             Diagnostic::new(
@@ -188,10 +392,18 @@ fn local(
         // would record a value the runtime never reads.
         endpoint_source: None,
         endpoint: None,
-        critical: edge.critical,
+        // The product's `bind(critical = ...)` wins over the gear's default.
+        critical: request.and_then(|r| r.critical).unwrap_or(edge.critical),
+        // Decided once every binding is known; see `resolve::resolve_at`.
+        gates_readiness: false,
+        client_sdk: None,
         selected: selection(
             request,
-            downgraded.then_some(DiagnosticCode::BindingForcedLocal),
+            if forced_by.is_some() {
+                Some(DiagnosticCode::BindingModeContradicted)
+            } else {
+                downgraded.then_some(DiagnosticCode::BindingForcedLocal)
+            },
         ),
     }
 }
@@ -216,7 +428,10 @@ fn remote(
     // consumption macro emits a REST resolving client and there is no other path.
     // Cross-process gRPC exists in the runtime, but only through hand-written
     // wiring the generator does not produce.
-    let mut downgrade = None;
+    // `mode = local` that placement could not honour; reported by the caller.
+    let mut downgrade = request
+        .is_some_and(|r| r.mode == BindingMode::Local)
+        .then_some(DiagnosticCode::BindingModeContradicted);
     if request.and_then(|r| r.transport) == Some(Transport::Grpc) {
         downgrade = Some(DiagnosticCode::BindingGrpcUnsupported);
         diagnostics.push(
@@ -260,7 +475,11 @@ fn remote(
         mechanism,
         endpoint_source: Some(endpoint_source),
         endpoint: None,
-        critical: edge.critical,
+        // The product's `bind(critical = ...)` wins over the gear's default.
+        critical: request.and_then(|r| r.critical).unwrap_or(edge.critical),
+        // Decided once every binding is known; see `resolve::resolve_at`.
+        gates_readiness: false,
+        client_sdk: None,
         selected: selection(request, downgrade),
     }
 }

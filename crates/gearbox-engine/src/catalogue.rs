@@ -136,9 +136,9 @@ pub fn load_catalogue(roots: &[SourceRoot]) -> CatalogueScan {
 /// time. See ADR `cpt-gearbox-adr-staged-catalogue-loading` for the measured
 /// costs; the second pass is roughly ten times the first on a real tree.
 ///
-/// Synchronous, with a callback. Threads belong to whoever wants them -- the RPC
-/// server currently runs it on its request thread and forwards each event as a
-/// notification -- and the engine keeps no dependency on parallelism.
+/// Synchronous, with callbacks on the calling thread. Source text is read in
+/// bounded parallel batches inside the scanner; AST projection and event delivery
+/// remain ordered. The engine adds no parallelism dependency.
 #[must_use]
 pub fn load_catalogue_staged(
     roots: &[SourceRoot],
@@ -151,6 +151,10 @@ pub fn load_catalogue_staged(
     // evidence a declared `implements` is checked against, not part of the descriptor.
     let mut implemented: BTreeMap<gearbox_ir::GearId, std::collections::BTreeSet<String>> =
         BTreeMap::new();
+    // What each gear's code resolves from the ClientHub, kept aside the same
+    // way for GBX0215.
+    let mut client_uses: BTreeMap<gearbox_ir::GearId, std::collections::BTreeSet<String>> =
+        BTreeMap::new();
     let mut diagnostics = Diagnostics::new();
     // One cache per load: a crate named by several gears is parsed once.
     let mut scans = crate::scans::CrateScans::new();
@@ -162,22 +166,7 @@ pub fn load_catalogue_staged(
     }
 
     // ---- S0: discover -------------------------------------------------------
-    let mut discovered: Vec<(&SourceRoot, PathBuf)> = Vec::new();
-    for root in roots {
-        let (found, failures) = discover(&root.root);
-        discovered.extend(found.into_iter().map(|p| (root, p)));
-        for failure in failures {
-            diagnostics.push(
-                Diagnostic::error(
-                    DiagnosticCode::GdlEval,
-                    format!("cannot search `{}` for descriptions: {failure}", root.id),
-                    "a directory the application cannot read is indistinguishable from one with no \
-                     gears in it; check its permissions",
-                )
-                .at(Location::file(gearbox_ir::file_uri(&root.root))),
-            );
-        }
-    }
+    let discovered = discover_all(roots, &mut diagnostics);
 
     // The digest of each source, now that discovery knows what is under it.
     //
@@ -226,44 +215,25 @@ pub fn load_catalogue_staged(
             continue;
         };
 
-        let source = match std::fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(e) => {
-                diagnostics.push(
-                    Diagnostic::error(
-                        DiagnosticCode::GdlEval,
-                        format!("cannot read `{}`: {e}", path.display()),
-                        "check the file's permissions",
-                    )
-                    .at(Location::file(identity.uri.clone())),
-                );
-                continue;
-            }
+        let Some(source) = read_description(path, &identity, &mut diagnostics) else {
+            continue;
         };
 
         let outcome = gdl.eval_gear(&identity, &source);
         diagnostics.extend(outcome.diagnostics);
         let Some(decl) = outcome.value else { continue };
 
-        if decl.maturity == Some(gearbox_gdl::Maturity::Design) {
-            let Some(design) = design_gear(root, &identity, &decl, &mut scans, &mut diagnostics)
-            else {
-                continue;
-            };
-            let id = design.id.clone();
-            // The same rule as for gears below: the first declaration wins.
-            if let Some(previous) = catalogue.designs.get(&id) {
-                diagnostics.push(declared_twice(
-                    &id,
-                    (&previous.gdl_path, &previous.source),
-                    &identity,
-                ));
-                continue;
-            }
-            catalogue.designs.insert(id.clone(), design);
-            if let Some(stored) = catalogue.designs.get(&id)
-                && on_event(LoadEvent::Design(stored)) == Continue::Stop
-            {
+        if decl.is_design() {
+            let admitted = admit_design(
+                root,
+                &identity,
+                &decl,
+                &mut catalogue,
+                &mut scans,
+                &mut diagnostics,
+                on_event,
+            );
+            if admitted == Continue::Stop {
                 stopped = true;
                 break;
             }
@@ -323,6 +293,9 @@ pub fn load_catalogue_staged(
             implemented
                 .entry(id.clone())
                 .or_insert_with(|| merged.implemented_traits.clone());
+            client_uses
+                .entry(id.clone())
+                .or_insert_with(|| merged.client_uses.clone());
             // **The first declaration wins, and the second is an error.**
             //
             // This used to `insert` unconditionally, so the diagnostic below said
@@ -392,6 +365,13 @@ pub fn load_catalogue_staged(
     // so an owner described later than the description that pulls its contract
     // in would look absent.
     report_unknown_contract_owners(&catalogue, roots, &mut diagnostics);
+    // Same reason: the contract a call names may belong to a gear described later.
+    crate::client_use_check::check(
+        &catalogue,
+        &client_uses,
+        |gear| description_uri(roots, gear),
+        &mut diagnostics,
+    );
     // Same reason: a plugin's host may be described later in discovery order.
     // A stopped load has not reached every host, so an unjoined fill is only
     // reported when it had the chance to join.
@@ -443,6 +423,128 @@ fn declared_twice(
     .at(Location::file(identity.uri.clone()))
 }
 
+/// Every description under every root, each with the root it was found in.
+fn discover_all<'r>(
+    roots: &'r [SourceRoot],
+    diagnostics: &mut Diagnostics,
+) -> Vec<(&'r SourceRoot, PathBuf)> {
+    let mut discovered = Vec::new();
+    for root in roots {
+        let (found, failures) = discover(&root.root);
+        discovered.extend(found.into_iter().map(|p| (root, p)));
+        for failure in failures {
+            diagnostics.push(
+                Diagnostic::error(
+                    DiagnosticCode::GdlEval,
+                    format!("cannot search `{}` for descriptions: {failure}", root.id),
+                    "a directory the application cannot read is indistinguishable from one with no \
+                     gears in it; check its permissions",
+                )
+                .at(Location::file(gearbox_ir::file_uri(&root.root))),
+            );
+        }
+    }
+    discovered
+}
+
+/// The text of one description, or `None` with the reason reported.
+fn read_description(
+    path: &std::path::Path,
+    identity: &FileIdentity,
+    diagnostics: &mut Diagnostics,
+) -> Option<String> {
+    match std::fs::read_to_string(path) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            diagnostics.push(
+                Diagnostic::error(
+                    DiagnosticCode::GdlEval,
+                    format!("cannot read `{}`: {e}", path.display()),
+                    "check the file's permissions",
+                )
+                .at(Location::file(identity.uri.clone())),
+            );
+            None
+        }
+    }
+}
+
+/// Put one design gear in the catalogue and tell the caller whether to go on.
+///
+/// The same rule as for gears with code: the first declaration wins, and a
+/// second is reported rather than stored.
+fn admit_design(
+    root: &SourceRoot,
+    identity: &FileIdentity,
+    decl: &gearbox_gdl::GearDecl,
+    catalogue: &mut Catalogue,
+    scans: &mut crate::scans::CrateScans,
+    diagnostics: &mut Diagnostics,
+    on_event: &mut dyn FnMut(LoadEvent<'_>) -> Continue,
+) -> Continue {
+    let Some(design) = design_gear(root, identity, decl, scans, diagnostics) else {
+        return Continue::Yes;
+    };
+    let id = design.id.clone();
+    if let Some(previous) = catalogue.designs.get(&id) {
+        diagnostics.push(declared_twice(
+            &id,
+            (&previous.gdl_path, &previous.source),
+            identity,
+        ));
+        return Continue::Yes;
+    }
+    catalogue.designs.insert(id.clone(), design);
+    catalogue
+        .designs
+        .get(&id)
+        .map_or(Continue::Yes, |stored| on_event(LoadEvent::Design(stored)))
+}
+
+/// What a description locates beside its gear, rather than in its crate.
+struct Beside {
+    origin: Option<gearbox_ir::GitOrigin>,
+    docs: Option<gearbox_ir::GearDocs>,
+    tests: Vec<gearbox_ir::Located>,
+}
+
+/// The gear's git source, documents and tests.
+///
+/// Pure filesystem lookup, no parsing, so it costs a few stats. The source
+/// comes first because the other two fall back to it for what is not on disk.
+fn beside(
+    root: &SourceRoot,
+    identity: &FileIdentity,
+    decl: &gearbox_gdl::GearDecl,
+    diagnostics: &mut Diagnostics,
+) -> Beside {
+    // `.` cannot fail to resolve, so the description's own directory is the one
+    // path here with no error to report.
+    let gdl_dir = root.root.join(identity.gdl_path.parent().as_str());
+    let origin = crate::origin::project(&root.root, identity, decl, diagnostics);
+    let docs = crate::docs::project(
+        &root.root,
+        &gdl_dir,
+        identity,
+        decl,
+        origin.as_ref(),
+        diagnostics,
+    );
+    let tests = crate::docs::tests(
+        &root.root,
+        &gdl_dir,
+        identity,
+        decl,
+        origin.as_ref(),
+        diagnostics,
+    );
+    Beside {
+        origin,
+        docs,
+        tests,
+    }
+}
+
 /// A design gear, built from its declaration alone.
 ///
 /// No crate is looked for and nothing is projected. The SDK, when declared,
@@ -461,13 +563,8 @@ fn design_gear(
     crate::manifest_check::check(root, identity, decl, scans, diagnostics);
     let uri = identity.uri.as_str();
     let gdl_dir = identity.gdl_path.parent();
-    let docs = crate::docs::project(
-        &root.root,
-        &root.root.join(gdl_dir.as_str()),
-        identity,
-        decl,
-        diagnostics,
-    );
+    // A design gear refuses `tests`, so that list is empty.
+    let Beside { origin, docs, .. } = beside(root, identity, decl, diagnostics);
     Some(DesignGear {
         display_name: decl.name.clone().unwrap_or_else(|| id.to_string()),
         id,
@@ -475,10 +572,9 @@ fn design_gear(
         category: decl.category.clone(),
         source: root.id.clone(),
         gdl_path: identity.gdl_path.clone(),
-        sdk: decl
-            .sdk
-            .as_ref()
-            .map(|r| crate::merge::cargo_ref(r, &gdl_dir, "sdk", uri, diagnostics)),
+        sdks: crate::merge::sdk_refs(decl, &gdl_dir, uri, diagnostics),
+        origin,
+        scenarios: crate::merge::scenarios(decl),
         docs,
         declared_at: decl.declared_at.clone(),
     })
@@ -700,12 +796,13 @@ fn project_and_merge(
     );
     let config = crate::config::project(identity, decl, own_files, diagnostics);
 
-    // Documents: pure filesystem lookup, no parsing, so it costs a few stats.
-    // `.` cannot fail to resolve, so the description's own directory is the one
-    // path here with no error to report.
-    let gdl_dir = root.root.join(identity.gdl_path.parent().as_str());
-    let docs = crate::docs::project(&root.root, &gdl_dir, identity, decl, diagnostics);
+    let Beside {
+        origin,
+        docs,
+        tests,
+    } = beside(root, identity, decl, diagnostics);
 
+    let client_uses = gearbox_project::project_client_uses(&files);
     crate::merge::merge(
         identity,
         decl,
@@ -716,6 +813,8 @@ fn project_and_merge(
             plugin: &plugin,
             config,
             docs,
+            origin,
+            tests,
             gts_types,
             // The manifest is already in the scan cache: `manifest_check` read
             // the same directory a few lines above, so this costs a map lookup.
@@ -729,9 +828,16 @@ fn project_and_merge(
                 &available_features,
                 diagnostics,
             ),
+            // Its own files, as config and plugins read them: a crate that
+            // declares several gears gives each the permissions it names.
+            permissions: gearbox_project::project_permissions(own_files, &sdk_files),
         },
         diagnostics,
     )
+    .map(|mut merged| {
+        merged.client_uses = client_uses;
+        merged
+    })
 }
 
 /// Report every contract whose owner names nothing the catalogue holds.

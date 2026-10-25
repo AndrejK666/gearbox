@@ -30,9 +30,14 @@ use super::{GenerateError, GenerateInput, header, paths};
 /// config, and no other gear reads it.
 const CLUSTER_GEAR: &str = "cluster";
 
+/// The REST host gear whose public listener [`write_public_listener`] sets.
+const REST_HOST_GEAR: &str = "api-gateway";
+
 #[derive(Serialize)]
 struct AppConfig {
     server: ServerSection,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    database: Option<DatabaseSection>,
     /// How a worker serves its own REST surface. Absent for a host.
     ///
     /// Its **absence is a decision the runtime acts on**: without this section
@@ -42,7 +47,36 @@ struct AppConfig {
     /// happen, so this is written whenever the process is a worker.
     #[serde(skip_serializing_if = "Option::is_none")]
     oop_http: Option<OopHttpSection>,
+    /// The runtime's built-in HTTP host, for a host process whose REST gears
+    /// have no REST host gear. Without it the runtime refuses to start
+    /// (`RestRequiresHost`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    http_host: Option<HttpHostSection>,
+    /// A host's outbound platform credential: what its directory-resolving
+    /// clients attach when a consumed contract is served by another process (an
+    /// `AuthZ` plane in its own unit). A worker carries it in `oop_http` instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    internal_auth: Option<Value>,
+    /// The product's permission mapping: every process enforces the
+    /// permissions its operations declare against it (gears-rust
+    /// `cpt-cf-adr-operation-permissions` §2).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    permissions: BTreeMap<String, Vec<String>>,
     gears: BTreeMap<String, GearSection>,
+}
+
+/// The built-in host's listener: a public one, serving only exposed
+/// operations. That is also the runtime's default; it is written so the file
+/// says what the process serves.
+#[derive(Serialize)]
+struct HttpHostSection {
+    listen_addr: String,
+    public: PublicSection,
+}
+
+#[derive(Serialize)]
+struct PublicSection {
+    exposed_only: bool,
 }
 
 #[derive(Serialize)]
@@ -52,6 +86,11 @@ struct OopHttpSection {
     /// The runtime defaults this to `false` and refuses to start when the
     /// advertised host is loopback without it.
     allow_loopback_advertise: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    internal_auth: Option<Value>,
+    /// The further gears this worker keeps a directory record for.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    directory_gears: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -61,6 +100,8 @@ struct ServerSection {
 
 #[derive(Serialize)]
 struct GearSection {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    database: Option<GearDatabaseSection>,
     /// Present only for a gear the host spawns out of process.
     #[serde(skip_serializing_if = "Option::is_none")]
     runtime: Option<RuntimeSection>,
@@ -89,6 +130,96 @@ struct ExecutionSection {
     working_directory: Option<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     environment: BTreeMap<String, String>,
+}
+
+#[derive(Serialize)]
+struct DatabaseSection {
+    servers: BTreeMap<&'static str, PostgresServerSection>,
+}
+#[derive(Serialize)]
+struct PostgresServerSection {
+    engine: &'static str,
+    host: String,
+    port: u16,
+    user: String,
+    password: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    params: BTreeMap<String, String>,
+}
+#[derive(Serialize)]
+#[serde(untagged)]
+enum GearDatabaseSection {
+    Postgres {
+        server: &'static str,
+        dbname: String,
+    },
+    Sqlite {
+        engine: &'static str,
+        file: String,
+    },
+}
+
+fn write_database(
+    input: &GenerateInput<'_>,
+    application: &ResolvedApplication,
+    gears: &mut BTreeMap<String, GearSection>,
+) -> Result<Option<DatabaseSection>, GenerateError> {
+    let mut used = false;
+    for id in &application.gears {
+        if !input
+            .lock
+            .gears
+            .get(id)
+            .is_some_and(|gear| gear.runtime_caps.contains(&gearbox_ir::RuntimeCap::Db))
+        {
+            continue;
+        }
+        if let Some(sqlite) = input.lock.sqlite_databases.get(id) {
+            sqlite.validate().map_err(GenerateError::Database)?;
+            if let Some(gear) = gears.get_mut(id.as_str()) {
+                gear.database = Some(GearDatabaseSection::Sqlite {
+                    engine: "sqlite",
+                    file: sqlite.file.clone(),
+                });
+            }
+            continue;
+        }
+        let db = input.lock.database.as_ref().ok_or_else(|| {
+            GenerateError::Database(format!(
+                "gear `{id}` needs a database; re-resolve with database = postgres(...)"
+            ))
+        })?;
+        db.validate().map_err(GenerateError::Database)?;
+        let name = db.database_names.get(id).ok_or_else(|| {
+            GenerateError::Database(format!(
+                "lock has no database name for gear `{id}`; re-resolve the product"
+            ))
+        })?;
+        if let Some(gear) = gears.get_mut(id.as_str()) {
+            gear.database = Some(GearDatabaseSection::Postgres {
+                server: "pg",
+                dbname: name.clone(),
+            });
+        }
+        used = true;
+    }
+    Ok(if used {
+        input.lock.database.as_ref().map(|db| DatabaseSection {
+            servers: BTreeMap::from([(
+                "pg",
+                PostgresServerSection {
+                    engine: "postgres",
+                    host: db.host.clone(),
+                    port: db.port,
+                    user: db.user.clone(),
+                    password: db.password.clone(),
+                    params: db.params.clone(),
+                },
+            )]),
+        })
+    } else {
+        None
+    })
 }
 
 /// The runtime configuration for one process.
@@ -125,6 +256,7 @@ pub fn app_config(
             (
                 id.to_string(),
                 GearSection {
+                    database: None,
                     runtime: None,
                     config,
                 },
@@ -132,10 +264,80 @@ pub fn app_config(
         })
         .collect();
 
+    let database = write_database(input, application, &mut gears)?;
     write_endpoints(application, &mut gears)?;
     write_consumer_wiring(input, application, &mut gears);
+    write_cluster_sdk_wiring(input, application, &mut gears);
     write_cluster(input, &mut gears);
     write_spawns(input, application, &mut gears);
+    write_public_listener(input, application, &mut gears);
+    write_gateway_proxy(input, &mut gears);
+
+    // A production hub on a socket refuses a directory other local users can
+    // reach, rather than warning about it (gears-rust ADR-0011 section 3).
+    if !input.lock.product.development
+        && let Some(hub) = gears.get_mut("grpc-hub")
+        && hub
+            .config
+            .get("listen_addr")
+            .and_then(Value::as_str)
+            .is_some_and(|addr| addr.starts_with("uds://"))
+    {
+        hub.config
+            .entry("strict_socket_dir")
+            .or_insert(Value::Bool(true));
+    }
+
+    // One platform-plane provider for the embedded host and its workers. The
+    // product supplies secret values through AppConfig's APP__ environment
+    // overrides; no credential value is needed during generation.
+    // The directory admits registrars from the release's namespace only: an
+    // empty allowlist would accept a same-named ServiceAccount from anywhere.
+    //
+    // **On development profiles too.** This was production-only, and Family
+    // Labs -- `development = True` on a real cluster with `platform_auth =
+    // "kube"` -- got an empty list: any namespace's `settings-service`
+    // ServiceAccount could register that gear's endpoint and receive its
+    // traffic and forwarded credentials. A namespace is known on every
+    // Kubernetes profile, so there is no reason to leave it open.
+    if let (Some(kubernetes), Some(directory)) =
+        (&input.lock.kubernetes, gears.get_mut("service-discovery"))
+    {
+        directory
+            .config
+            .entry("platform_namespaces")
+            .or_insert_with(|| {
+                Value::Array(vec![Value::String(
+                    kubernetes
+                        .namespace
+                        .clone()
+                        .unwrap_or_else(|| "default".to_owned()),
+                )])
+            });
+    }
+
+    write_registrar_gears(input, &mut gears);
+
+    let internal_auth = input
+        .lock
+        .gears
+        .iter()
+        .find(|(id, _)| id.as_str() == REST_HOST_GEAR)
+        .and_then(|(_, host)| host.config.get("internal_auth"))
+        .filter(|value| !value.is_null())
+        .cloned();
+    if let (Some(auth), Some(grpc)) = (&internal_auth, gears.get_mut("grpc-hub")) {
+        grpc.config
+            .entry("internal_auth")
+            .or_insert_with(|| auth.clone());
+        // A production hub that validates platform tokens enforces them
+        // (ADR-0011 §3); written under the description's value.
+        if !input.lock.product.development {
+            grpc.config
+                .entry("internal_auth_enforcement")
+                .or_insert(Value::String("required".to_owned()));
+        }
+    }
 
     let home_dir = if input.lock.kubernetes.is_some() {
         // `readOnlyRootFilesystem` makes `~` unwritable; the chart mounts an
@@ -150,11 +352,31 @@ pub fn app_config(
     };
     let config = AppConfig {
         server: ServerSection { home_dir },
-        oop_http: application.serve.as_ref().map(|serve| OopHttpSection {
-            listen_addr: serve.listen_addr.clone(),
-            advertise_uri: serve.advertise_uri.clone(),
-            allow_loopback_advertise: serve.allow_loopback_advertise,
-        }),
+        database,
+        oop_http: application
+            .serve
+            .as_ref()
+            .filter(|_| application.is_worker())
+            .map(|serve| OopHttpSection {
+                listen_addr: serve.listen_addr.clone(),
+                advertise_uri: serve.advertise_uri.clone(),
+                allow_loopback_advertise: serve.allow_loopback_advertise,
+                internal_auth: internal_auth.clone(),
+                directory_gears: directory_gears(input.lock, application)
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+            }),
+        http_host: application
+            .serve
+            .as_ref()
+            .filter(|_| !application.is_worker())
+            .map(|serve| HttpHostSection {
+                listen_addr: serve.listen_addr.clone(),
+                public: PublicSection { exposed_only: true },
+            }),
+        internal_auth: internal_auth.filter(|_| !application.is_worker()),
+        permissions: input.lock.permissions.clone(),
         gears,
     };
 
@@ -169,6 +391,197 @@ pub fn app_config(
         FileKind::Yaml,
         Ownership::Generated,
     ))
+}
+
+/// The REST host's public listener serves only exposed operations in an
+/// embedded profile and in every production one (Gearbox ADR-0026 section 6).
+///
+/// The all-in-one binary has no other process, so nothing but the public
+/// surface should answer. A production multi-process gateway also has the
+/// internal listener the resolver assigned (`internal_bind_addr`), whose
+/// advertised address is written here. Both are written *under* the
+/// description's values; turning the filter off is GBX0325 on a production
+/// profile. A development multi-process profile keeps the gateway's single
+/// listener.
+/// A self-hosted host's edge proxies to its workers' routes, found in its own
+/// directory through its own hub.
+///
+/// On Kubernetes Flight Control's chart sets `gateway_proxy` itself. A generated
+/// self-hosted host had none, so its edge published nothing a worker served and
+/// answered 404 for every worker route. The hub is addressed as it
+/// listens: `uds://~/...` (the gateway expands `~` as the hub does) or a TCP
+/// address. A `gateway_proxy` the description wrote is kept.
+fn write_gateway_proxy(input: &GenerateInput<'_>, gears: &mut BTreeMap<String, GearSection>) {
+    let directory = input
+        .lock
+        .self_hosted
+        .as_ref()
+        .is_some_and(|settings| settings.discovery == gearbox_ir::Discovery::Directory);
+    let hosts_directory = gears.contains_key("service-discovery");
+    if !directory || !hosts_directory || input.lock.applications.len() < 2 {
+        return;
+    }
+    let Some(endpoint) = gears
+        .get("grpc-hub")
+        .and_then(|hub| hub.config.get("listen_addr"))
+        .and_then(Value::as_str)
+        .filter(|addr| *addr != "none")
+        .map(|addr| {
+            if addr.contains("://") {
+                addr.to_owned()
+            } else {
+                format!("http://{addr}")
+            }
+        })
+    else {
+        return;
+    };
+    if let Some(gateway) = gears.get_mut(REST_HOST_GEAR) {
+        gateway.config.entry("gateway_proxy").or_insert_with(
+            || serde_json::json!({"enabled": true, "directory_endpoint": endpoint}),
+        );
+    }
+}
+
+fn write_public_listener(
+    input: &GenerateInput<'_>,
+    application: &ResolvedApplication,
+    gears: &mut BTreeMap<String, GearSection>,
+) {
+    let embedded = input.lock.kubernetes.is_none() && input.lock.self_hosted.is_none();
+    let production = !input.lock.product.development;
+    if let Some(gateway) = gears
+        .get_mut(REST_HOST_GEAR)
+        .filter(|_| embedded || production)
+    {
+        let public = gateway
+            .config
+            .entry("public")
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Value::Object(public) = public {
+            public.entry("exposed_only").or_insert(Value::Bool(true));
+        }
+        // The internal listener's advertised address (`internal_bind_addr`
+        // itself is the endpoint's config key, written with the others).
+        if let Some(uri) = application
+            .listens
+            .iter()
+            .find(|e| e.name == "internal" && e.gear.as_str() == REST_HOST_GEAR)
+            .and_then(|e| e.advertise_uri.clone())
+        {
+            gateway
+                .config
+                .entry("internal_advertise_uri")
+                .or_insert(Value::String(uri));
+        }
+    }
+}
+
+/// What a unit chart is given for one process: the description's own
+/// configuration of each of its gears, and the cluster profiles the resolver
+/// bound -- not the topology the generator would have written (ports,
+/// endpoints, wiring, spawns), which the chart owns
+/// (`ResolvedApplication::unit_chart`). Merged by the chart over its own
+/// configuration, before its production rules are checked.
+pub(super) fn unit_chart_overlay(
+    input: &GenerateInput<'_>,
+    application: &ResolvedApplication,
+) -> Result<Map<String, Value>, GenerateError> {
+    let mut gears: BTreeMap<String, GearSection> = application
+        .gears
+        .iter()
+        .map(|id| {
+            let mut config: Map<String, Value> =
+                input.lock.gears.get(id).map_or_else(Map::new, |gear| {
+                    gear.config
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect()
+                });
+            if let Some(catalogue) = input.catalogue {
+                drop_unknown_keys(catalogue, id, &mut config);
+            }
+            (
+                id.to_string(),
+                GearSection {
+                    database: None,
+                    runtime: None,
+                    config,
+                },
+            )
+        })
+        .collect();
+    // The database the description resolved, as for a generated process: the
+    // server section and each gear's database. Its password stays a `${VAR}`
+    // the chart's `secretEnv` maps from the existing Secret.
+    let database = write_database(input, application, &mut gears)?;
+    write_cluster(input, &mut gears);
+    // A hand-written unit (Flight Control) may host the directory: it admits the
+    // workers' further records only if the overlay says so.
+    write_registrar_gears(input, &mut gears);
+    let mut gear_sections = Map::new();
+    for (id, section) in gears {
+        let mut gear = Map::new();
+        if let Some(db) = &section.database {
+            gear.insert("database".to_owned(), to_json(db)?);
+        }
+        if !section.config.is_empty() {
+            gear.insert("config".to_owned(), Value::Object(section.config));
+        }
+        if !gear.is_empty() {
+            gear_sections.insert(id, Value::Object(gear));
+        }
+    }
+    let mut overlay = Map::new();
+    overlay.insert("gears".to_owned(), Value::Object(gear_sections));
+    // A hand-written unit enforces the product's permissions like a generated one.
+    if !input.lock.permissions.is_empty() {
+        overlay.insert("permissions".to_owned(), to_json(&input.lock.permissions)?);
+    }
+    if let Some(database) = &database {
+        overlay.insert("database".to_owned(), to_json(database)?);
+    }
+    Ok(overlay)
+}
+
+/// The directory admits a worker for the further gears it registers, and for
+/// nothing else (gears-rust ADR-0010 section 6). Merged with what the
+/// description lists, so its own entries still stand.
+fn write_registrar_gears(input: &GenerateInput<'_>, gears: &mut BTreeMap<String, GearSection>) {
+    let registrars = registrar_gears(input.lock);
+    if registrars.is_empty() {
+        return;
+    }
+    let Some(directory) = gears.get_mut("service-discovery") else {
+        return;
+    };
+    let entry = directory
+        .config
+        .entry("registrar_gears".to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let Some(map) = entry.as_object_mut() else {
+        return;
+    };
+    for (registrar, listed) in registrars {
+        let gears = map
+            .entry(registrar)
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Some(gears) = gears.as_array_mut() {
+            for gear in listed {
+                let gear = Value::String(gear.to_string());
+                if !gears.contains(&gear) {
+                    gears.push(gear);
+                }
+            }
+        }
+    }
+}
+
+fn to_json(value: &impl Serialize) -> Result<Value, GenerateError> {
+    serde_json::to_value(value).map_err(|source| GenerateError::Json {
+        what: "a unit chart's configuration overlay",
+        source,
+    })
 }
 
 /// Drop keys the projected schema does not name.
@@ -224,9 +637,11 @@ fn write_consumer_wiring(
         if binding.consumer_application != application.name || !binding.is_remote() {
             continue;
         }
-        let Some(endpoint) = binding.endpoint.as_ref() else {
+        // The cluster SDK derives its own address and reads its criticality
+        // from a process-wide section (`write_cluster_sdk_wiring`).
+        if binding.mechanism == gearbox_ir::BindingMechanism::ProvidesClientWiring {
             continue;
-        };
+        }
         let Some(section) = gears.get_mut(binding.consumer.as_str()) else {
             continue;
         };
@@ -234,13 +649,161 @@ fn write_consumer_wiring(
             .config
             .entry("consumer_wiring".to_owned())
             .or_insert_with(|| Value::Object(Map::new()));
-        if let Some(map) = wiring.as_object_mut() {
-            map.insert(
-                binding.provider.to_string(),
-                Value::String(endpoint.clone()),
-            );
+        let Some(map) = wiring.as_object_mut() else {
+            continue;
+        };
+        // Toolkit reads ConsumerWiring as an object with an endpoint plus
+        // optional flattened client policies. Keep configured policies when
+        // adding what resolution decided.
+        let provider = binding.provider.to_string();
+        let mut options = map
+            .remove(&provider)
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        if let Some(endpoint) = &binding.endpoint {
+            options.insert("endpoint".to_owned(), Value::String(endpoint.clone()));
+        } else if let Some(name) = directory_name(input, binding) {
+            options.insert("directory_name".to_owned(), Value::String(name));
         }
+        // Written for every remote binding; absent would mean critical too
+        // (gears-rust ADR-0010 section 3), but the file should say what was
+        // decided. Two majors of one provider share this slot, so it is critical
+        // if either is.
+        let critical = binding.critical
+            || options
+                .get("critical")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+        options.insert("critical".to_owned(), Value::Bool(critical));
+        map.insert(provider, Value::Object(options));
     }
+}
+
+/// `gears.cluster-sdk.config.consumer_wiring.cluster.critical` for a process
+/// whose cluster requesters reach `cluster` remotely: one SDK client per
+/// process, so one key, true if any requester's binding is critical
+/// (gears-rust ADR-0010 section 3, Gearbox ADR-0026 section 5).
+fn write_cluster_sdk_wiring(
+    input: &GenerateInput<'_>,
+    application: &ResolvedApplication,
+    gears: &mut BTreeMap<String, GearSection>,
+) {
+    let mut remote = input.lock.bindings.iter().filter(|b| {
+        b.consumer_application == application.name
+            && b.mechanism == gearbox_ir::BindingMechanism::ProvidesClientWiring
+    });
+    let Some(first) = remote.next() else {
+        return;
+    };
+    let endpoint = first.endpoint.clone();
+    let critical = first.critical || remote.any(|b| b.critical);
+    let mut options = Map::new();
+    // Pinned under static discovery only. The SDK still derives its channel
+    // from Kubernetes DNS; the key makes the runtime treat the dependency as a
+    // static endpoint, resolved at wiring, instead of waiting for a directory
+    // the profile does not have.
+    if let Some(endpoint) = endpoint {
+        options.insert("endpoint".to_owned(), Value::String(endpoint));
+    } else if let Some(name) = directory_name(input, first) {
+        // Readiness waits for the directory to know `cluster`; a worker that
+        // links it beside another anchor registers under that anchor's name.
+        options.insert("directory_name".to_owned(), Value::String(name));
+    }
+    options.insert("critical".to_owned(), Value::Bool(critical));
+    let mut wiring = Map::new();
+    wiring.insert("cluster".to_owned(), Value::Object(options));
+    let mut config = Map::new();
+    config.insert("consumer_wiring".to_owned(), Value::Object(wiring));
+    gears.insert(
+        "cluster-sdk".to_owned(),
+        GearSection {
+            database: None,
+            runtime: None,
+            config,
+        },
+    );
+}
+
+/// The directory name to look the provider up under, when it is not the
+/// provider's own: a gear a worker links beside its anchor (or role) and does
+/// not keep a record for is found under the worker's name. A REST provider the
+/// worker lists in `directory_gears`, and every REST gear of a host, is found
+/// under its own (gears-rust ADR-0010 section 6).
+fn directory_name(
+    input: &GenerateInput<'_>,
+    binding: &gearbox_ir::ResolvedBinding,
+) -> Option<String> {
+    let provider_application = input
+        .lock
+        .applications
+        .iter()
+        .find(|a| a.name == binding.provider_application)?;
+    let registers_as = provider_application.registers_as();
+    (provider_application.is_worker()
+        && registers_as != binding.provider.as_str()
+        && !directory_gears(input.lock, provider_application).contains(&binding.provider))
+    .then(|| registers_as.to_owned())
+}
+
+/// The further gears a worker keeps a directory record for, beside the name it
+/// registers under (gears-rust ADR-0010 section 6): each REST gear it provides
+/// to a consumer in another process.
+///
+/// A gear another application already registers under that name is left out:
+/// a second record would split its consumers between two endpoints. Its
+/// consumers keep finding it under this worker's name.
+fn directory_gears(
+    lock: &gearbox_ir::ResolvedProduct,
+    application: &ResolvedApplication,
+) -> BTreeSet<GearId> {
+    if !application.is_worker() {
+        return BTreeSet::new();
+    }
+    let rest = |gear: &GearId| {
+        lock.gears
+            .get(gear)
+            .is_some_and(|g| g.runtime_caps.contains(&gearbox_ir::RuntimeCap::Rest))
+    };
+    let registered_elsewhere = |gear: &GearId| {
+        lock.applications
+            .iter()
+            .filter(|other| other.name != application.name)
+            .any(|other| {
+                if other.is_worker() {
+                    other.registers_as() == gear.as_str()
+                } else {
+                    other.gears.contains(gear)
+                        && lock.gears.get(gear).is_some_and(|g| {
+                            !g.runtime_caps.contains(&gearbox_ir::RuntimeCap::RestHost)
+                        })
+                }
+            })
+    };
+    lock.bindings
+        .iter()
+        .filter(|b| {
+            b.provider_application == application.name
+                && b.consumer_application != application.name
+                && b.provider.as_str() != application.registers_as()
+        })
+        .map(|b| b.provider.clone())
+        .filter(|gear| rest(gear) && !registered_elsewhere(gear))
+        .collect()
+}
+
+/// Registrar -> the further gears it registers, for every worker that has any.
+/// A worker's identity carries the name it registers under.
+fn registrar_gears(lock: &gearbox_ir::ResolvedProduct) -> BTreeMap<String, BTreeSet<GearId>> {
+    lock.applications
+        .iter()
+        .map(|application| {
+            (
+                application.registers_as().to_owned(),
+                directory_gears(lock, application),
+            )
+        })
+        .filter(|(_, gears)| !gears.is_empty())
+        .collect()
 }
 
 /// The cluster gear's per-scope backend bindings.
@@ -339,6 +902,7 @@ fn write_spawns(
         let section = gears
             .entry(spawn.gear.to_string())
             .or_insert_with(|| GearSection {
+                database: None,
                 runtime: None,
                 config: Map::new(),
             });

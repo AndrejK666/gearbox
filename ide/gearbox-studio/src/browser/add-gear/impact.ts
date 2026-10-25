@@ -24,6 +24,9 @@ export interface ArrivingGear {
 /** A binding whose mode or transport is not what it is today. */
 export interface ChangedBinding {
   readonly consumer: string;
+  /** The process this copy of the consumer runs in: a gear linked into several
+   *  has a binding in each, and they can change in opposite directions. */
+  readonly application: string;
   readonly contract: string;
   readonly before: string;
   readonly after: string;
@@ -55,10 +58,15 @@ function wiring(binding: { mode: ResolvedBindingMode; transport: Transport }): s
     : `${binding.mode} over ${binding.transport}`;
 }
 
-function bindingKey(binding: { consumer: string; contract: string }): string {
-  // The same `{consumer}|{contract}` the explanation graph keys bindings by, so a
-  // step in the Inspector and a row here name the same thing.
-  return `${binding.consumer}|${binding.contract}`;
+function bindingKey(binding: {
+  consumer: string;
+  contract: string;
+  consumer_application: string;
+}): string {
+  // The `{consumer}|{contract}` the explanation graph keys bindings by, plus the
+  // process: a gear linked into several has a binding in each, and comparing
+  // only the pair would set one copy's wiring against another's.
+  return `${binding.consumer}|${binding.contract}|${binding.consumer_application}`;
 }
 
 /** Which application each gear ends up in. A gear can appear in several; first wins. */
@@ -114,6 +122,7 @@ export function impactOf(
     const then = wasBound.get(key);
     const row = {
       consumer: String(binding.consumer),
+      application: String(binding.consumer_application),
       contract: String(binding.contract),
       before: then ?? "",
       after: now,

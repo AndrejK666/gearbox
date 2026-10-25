@@ -145,9 +145,8 @@ test.describe("cpt-gearbox-fr-studio, clause by clause", () => {
   // On `prod` the same description resolves to a severed contract edge beside a
   // local one, and to two applications instead of one.
   //
-  // What `prod` still cannot show is a gear in two binaries: its extra anchors
-  // declare no `deps`, so their closures are singletons. `prd-product.spec.ts`
-  // reports that claim as "not observed" and this file does not pretend otherwise.
+  // It also shows a gear in several binaries: each worker serves REST and so
+  // includes `authn-resolver` (GBX0417), whose closure the gateway links too.
 
   test("it renders the contract graph [PRD cpt-gearbox-fr-studio: renders the contract graph]", async ({
     studio,
@@ -162,7 +161,13 @@ test.describe("cpt-gearbox-fr-studio, clause by clause", () => {
     // local, between the same pair of gears. So this profile must show a severed
     // edge -- the picture that distinguishes a contract edge from a co-location
     // edge, which can never be severed.
-    const severed = graph.locator(".gbx-edge[data-remote='true']");
+    // Two severed edges: this pair, and the consumer's cluster requests, which
+    // the `audit` worker makes over gRPC (ADR-0026 section 4).
+    await expect(graph.locator(".gbx-edge[data-remote='true']")).toHaveCount(2);
+    await expect(
+      graph.locator(".gbx-edge[data-remote='true'][data-to='cluster']"),
+    ).toHaveAttribute("data-from", "api-contracts-consumer");
+    const severed = graph.locator(".gbx-edge[data-remote='true'][data-to='api-contracts']");
     await expect(severed).toHaveCount(1);
     await expect(severed).toHaveAttribute("data-from", "api-contracts-consumer");
     await expect(severed).toHaveAttribute("data-to", "api-contracts");
@@ -206,15 +211,17 @@ test.describe("cpt-gearbox-fr-studio, clause by clause", () => {
     for (const name of ["api-gateway", "audit", "api-contracts"]) {
       await expect(graph.locator(`[data-binary='${name}']`)).toBeVisible();
     }
-    // 6 + 1 + 1 = 8, the same eight gears `dev` puts in one binary. On this corpus
-    // the split happens to be a partition, and the view says so in words rather
-    // than letting the absence of a repeated chip imply that partitions are what
-    // the model produces.
+    // Not a partition: each worker serves REST and so includes `authn-resolver`
+    // (GBX0417), and its closure -- the AuthN plugin and `types-registry` -- is in
+    // the gateway too. Three gears, each in all three binaries, marked shared.
     // Seven, not six: the product selects `cluster` explicitly now, because the
     // provider registry every cluster requirement resolves against is projected
     // from that gear and nothing else pulls it in.
     await expect(graph.locator("[data-binary='api-gateway'] [data-gear]")).toHaveCount(7);
-    await expect(graph.locator("[data-shared='true']")).toHaveCount(0);
+    for (const gear of ["authn-resolver", "oidc-authn-plugin", "types-registry"]) {
+      await expect(graph.locator(`[data-shared='true'][data-gear='${gear}']`)).toHaveCount(3);
+    }
+    await expect(graph.locator("[data-shared='true']")).toHaveCount(9);
   });
 
   test("it renders the cluster graph [PRD cpt-gearbox-fr-studio: renders the cluster graph]", async ({

@@ -37,6 +37,10 @@ mod preview_tests;
 mod serve_tests;
 
 #[cfg(test)]
+#[path = "scaffold_tests.rs"]
+mod scaffold_tests;
+
+#[cfg(test)]
 #[path = "write_gate_tests.rs"]
 mod write_gate_tests;
 
@@ -2094,6 +2098,7 @@ fn scaffold_gear(state: &mut State, id: RequestId, params: &ScaffoldGearParams) 
                 // Scaffolding renders no product templates, so nothing can be
                 // overridden here -- an empty list is the truth, not a stub.
                 overridden_templates: Vec::new(),
+                templates: Vec::new(),
             },
             // The text this method already built and evaluated. Carried because
             // the three file *paths* are the same for all three kinds, so a
@@ -2141,147 +2146,123 @@ fn scaffold_gear_files(
         return Err("version must be a semver triple like `0.1.0`".to_owned());
     }
 
-    let name = gearbox_gdl::edit::quote_string(&params.name);
-    let crate_quoted = gearbox_gdl::edit::quote_string(&crate_name);
-    let lib_quoted = gearbox_gdl::edit::quote_string(&lib_name);
-    let gdl = format!(
-        r#"# Scaffolded gear description for {comment}.
-#
-# The gear's id is not written here: it comes from `#[toolkit::gear(name = ...)]`
-# in the crate. This file names the package the catalogue joins that id against.
-
-gear(
-    name = {name},
-    # New code makes no promise yet. Raise it -- preview, then stable -- when
-    # the gear has earned it; there is no default because `stable` would be one.
-    maturity = "experimental",
-    package = cargo(
-        crate_name = {crate_quoted},
-        lib = {lib_quoted},
-        path = ".",
-    ),
-{shape})
-"#,
-        comment = params.name.replace(['\n', '\r'], " "),
-        shape = gdl_shape(params.kind, params.plugin.as_ref()),
-    );
-
-    let dependencies = toolkit.map_or_else(String::new, |toolkit| {
-        // The crate that declares the host's trait, which a plugin implements.
-        let sdk = match (params.kind, &params.plugin, plugin_dep) {
-            (crate::protocol::GearKind::Plugin, Some(plugin), Some(path)) => format!(
-                "{key} = {{ package = {package}, path = {path} }}\n",
-                key = toml_basic_string(&plugin.lib_ident),
-                package = toml_basic_string(&plugin.crate_name),
-                path = toml_basic_string(path),
+    // **Comments, not values, in `gear.gdl`, and that is the whole design.**
+    // Every field the template offers is either projected from Rust or checked
+    // against it: a `category` invented here would draw the unknown-category
+    // warning on the first load, an `implements` naming a spec no described gear
+    // declares is refused (GBX0519), and an `sdk` locator pointing at a directory
+    // that does not exist makes the gear fail to load. So the template puts the
+    // next declaration where it goes, with the sentence that says what decides
+    // it, and leaves it commented until there is something true to write. The
+    // one exception is a host chosen from a loaded catalogue: its spec is a fact,
+    // so `implements` is written live.
+    //
+    // Values reach the templates already escaped: GDL strings through
+    // `quote_string` (the text is evaluated as GDL right after, and Rust's debug
+    // escaping is not Starlark's), TOML strings as basic strings, and anything
+    // shown inside a `#` or `//` comment with its line breaks removed.
+    let kind = match params.kind {
+        crate::protocol::GearKind::Minimal => "minimal",
+        crate::protocol::GearKind::Service => "service",
+        crate::protocol::GearKind::Plugin => "plugin",
+    };
+    let plugin = params.plugin.as_ref().map(|plugin| {
+        minijinja::context! {
+            spec => gearbox_gdl::edit::quote_string(
+                plugin
+                    .spec
+                    .strip_prefix(gearbox_engine::plugin::PLUGIN_BASE)
+                    .unwrap_or(&plugin.spec),
             ),
-            _ => String::new(),
-        };
-        format!(
-            "\n[dependencies]\n{alias} = {{ package = {package}, path = {path} }}\n{sdk}",
-            alias = gearbox_engine::generate::TOOLKIT_ALIAS,
-            package = toml_basic_string(gearbox_engine::generate::TOOLKIT_PACKAGE),
-            path = toml_basic_string(toolkit),
-        )
+            trait_ident => comment_safe(&plugin.trait_ident),
+            crate_name => comment_safe(&plugin.crate_name),
+            lib => comment_safe(&plugin.lib_ident),
+            path => comment_safe(&plugin.path),
+        }
     });
-    let cargo = format!(
-        r#"[package]
-name = {crate_toml}
-version = {version_toml}
-edition = "2024"
+    let render = |key: &str, ctx: minijinja::Value| -> Result<String, String> {
+        let source = gearbox_engine::TemplateSet::builtin(key)
+            .ok_or_else(|| format!("no builtin scaffold template `{key}`"))?;
+        gearbox_engine::generate::render_template("scaffold", source, ctx)
+            .map_err(|e| format!("cannot render the scaffold's {key}: {e}"))
+    };
 
-[lib]
-name = {lib_toml}
-path = "src/lib.rs"
-{dependencies}
-# A workspace of its own. A new gear usually lands inside somebody else's tree
-# -- a product folder in a repository with a `[workspace]` of its own -- and
-# Cargo then refuses to build a crate that tree's workspace does not list.
-[workspace]
-"#,
-        crate_toml = toml_basic_string(&crate_name),
-        version_toml = toml_basic_string(&params.version),
-        lib_toml = toml_basic_string(&lib_name),
-    );
+    let gdl = render(
+        "scaffold/gear.gdl",
+        minijinja::context! {
+            comment => comment_safe(&params.name),
+            reference => GDL_REFERENCE,
+            version => gearbox_gdl::version::CURRENT.to_string(),
+            name => gearbox_gdl::edit::quote_string(&params.name),
+            crate_name => gearbox_gdl::edit::quote_string(&crate_name),
+            lib => gearbox_gdl::edit::quote_string(&lib_name),
+            kind => kind,
+            plugin => &plugin,
+        },
+    )?;
+
+    // The crate that declares the host's trait, which a plugin implements.
+    let sdk = match (params.kind, &params.plugin, plugin_dep) {
+        (crate::protocol::GearKind::Plugin, Some(plugin), Some(path)) => {
+            Some(minijinja::context! {
+                key => toml_basic_string(&plugin.lib_ident),
+                package => toml_basic_string(&plugin.crate_name),
+                path => toml_basic_string(path),
+            })
+        }
+        _ => None,
+    };
+    let cargo = render(
+        "scaffold/Cargo.toml",
+        minijinja::context! {
+            crate_name => toml_basic_string(&crate_name),
+            version => toml_basic_string(&params.version),
+            lib => toml_basic_string(&lib_name),
+            toolkit => toolkit.map(|toolkit| minijinja::context! {
+                alias => gearbox_engine::generate::TOOLKIT_ALIAS,
+                package => toml_basic_string(gearbox_engine::generate::TOOLKIT_PACKAGE),
+                path => toml_basic_string(toolkit),
+            }),
+            sdk => sdk,
+        },
+    )?;
+
+    // With the toolkit the crate is a real gear: `#[toolkit::gear(name = ...)]`
+    // on a `Default` struct and an `impl Gear` whose `init` does nothing. The id
+    // is kebab-case by now, so it needs no escaping. A plugin's trait is named,
+    // not implemented: its methods live in the host's SDK, so an `impl` would be
+    // a body invented here. Without the toolkit the lib is a comment: a crate
+    // that does not compile is worse than one that is empty.
+    let type_name: String = crate_name
+        .split('-')
+        .map(|part| {
+            let mut chars = part.chars();
+            chars.next().map_or_else(String::new, |first| {
+                first.to_ascii_uppercase().to_string() + chars.as_str()
+            })
+        })
+        .collect();
+    let lib = render(
+        "scaffold/lib.rs",
+        minijinja::context! {
+            toolkit => toolkit.is_some(),
+            id => &crate_name,
+            type_name => type_name,
+            kind => kind,
+            plugin => plugin,
+        },
+    )?;
 
     Ok(vec![
         (rel_path("gear.gdl")?, gdl, gearbox_ir::FileKind::Text),
         (rel_path("Cargo.toml")?, cargo, gearbox_ir::FileKind::Toml),
-        (
-            rel_path("src/lib.rs")?,
-            match toolkit {
-                Some(_) => lib_source(params.kind, &crate_name, params.plugin.as_ref()),
-                None => lib_stub(params.kind),
-            },
-            gearbox_ir::FileKind::Rust,
-        ),
+        (rel_path("src/lib.rs")?, lib, gearbox_ir::FileKind::Rust),
     ])
 }
 
 /// One scaffold path, or the refusal saying it is not a usable relative path.
 fn rel_path(path: &str) -> Result<RelPath, String> {
     RelPath::new(path).map_err(|e| format!("`{path}` is not a usable path for a scaffold: {e}"))
-}
-
-/// The declarations one shape of gear needs, after `package`.
-///
-/// **Comments, not values, and that is the whole design.** Every one of these
-/// fields is either projected from Rust or checked against it: a `category` this
-/// method invented would draw GBX's unknown-category warning on the first load, a
-/// `implements` naming a spec no described gear declares is refused (GBX0519), and an
-/// `sdk` locator pointing at a directory that does not exist makes the gear fail
-/// to load. So the shape's job is to put the next declaration **where it goes**,
-/// with the sentence that says what decides it -- and to leave it commented until
-/// there is something true to write. A scaffold that emitted placeholders would
-/// hand its author a description to repair rather than one to fill in.
-fn gdl_shape(
-    kind: crate::protocol::GearKind,
-    plugin: Option<&crate::protocol::PluginScaffold>,
-) -> std::borrow::Cow<'static, str> {
-    // A host chosen from a loaded catalogue makes the spec a fact, so `implements` is
-    // written live rather than as the comment the rest of this function returns.
-    // The comment exists because a spec nobody declares is GBX0519; one the
-    // engine itself reported a host declaring is not.
-    if let (crate::protocol::GearKind::Plugin, Some(plugin)) = (kind, plugin) {
-        return std::borrow::Cow::Owned(plugin_shape(plugin));
-    }
-    std::borrow::Cow::Borrowed(gdl_shape_commented(kind))
-}
-
-/// The live `implements`, and where the trait it implements comes from.
-///
-/// Rendered through `quote_string`, not `{:?}`: this text is evaluated as GDL
-/// immediately afterwards, and Rust's debug escaping is not Starlark's.
-fn plugin_shape(plugin: &crate::protocol::PluginScaffold) -> String {
-    use gearbox_gdl::edit::quote_string;
-
-    format!(
-        r#"
-    # `description`, `category` and `visibility` are yours to fill in.
-    #
-    # description = "What this plugin does, in one sentence.",
-    # category = "core-platform-integration",
-    # visibility = "internal",
-
-    # **The declaration that makes this a plugin**, written from the host you
-    # chose: the GTS spec its instances register under. Implement `{trait_ident}`
-    # from `{crate_name}` (`lib = "{lib}"`, at `{path}`) -- the catalogue warns
-    # (GBX0526) while nothing in this crate does. A plugin declares no `sdk`: the
-    # host's SDK is the host's.
-    implements = {spec},
-
-    # A plugin's own `vendor` and `priority` are the join key its host's selector
-    # matches against, and both are read from this crate's config struct. What is
-    # declared is only that they are worth showing an integrator.
-    #
-    # config_schema = config(exposes = ["vendor", "priority"]),
-"#,
-        spec = quote_string(&plugin.spec),
-        trait_ident = comment_safe(&plugin.trait_ident),
-        crate_name = comment_safe(&plugin.crate_name),
-        lib = comment_safe(&plugin.lib_ident),
-        path = comment_safe(&plugin.path),
-    )
 }
 
 /// A value from the wire, made safe to write inside a `#` comment.
@@ -2293,189 +2274,8 @@ fn comment_safe(value: &str) -> String {
     value.replace(['\n', '\r'], " ")
 }
 
-fn gdl_shape_commented(kind: crate::protocol::GearKind) -> &'static str {
-    match kind {
-        // What this method has always written: a crate and a name, with the one
-        // hint that applies to every gear.
-        crate::protocol::GearKind::Minimal => {
-            r#"
-    # Uncomment once this gear reads configuration. `exposes` is the only half
-    # written here: which settings are worth putting in front of an integrator.
-    # Their names, types, defaults and doc comments are read from the struct the
-    # gear deserializes into, which is found from the `ctx.config*()` call in
-    # `impl Gear::init` -- so nothing about the struct is repeated here.
-    #
-    # config_schema = config(exposes = ["bind_addr"]),
-"#
-        }
-        // A gear that does something on its own. The three declared fields every
-        // service in the corpus carries, then the contract and configuration
-        // hints -- `provides` and `consumes` are declared, unlike `runtime_caps`
-        // and `colocated_deps`, which #[toolkit::gear] owns and GBX0210 refuses
-        // to see restated here.
-        crate::protocol::GearKind::Service => {
-            r#"
-    # The three fields a described service carries beyond its crate. `category`
-    # is checked against the known set and warns when it is not one of them;
-    # `visibility = "public"` is what makes a gear selectable by a product.
-    #
-    # description = "What this gear does, in one sentence.",
-    # category = "core-platform-integration",
-    # visibility = "internal",
-
-    # Contracts are declared -- unlike `runtime_caps` and `colocated_deps`, which
-    # #[toolkit::gear] owns and GBX0210 refuses to see restated here. `provides`
-    # names the trait this gear implements for others; `consumes` names one it
-    # needs, and the transports come from the provider's side.
-    #
-    # provides = [provide(contract = "PaymentApi", version = "v1")],
-    # consumes = [consume(contract = "TenantApi", version = "v1")],
-
-    # Uncomment once this gear reads configuration. `exposes` is the only half
-    # written here: which settings are worth putting in front of an integrator.
-    # Their names, types, defaults and doc comments are read from the struct the
-    # gear deserializes into, which is found from the `ctx.config*()` call in
-    # `impl Gear::init` -- so nothing about the struct is repeated here.
-    #
-    # config_schema = config(exposes = ["bind_addr"]),
-"#
-        }
-        // A gear that implements another gear's extension point. `implements` is the
-        // declaration that makes it one, and it stays commented until it names
-        // a spec some described gear declares -- otherwise it is GBX0519.
-        crate::protocol::GearKind::Plugin => {
-            r#"
-    # description = "What this plugin does, in one sentence.",
-    # category = "core-platform-integration",
-    # visibility = "internal",
-
-    # **The declaration that makes this a plugin**: the GTS spec of the point it
-    # implements, as its host declares it in `extension_points`. A spec no described
-    # gear declares is refused (GBX0519), so uncomment it once the host is known.
-    # A plugin declares no `sdk` -- the host's SDK is the host's.
-    #
-    # implements = "cf.core.authn_resolver.plugin.v1~",
-
-    # A plugin's own `vendor` and `priority` are the join key its host's selector
-    # matches against, and both are read from this crate's config struct. What is
-    # declared is only that they are worth showing an integrator.
-    #
-    # config_schema = config(exposes = ["vendor", "priority"]),
-"#
-        }
-    }
-}
-
-/// The `src/lib.rs` of a real gear, for when the toolkit was found.
-///
-/// The least that projects and builds: `#[toolkit::gear(name = ...)]` on a
-/// `Default` struct -- the macro constructs through it -- and an `impl Gear`
-/// whose `init` does nothing, because the macro registers the struct as a
-/// `dyn Gear`. `name` is the id, which is kebab-case by the time it gets here,
-/// so it needs no escaping. What differs by kind is the comment above the next
-/// thing to write, not generated behaviour.
-///
-/// A plugin's trait is named, not implemented: its methods live in the host's
-/// SDK and nothing here reads them, so an `impl` would be a body this method
-/// invented. The catalogue says so (GBX0526, a warning) until one exists.
-fn lib_source(
-    kind: crate::protocol::GearKind,
-    id: &str,
-    plugin: Option<&crate::protocol::PluginScaffold>,
-) -> String {
-    let type_name: String = id
-        .split('-')
-        .map(|part| {
-            let mut chars = part.chars();
-            chars.next().map_or_else(String::new, |first| {
-                first.to_ascii_uppercase().to_string() + chars.as_str()
-            })
-        })
-        .collect();
-    let next = match kind {
-        crate::protocol::GearKind::Minimal => String::new(),
-        crate::protocol::GearKind::Service => String::from(
-            "\n// Next: runtime capabilities and co-located deps go on the attribute above\n\
-             // (`capabilities = [...]`, `deps = [...]`) -- restating them in gear.gdl is\n\
-             // refused (GBX0210). A single `ctx.config*()` call in `init` links this gear\n\
-             // to its configuration struct; uncomment `config_schema` in gear.gdl then.\n",
-        ),
-        crate::protocol::GearKind::Plugin => match plugin {
-            Some(plugin) => format!(
-                "\n// Next: implement `{lib}::{trait_ident}` for {type_name} -- the host looks\n\
-                 // for it, and the catalogue warns (GBX0526) while no impl exists. Then\n\
-                 // register the `vendor` and `priority` the host's selector matches.\n\
-                 //\n\
-                 // impl {lib}::{trait_ident} for {type_name} {{ ... }}\n",
-                lib = comment_safe(&plugin.lib_ident),
-                trait_ident = comment_safe(&plugin.trait_ident),
-            ),
-            None => String::from(
-                "\n// Next: choose the point this plugin implements -- set `implements` in gear.gdl, add the\n\
-                 // crate that declares the point's trait to Cargo.toml, and implement it.\n",
-            ),
-        },
-    };
-    format!(
-        "//! {id}, scaffolded by Gearbox Studio.\n\
-         \n\
-         use toolkit::{{Gear, GearCtx}};\n\
-         \n\
-         #[toolkit::gear(name = \"{id}\")]\n\
-         #[derive(Default)]\n\
-         pub struct {type_name};\n\
-         \n\
-         #[toolkit::async_trait]\n\
-         impl Gear for {type_name} {{\n    \
-             async fn init(&self, _ctx: &GearCtx) -> toolkit::Result<()> {{\n        \
-                 Ok(())\n    \
-             }}\n\
-         }}\n{next}"
-    )
-}
-
-/// The `src/lib.rs` stub for one shape, when the toolkit could not be found.
-///
-/// A comment rather than code, for the reason the shapes are comments: without
-/// the toolkit's location, `#[toolkit::gear]` would be written against a
-/// dependency this method cannot add -- a crate that does not compile is worse
-/// than one that is empty. What the stub carries is the order of the next
-/// steps, which is the part a person actually looks up.
-fn lib_stub(kind: crate::protocol::GearKind) -> String {
-    match kind {
-        crate::protocol::GearKind::Minimal => String::from(
-            "// Scaffolded lib.\n\
-             // Gear macros (#[toolkit::gear], provides/consumes) come next.\n",
-        ),
-        crate::protocol::GearKind::Service => String::from(
-            "// Scaffolded service gear.\n\
-             //\n\
-             // Next, in this order:\n\
-             //   1. add the toolkit dependency to Cargo.toml;\n\
-             //   2. #[toolkit::gear(name = \"...\")] on the gear struct -- the id,\n\
-             //      runtime capabilities and co-located deps are projected from it,\n\
-             //      and restating them in gear.gdl is refused (GBX0210);\n\
-             //   3. impl Gear, whose `init` is where a single ctx.config*() call\n\
-             //      links this gear to its configuration struct;\n\
-             //   4. uncomment `config_schema` in gear.gdl once that struct exists.\n",
-        ),
-        crate::protocol::GearKind::Plugin => String::from(
-            "// Scaffolded plugin gear.\n\
-             //\n\
-             // Next, in this order:\n\
-             //   1. add the crate that declares the point's trait to Cargo.toml,\n\
-             //      and set `implements` in gear.gdl to the point's spec -- that is\n\
-             //      what makes this gear a plugin;\n\
-             //   2. impl that trait; the catalogue warns (GBX0526) while no\n\
-             //      impl of it exists here;\n\
-             //   3. register the vendor and priority this plugin answers under --\n\
-             //      they are the join key the host's `vendor` selector matches;\n\
-             //   4. list this gear under its host's `plugins = [...]` in the\n\
-             //      product. A plugin under a host that does not declare its point\n\
-             //      is refused (GBX0518).\n",
-        ),
-    }
-}
+/// Where a person reading a scaffolded `gear.gdl` finds every field.
+const GDL_REFERENCE: &str = "https://github.com/constructorfabric/gearbox/blob/main/docs/gdl.md";
 
 /// Whether a path may be written, and why not when it may not.
 ///
@@ -2943,14 +2743,6 @@ fn standalone_out_root(roots: &[PathBuf], path: &Path) -> Result<PathBuf, String
     Ok(resolved)
 }
 
-/// What a standalone output root carries that the workspace tree does not.
-///
-/// The workspace's `.gitignore` already covers `.gearbox/`; a repository of its
-/// own has none, and without one the first `git add .` commits the build and the
-/// merge base. Offered once and then the operator's.
-const STANDALONE_GITIGNORE: &str =
-    "# Written once by Gearbox; yours from now on.\ntarget/\n.gearbox/\n";
-
 /// The nearest ancestor of `path` that exists, including `path` itself.
 fn nearest_existing(path: &Path) -> Result<PathBuf, String> {
     let mut cursor = path.to_path_buf();
@@ -2981,6 +2773,9 @@ struct PreparedGenerate {
     /// that came out looking wrong had a visible cause in one client and none in
     /// the other. An unexpected Dockerfile should say who wrote it.
     overridden_templates: Vec<String>,
+    /// The product's templates as generation will leave them, and what an apply
+    /// writes into the product for them.
+    templates: Option<gearbox_engine::generate::product_templates::TemplateSync>,
 }
 
 fn prepare_generate(
@@ -3022,16 +2817,45 @@ fn prepare_generate(
         .iter()
         .map(|root| (root.id.clone(), root.root.clone()))
         .collect();
-    let templates = match gearbox_engine::TemplateSet::load_for_product(
+    // The product's own copy of every template, followed to this build's
+    // builtins. Read here for the plan and the apply alike; only an apply writes.
+    let template_sync = match gearbox_engine::TemplateSet::dir_for_product(
         Path::new(path),
         resolved.templates.as_deref(),
-    ) {
-        Ok(templates) => templates,
+    )
+    .and_then(|dir| {
+        dir.map(|dir| gearbox_engine::generate::product_templates::sync(&dir))
+            .transpose()
+    }) {
+        Ok(sync) => sync,
         Err(e) => {
             return Err(error(
                 id.clone(),
                 error_code::GENERATE_REFUSED,
-                &format!("could not load template overrides: {e}"),
+                &format!("could not read the product's templates: {e}"),
+            ));
+        }
+    };
+    let templates = template_sync
+        .as_ref()
+        .map_or_else(gearbox_engine::TemplateSet::new, |sync| sync.set.clone());
+    // What a standalone output root carries that the workspace tree does not.
+    // The workspace's `.gitignore` already covers `.gearbox/`; a repository of
+    // its own has none, and without one the first `git add .` commits the build
+    // and the merge base. Offered once and then the operator's.
+    let standalone_gitignore = match templates.get("standalone/gitignore").and_then(|source| {
+        gearbox_engine::generate::render_template(
+            "standalone/gitignore",
+            source,
+            minijinja::context! {},
+        )
+    }) {
+        Ok(body) => body,
+        Err(e) => {
+            return Err(error(
+                id.clone(),
+                error_code::GENERATE_REFUSED,
+                &format!("could not render the output folder's .gitignore: {e}"),
             ));
         }
     };
@@ -3090,7 +2914,7 @@ fn prepare_generate(
     if standalone && let Ok(path) = RelPath::new(".gitignore") {
         drop(files.insert(gearbox_ir::FileEntry::text(
             path,
-            STANDALONE_GITIGNORE,
+            standalone_gitignore,
             gearbox_ir::FileKind::Text,
             gearbox_ir::Ownership::GeneratedOnce,
         )));
@@ -3100,6 +2924,9 @@ fn prepare_generate(
     // See `Generated::diagnostics`: computing this and dropping it is exactly
     // what made a house template invisible in Studio for a milestone.
     diagnostics.extend(generated.diagnostics.as_slice().iter().cloned());
+    if let Some(sync) = &template_sync {
+        diagnostics.extend(sync.diagnostics.as_slice().iter().cloned());
+    }
 
     Ok(PreparedGenerate {
         files,
@@ -3107,6 +2934,7 @@ fn prepare_generate(
         base_root,
         diagnostics,
         overridden_templates: generated.overridden_templates,
+        templates: template_sync,
     })
 }
 
@@ -3159,6 +2987,10 @@ fn generate_plan(state: &mut State, id: RequestId, params: &GenerateParams) -> R
                     diagnostics,
                     out_root: prepared.out_root.display().to_string(),
                     overridden_templates: prepared.overridden_templates,
+                    templates: prepared
+                        .templates
+                        .map(|sync| sync.templates)
+                        .unwrap_or_default(),
                 },
             )
         }
@@ -3186,10 +3018,34 @@ fn generate_apply(state: &mut State, id: RequestId, params: &GenerateParams) -> 
         Err(refusal) => return refusal,
     };
 
+    // The templates directory is the product's, so it is judged as a write into
+    // the product: inside the declared workspace or a source root.
+    if let Some(sync) = &prepared.templates
+        && let Some(refusal) = sync
+            .templates
+            .first()
+            .and_then(|template| Path::new(&template.path).parent().map(Path::to_path_buf))
+            .and_then(|dir| writable_templates_dir(state, &dir).err())
+    {
+        return error(id, error_code::GENERATE_REFUSED, &refusal);
+    }
+
     match gearbox_engine::apply_generate(&prepared.files, &prepared.out_root, &prepared.base_root) {
         Ok(outcome) => {
             let mut diagnostics = prepared.diagnostics;
             diagnostics.extend(outcome.diagnostics.as_slice().iter().cloned());
+            // Only beside a tree that was written: a refused apply leaves the
+            // product exactly as it was, templates included.
+            if !outcome.diagnostics.has_errors()
+                && let Some(sync) = &prepared.templates
+                && let Err(e) = sync.write()
+            {
+                return error(
+                    id,
+                    error_code::GENERATE_REFUSED,
+                    &format!("generated, but could not write the product's templates: {e}"),
+                );
+            }
             ok(
                 id,
                 &GenerateApplyResult {
@@ -3197,6 +3053,10 @@ fn generate_apply(state: &mut State, id: RequestId, params: &GenerateParams) -> 
                     diagnostics,
                     written: u32::try_from(outcome.written).unwrap_or(u32::MAX),
                     overridden_templates: prepared.overridden_templates,
+                    templates: prepared
+                        .templates
+                        .map(|sync| sync.templates)
+                        .unwrap_or_default(),
                 },
             )
         }
@@ -3205,6 +3065,34 @@ fn generate_apply(state: &mut State, id: RequestId, params: &GenerateParams) -> 
             error_code::GENERATE_REFUSED,
             &format!("cannot apply generation: {e}"),
         ),
+    }
+}
+
+/// Whether a product's templates directory may be written.
+///
+/// The directory belongs to the product -- beside its description, or the one
+/// `product(templates = ...)` names -- so it gets [`writable_path`]'s rule: the
+/// nearest existing ancestor must sit inside the declared workspace or a source
+/// root. It may not exist yet; generation creates it.
+fn writable_templates_dir(state: &State, dir: &Path) -> Result<(), String> {
+    let existing = nearest_existing(dir)?;
+    let canonical = existing
+        .canonicalize()
+        .map_err(|e| format!("cannot canonicalize `{}`: {e}", existing.display()))?;
+    let allowed = state
+        .roots
+        .iter()
+        .map(|root| root.root.clone())
+        .chain(state.workspace.clone())
+        .filter_map(|root| root.canonicalize().ok());
+    if allowed.into_iter().any(|root| canonical.starts_with(root)) {
+        Ok(())
+    } else {
+        Err(format!(
+            "the product's templates directory `{}` is outside the declared workspace and \
+             every source root",
+            dir.display()
+        ))
     }
 }
 

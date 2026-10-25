@@ -1,3 +1,5 @@
+gdl_version = "1.4"
+
 # A product that exists to be *configured*, not to be a realistic deployment.
 #
 # `payments-demo` is the corpus's real product, and its `gears` list is chosen to
@@ -32,13 +34,25 @@ product(
     # answers a features list gives. The kubernetes profile is here so the same
     # feature can be seen being *offered*, which is that claim from the other
     # side rather than a second claim.
+    #
+    # Each profile has the database its gears need, so the product generates in
+    # both (its golden is the generated tree, not a refusal).
     profiles = [
-        embedded(id = "dev"),
+        embedded(
+            development = True,
+            id = "dev",
+            sqlite_databases = {"event-broker": "events.sqlite3", "types-registry": "types.sqlite3"},
+        ),
         kubernetes(
+            development = True,
             id = "prod",
             discovery = "static",
             namespace = "configurable",
             image_registry = "registry.example.com/configurable",
+            database = postgres(
+                host = "postgres.configurable.svc.cluster.local", user = "configurable",
+                password = "${GEARS_PG_PASSWORD}", existing_secret = "configurable-db",
+            ),
         ),
     ],
     default_profile = "dev",
@@ -82,13 +96,50 @@ product(
         # application the routes exist and nothing serves them (GBX0305).
         # `api-gateway` is the one gear in the corpus that provides it.
         use_gear("api-gateway", source = "gears-rust"),
+
+        # Also not here for a claim: `event-broker` consumes the AuthZ contract,
+        # and a consumed contract nothing provides is GBX0404.
+        use_gear("authz-resolver", source = "gears-rust",
+            plugins = [plugin("static-authz-plugin")]),
     ],
+
+    # AuthZ stays in the event broker's process: this product is about
+    # configuring gears, not about where the policy decision point runs.
+    bindings = [
+        bind(
+            consumer = "event-broker",
+            contract = "authz-resolver/AuthZResolverApi@v1",
+            mode = binding_mode.local,
+        ),
+    ],
+
+    # The event broker's operations declare permissions (gears-rust
+    # cpt-cf-adr-operation-permissions); this product grants them to any
+    # authenticated caller.
+    permissions = {
+        "events.publish": ["*"],
+        "events.producers.manage": ["*"],
+        "events.topics.read": ["*"],
+        "events.types.read": ["*"],
+        "events.consume": ["*"],
+    },
 
     cluster_profiles = [
         cluster_profile(
             name = "event-broker",
             cache = provider("standalone"),
             profiles = ["dev"],
+        ),
+        cluster_profile(
+            name = "event-broker",
+            profiles = ["prod"],
+            cache = provider(
+                "postgres",
+                # A reference to the credential, never the credential (GBX0506).
+                secret_ref = "env:PG_PASSWORD",
+                connection_string = "postgres://configurable@${PG_HOST}:5432/configurable?password=${PG_PASSWORD}",
+                schema = "cluster",
+            ),
         ),
     ],
 )

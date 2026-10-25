@@ -27,7 +27,7 @@ use crate::requirement::ClusterPrimitive;
 ///
 /// A reader that meets an unknown version must refuse rather than guess: a lock
 /// half-understood is worse than one not read at all.
-pub const LOCK_SCHEMA_VERSION: u32 = 1;
+pub const LOCK_SCHEMA_VERSION: u32 = 3;
 
 /// What was asked for.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -162,8 +162,11 @@ pub struct ResolvedEndpoint {
 
 /// Where a worker serves its own REST surface, and how it advertises it.
 ///
-/// Only a worker has one. A host's REST-contributing gears mount on its REST
-/// host; a worker has none -- `GBX0312` refuses one -- and serves through the
+/// A worker has one, and so does a host process with REST gears and no REST
+/// host gear: the runtime's built-in HTTP host serves those (gears-rust ADR-0011
+/// section 5), written as `http_host` rather than `oop_http`. A host with a REST host
+/// gear has none -- its REST-contributing gears mount on that gear. A worker has
+/// no REST host gear -- `GBX0312` refuses one -- and serves through the
 /// out-of-process runtime's own listener instead. That listener is configured
 /// by a **top-level** `oop_http` section rather than by any gear's key, which is
 /// why this cannot ride [`ResolvedApplication::listens`].
@@ -407,6 +410,13 @@ pub struct ResolvedApplication {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subchart: Option<String>,
 
+    /// The hand-written chart this application ships instead of a generated
+    /// one: it is exactly the unit a gear's `deploy = helm_chart(...)`
+    /// packages. The generator then writes no crate or Dockerfile for it --
+    /// the unit's own image runs it -- and copies the chart into the umbrella.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_chart: Option<ResolvedUnitChart>,
+
     /// The port neighbours dial for contract traffic, when the profile
     /// generates a chart.
     ///
@@ -530,12 +540,16 @@ impl BindingMechanism {
 
     /// Whether this mechanism gates the consumer's readiness.
     ///
-    /// A local binding does not: the local lookup succeeds immediately. A remote
-    /// one does, which is how a critical dependency keeps a process out of
-    /// rotation without turning startup into a global ordering problem.
+    /// A local binding does not: the local lookup succeeds immediately. A
+    /// directory-resolved one does, which is how a critical dependency keeps a
+    /// process out of rotation without turning startup into a global ordering
+    /// problem. A static endpoint does not either: the runtime marks it resolved
+    /// at wiring without contacting the provider (gears-rust ADR-0010 section 3,
+    /// Gearbox ADR-0026 section 5), so `critical` is written but cannot hold the
+    /// consumer back.
     #[must_use]
     pub const fn gates_readiness(self) -> bool {
-        !matches!(self, Self::ColocatedLocal)
+        !matches!(self, Self::ColocatedLocal | Self::ConsumesStatic)
     }
 }
 
@@ -546,6 +560,10 @@ pub struct BindingRequest {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transport: Option<Transport>,
+
+    /// The product's `bind(critical = ...)`, when it overrides the gear.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub critical: Option<bool>,
 }
 
 /// What a binding resolved *to*.
@@ -608,6 +626,24 @@ pub struct ResolvedBinding {
     #[serde(default)]
     pub critical: bool,
 
+    /// Whether readiness waits for this binding: the resolver's verdict,
+    /// [`Self::derive_gates_readiness`], written so that a client prints it
+    /// rather than deriving it again (`cpt-gearbox-fr-studio`, no resolution
+    /// logic). A critical binding under static discovery is `false`: the runtime
+    /// marks a pinned endpoint resolved at wiring (ADR-0026 section 5).
+    #[serde(default)]
+    pub gates_readiness: bool,
+
+    /// The client the consuming *process* has to link for this binding, when
+    /// its consumer's own crate does not: the cluster SDK with its gRPC client
+    /// (`ProvidesClientWiring`). A `consumes-*` binding leaves it `None` -- the
+    /// consumer gear's crate depends on its contract's SDK with the client it
+    /// needs. Without it the generated process links the SDK without its
+    /// remote half, registers no client, and every call reports the profile
+    /// unbound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_sdk: Option<crate::CargoRef>,
+
     pub selected: Selected<BindingRequest>,
 }
 
@@ -618,10 +654,26 @@ impl ResolvedBinding {
     }
 
     /// Whether this binding keeps the consumer out of rotation until it resolves.
+    ///
+    /// An SDK-addressed binding with a pinned endpoint is the static case: the
+    /// runtime marks it resolved at wiring (Kubernetes with static discovery).
     #[must_use]
-    pub const fn gates_readiness(&self) -> bool {
-        self.critical && self.mechanism.gates_readiness()
+    pub const fn derive_gates_readiness(&self) -> bool {
+        self.critical
+            && self.mechanism.gates_readiness()
+            && !(matches!(self.mechanism, BindingMechanism::ProvidesClientWiring)
+                && self.endpoint.is_some())
     }
+}
+
+/// A hand-written unit chart an application ships, located in its source.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ResolvedUnitChart {
+    pub source: SourceId,
+    /// The chart directory, relative to the source root.
+    pub path: RelPath,
+    /// The unit's image repository, without registry or tag.
+    pub image: String,
 }
 
 /// What a cluster primitive resolved to.
@@ -827,6 +879,12 @@ pub struct ResolvedProductHeader {
     /// The profile family: `embedded`, `self-hosted`, or `kubernetes`.
     pub profile_kind: String,
 
+    /// The profile is `development = True`: production rules were reported as
+    /// warnings and the generator keeps its development defaults. Absent
+    /// (false) is a production profile.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub development: bool,
+
     /// The directory the generated application crates live under, one path
     /// segment. Default [`DEFAULT_LAYOUT`].
     ///
@@ -899,6 +957,12 @@ pub struct SelfHostedSettings {
 /// two runs over the same inputs serialize identically.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ResolvedProduct {
+    /// Explicit per-gear SQLite choices; these gears are excluded from Postgres.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sqlite_databases: BTreeMap<GearId, crate::SqliteDatabase>,
+    /// Complete external database configuration, including resolved per-gear names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database: Option<crate::PostgresDatabase>,
     pub schema_version: u32,
 
     pub product: ResolvedProductHeader,
@@ -917,7 +981,8 @@ pub struct ResolvedProduct {
     /// Ordered by name.
     pub applications: Vec<ResolvedApplication>,
 
-    /// Ordered by consumer then contract.
+    /// Ordered by consumer, contract, then consumer application: a gear linked
+    /// into several processes has a binding in each.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bindings: Vec<ResolvedBinding>,
 
@@ -933,14 +998,69 @@ pub struct ResolvedProduct {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provenance: Vec<ProvenanceEdge>,
 
+    /// The product's permission mapping, written into every process's
+    /// configuration (gears-rust `cpt-cf-adr-operation-permissions` section 2).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub permissions: BTreeMap<String, Vec<String>>,
+
     #[serde(default, skip_serializing_if = "Diagnostics::is_empty")]
     pub diagnostics: Diagnostics,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<crate::ui::ResolvedUi>,
 }
 
 impl ResolvedProduct {
     #[must_use]
     pub fn application(&self, name: &ApplicationId) -> Option<&ResolvedApplication> {
         self.applications.iter().find(|p| &p.name == name)
+    }
+
+    /// Verify database settings before a lock reaches a generator or runtime.
+    ///
+    /// # Errors
+    /// Returns a reason if a DB gear lacks a resolved name or a connection is unsafe.
+    pub fn validate_database(&self) -> Result<(), String> {
+        let mut expected: BTreeSet<_> = self
+            .gears
+            .iter()
+            .filter(|(_, gear)| gear.runtime_caps.contains(&RuntimeCap::Db))
+            .map(|(id, _)| id)
+            .collect();
+        for (id, sqlite) in &self.sqlite_databases {
+            sqlite.validate()?;
+            if !expected.remove(id) {
+                return Err(format!(
+                    "SQLite override `{id}` is not a resolved database gear"
+                ));
+            }
+            let placements: Vec<_> = self
+                .applications
+                .iter()
+                .filter(|app| app.gears.contains(id))
+                .collect();
+            if placements.len() != 1 || placements.iter().any(|app| app.replicas != 1) {
+                return Err(format!(
+                    "SQLite gear `{id}` requires exactly one application with one replica"
+                ));
+            }
+        }
+        let Some(db) = &self.database else {
+            if expected.is_empty() {
+                return Ok(());
+            }
+            return Err("database-backed gears have no database; configure the profile and run gearbox resolve".to_owned());
+        };
+        db.validate()?;
+        if !expected.is_empty() && self.kubernetes.is_some() && db.existing_secret.is_none() {
+            return Err("Kubernetes postgres requires existing_secret".to_owned());
+        }
+        if db.database_names.keys().collect::<BTreeSet<_>>() != expected {
+            return Err(
+                "database_names must name exactly the resolved DB gears; run gearbox resolve"
+                    .to_owned(),
+            );
+        }
+        Ok(())
     }
 
     /// The processes a gear is linked into.

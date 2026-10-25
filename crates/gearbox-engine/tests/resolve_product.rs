@@ -21,26 +21,17 @@ use gearbox_ir::{
     SourceKind,
 };
 
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn gears_rust() -> Option<PathBuf> {
-    // Walks up instead of counting `..`, and the difference is not cosmetic.
-    // `CARGO_MANIFEST_DIR/../../../gears-rust` is the sibling of the *repository*
-    // root, so from a git worktree -- `.claude/worktrees/<name>/crates/...` -- it
-    // resolved to nothing. Every real-tree test then skipped, printed a reason
-    // nobody reads, and the suite went green having touched none of the corpus.
-    // An agent working in a worktree got that silently.
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            return candidate.canonicalize().ok();
-        }
-        dir = dir.parent()?;
-    }
+    corpus_support::root()
 }
 
 fn fixtures() -> Option<(Catalogue, ProductIntent)> {
     let root = gears_rust()?;
-    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root).ok()?;
+    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root)
+        .unwrap_or_else(|error| panic!("the discovered corpus must be readable: {error}"));
     let catalogue = load_catalogue(&[source]).catalogue;
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../products/payments-demo/product.gdl")
@@ -260,6 +251,7 @@ fn a_downgraded_binding_points_at_the_code_that_downgraded_it() {
         endpoint: None,
         profiles: std::collections::BTreeSet::new(),
         declared_at: None,
+        critical: None,
     });
 
     let r = resolve(&cat, &intent, &ProfileId::new("dev").unwrap());
@@ -319,6 +311,44 @@ fn features_asked_for_in_the_description_reach_the_resolution() {
         !gear.package.features.contains(&"k8s-auth".to_owned()),
         "the product's choice was merged into the projected list"
     );
+}
+
+#[test]
+fn a_plugin_listed_per_profile_gets_that_profiles_configuration() {
+    // One plugin, two entries: a laptop issuer and a cluster issuer. The first
+    // entry used to configure the plugin in every profile, so the cluster's
+    // plugin trusted the laptop's issuer (the integration product's `local`
+    // and `kind`).
+    let cat = support::catalogue_of(vec![
+        support::gear_with_caps("host", &[], &[]),
+        support::gear_with_caps("plug", &[], &[]),
+    ]);
+    let mut intent = support::intent(&["host"]);
+    let lab = ProfileId::new("lab").unwrap();
+    let mut lab_profile = intent.profiles[&intent.default_profile].clone();
+    if let gearbox_ir::DeploymentProfileDecl::Embedded { id, .. } = &mut lab_profile {
+        *id = lab.clone();
+    }
+    intent.profiles.insert(lab, lab_profile);
+    let entry = |profile: &str, index: usize| gearbox_ir::PluginSelection {
+        gear: support::gid("plug"),
+        config: [("issuer".to_owned(), serde_json::json!(profile))]
+            .into_iter()
+            .collect(),
+        profiles: [ProfileId::new(profile).unwrap()].into_iter().collect(),
+        entry_index: index,
+        declared_at: None,
+    };
+    intent.selected_gears[0].plugins = vec![entry("lab", 0), entry("dev", 1)];
+
+    for profile in ["dev", "lab"] {
+        let product = lock(&cat, &intent, profile);
+        assert_eq!(
+            product.gears[&support::gid("plug")].config["issuer"],
+            profile,
+            "{profile}"
+        );
+    }
 }
 
 #[test]

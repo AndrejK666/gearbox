@@ -57,6 +57,14 @@
   border-color: var(--theia-editorWarning-foreground);
 }
 .gbx-deprecated-row .gbx-row-name { text-decoration: line-through; }
+/* The second axis: how much is written. Quiet, like maturity at preview. */
+.gbx-badge.gbx-implementation {
+  background: transparent;
+  color: var(--theia-descriptionForeground);
+  border-color: var(--theia-descriptionForeground);
+}
+.gbx-web-link { margin-right: 0.6em; }
+.gbx-scenario[data-done="true"] { color: var(--theia-descriptionForeground); }
 .gbx-badge.gbx-design {
   background: transparent;
   color: var(--theia-descriptionForeground);
@@ -230,6 +238,9 @@
 }
 .gbx-validation-head .gbx-kv { flex: 0 0 auto; gap: 6px; }
 
+/* The catalogue's diagnostics: a list inside the tree, not the Product view's
+   one-row summary (`gbx-diagnostics`), so it does not take that row's layout. */
+.gbx-catalogue-diagnostics { margin-top: 12px; }
 /* The catalogue's own heading for its diagnostics. Not `gbx-diagnostics-label`,
    which is the Product view's one-line summary: two panels wearing one class
    made an unscoped read of it pick whichever rendered first. */
@@ -675,6 +686,27 @@
 .gbx-leaf-why { opacity: 0.65; font-size: 0.9em; }
 
 /* --- The catalogue row's status and action -------------------------------- */
+
+/* Keep the hierarchy visible even when no row is hovered or selected.
+   These classes are shared elsewhere, so only the catalogue gains spacing. */
+.gbx-widget-catalogue .gbx-group { margin-bottom: 12px; }
+.gbx-widget-catalogue .gbx-group-label {
+  opacity: 1;
+  font-weight: 600;
+  padding: 6px 0;
+}
+.gbx-widget-catalogue .gbx-group-count { font-weight: normal; }
+.gbx-widget-catalogue .gbx-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* The category text already follows a disclosure icon. Indent beyond that
+     text, so the gear names read as children rather than aligned peers. */
+  margin-top: 6px;
+  margin-left: 18px;
+  padding-left: 17px;
+  border-left: 1px dashed var(--theia-tree-indentGuidesStroke, var(--theia-editorGroup-border));
+}
 
 /* **A slot at the end of the row, and it is always there.** The control used to
    sit ahead of the name, so a list where only some rows carry one stepped in and
@@ -1393,9 +1425,16 @@
 
 /* Generator diagnostics above the plan tree (GBX07xx: patched crates, overridden templates, stale files). */
 .gbx-generate-diagnostics { margin-top: 8px; max-height: 30%; overflow: auto; }
+.gbx-generate-templates { margin-top: 8px; }
+.gbx-generate-templates > summary { cursor: pointer; }
+.gbx-generate-templates ul { max-height: 30vh; overflow: auto; margin: 6px 0 0; padding: 0; list-style: none; }
+.gbx-generate-templates li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.gbx-generate-templates li .gbx-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gbx-generate-templates li .theia-button { margin: 0; min-width: 0; padding: 1px 8px; }
 
 /* Generate's file tree: one line per file, the name shortened rather than wrapped. */
 .gbx-generate-tree .gbx-row { flex-wrap: nowrap; padding-top: 2px; padding-bottom: 2px; }
 .gbx-generate-tree .gbx-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gbx-generate-tree .gbx-badge { flex: 0 0 auto; }
 .gbx-generate-tree .gbx-generate-dir-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+

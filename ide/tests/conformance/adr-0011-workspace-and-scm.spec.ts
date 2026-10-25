@@ -136,7 +136,9 @@ test.describe("Git, from the VS Code extension", () => {
         .locator("#theia-left-content-panel")
         .innerText()
         .catch(() => "");
-      const seen = [...panel.matchAll(/CHANGES\s+(\d+)/g)].at(-1);
+      // The unstaged group's own header: `STAGED CHANGES n` is another group,
+      // and a staged file in the tree would otherwise be read as this count.
+      const seen = [...panel.matchAll(/(?<!STAGED\s)CHANGES\s+(\d+)/g)].at(-1);
       // No number means no changes -- which is what a clean checkout looks like,
       // and is a perfectly good baseline. Returning a sentinel here made the
       // claim fail on a tree with nothing modified.
@@ -149,9 +151,29 @@ test.describe("Git, from the VS Code extension", () => {
     // fragility this test was rewritten to remove. The guard was never needed:
     // a provider that registered and read nothing shows a number that does not
     // move, and `before + 1` catches that whatever `before` is.
-    const before = await changeCount();
+    //
+    // **Read once it has settled, and compared as "went up".** Taken while the
+    // provider was still refreshing after the repository was selected, `before`
+    // was an intermediate number and the count then moved for reasons of its
+    // own, so `before + 1` failed in full runs and passed alone. Two equal reads
+    // a second apart make the baseline the repository's; "greater" is the claim
+    // -- a provider that read nothing shows a number that never moves -- and
+    // stays true when the tree gains another change while the probe exists.
+    let before = -1;
+    await expect
+      .poll(
+        async () => {
+          const first = await changeCount();
+          await studio.page.waitForTimeout(1_000);
+          const second = await changeCount();
+          before = second;
+          return first === second;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(true);
     await withDirtyRepo(join(IDE, ".."), async () => {
-      await expect.poll(changeCount, { timeout: 60_000 }).toBe(before + 1);
+      await expect.poll(changeCount, { timeout: 60_000 }).toBeGreaterThan(before);
     });
   });
 

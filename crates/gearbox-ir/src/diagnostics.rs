@@ -372,12 +372,13 @@ diagnostic_codes! {
     /// bucket of one.
     GdlUnknownCategory = "GBX0108", Gdl, Warning, false, "gear category is not one the platform uses";
 
-    /// A declared documentation or specification path does not exist.
+    /// A declared documentation, specification or test path does not exist,
+    /// and the gear names no `source = git(...)` to find it in.
     ///
     /// An error, unlike the absence of a file found by convention: a gear may
     /// genuinely have no PRD, but a path written by hand and pointing nowhere is
     /// a typo.
-    GdlMissingDocPath = "GBX0109", Gdl, Error, false, "declared documentation path does not exist";
+    GdlMissingDocPath = "GBX0109", Gdl, Error, false, "declared documentation or test path does not exist";
 
     /// Two declarations scoped to the same profile collide.
     GdlDuplicateProfileScoped = "GBX0110", Gdl, Error, false, "duplicate profile-scoped declaration";
@@ -521,6 +522,44 @@ diagnostic_codes! {
     /// either. What it can say is that nothing in the description supplies it.
     GdlRequiredConfigUnset = "GBX0120", Gdl, Warning, false, "a required config field has no value and no default";
 
+    /// A gear's `source = git(...)` disagrees with the checkout its
+    /// description was read from: no remote has that url, or the gear is not
+    /// at that `path` in it.
+    ///
+    /// A warning: what is on disk is used either way. But a reader holding
+    /// the description alone follows `source`, and would land in the wrong
+    /// repository or directory.
+    GdlSourceMismatch = "GBX0121", Gdl, Warning, false, "a gear's declared git source disagrees with its checkout";
+
+    /// A gear says `implementation = "done"` while a scenario it declares is
+    /// not `done`.
+    ///
+    /// A warning: either the list or the status is stale, and only the author
+    /// knows which.
+    GdlOpenScenarios = "GBX0122", Gdl, Warning, false, "a gear is declared done with scenarios still open";
+
+    /// A file's `gdl_version` is not `MAJOR.MINOR`, or names a major version
+    /// this Gearbox does not read.
+    ///
+    /// Reported before evaluation: a different major may have removed or
+    /// renamed what this reader knows, so its errors would be the wrong ones.
+    GdlVersionUnsupported = "GBX0123", Gdl, Error, false, "unreadable or unsupported gdl_version";
+
+    /// A gear in the product declares a permission the product does not map
+    /// (`product(permissions = {...})`).
+    ///
+    /// The runtime refuses every call to such an operation with 403
+    /// `PERMISSION_NOT_MAPPED` (gears-rust `cpt-cf-adr-operation-permissions`
+    /// section 2). An error on a production profile, a warning under
+    /// `development = True`.
+    GdlPermissionUnmapped = "GBX0124", Gdl, Error, false, "a gear declares a permission the product does not map";
+
+    /// The product maps a permission no gear in it declares.
+    ///
+    /// A warning: most likely a typo, which would leave the permission it was
+    /// meant for unmapped and its operations refused.
+    GdlPermissionMappingUnused = "GBX0125", Gdl, Warning, false, "the product maps a permission no gear declares";
+
     // ---------------------------------------------------------------- GBX02xx
     // GBX0201-GBX0205 are deliberately absent. They compared a `gear.gdl`
     // restatement of the gear id, co-location dependencies, runtime
@@ -637,6 +676,17 @@ diagnostic_codes! {
     /// nothing pointing back at the description.
     ValidateFeatureUnknown = "GBX0213", Validate, Error, false, "offered Cargo feature is not declared by the crate";
 
+    /// Explicit GDL dependencies must match the co-location edges in Rust.
+    ValidateDependencyMismatch = "GBX0214", Validate, Error, false, "GDL dependencies differ from Rust";
+
+    /// A gear's code resolves a contract from the `ClientHub` --
+    /// `hub.get::<dyn Trait>()` -- that it neither consumes nor provides, and
+    /// links no provider of through `deps`. The call compiles and finds nothing
+    /// at run time, or finds a client the composition never planned: whether it
+    /// can be remote, and where its provider runs, are decided from declarations
+    /// this call does not have. Read from syntax, so a warning.
+    ValidateUndeclaredClientUse = "GBX0215", Validate, Warning, false, "code resolves a contract it does not declare";
+
     // ---------------------------------------------------------------- GBX03xx
     /// A selected or depended-upon gear is not in the catalogue.
     TopologyUnknownGear = "GBX0301", Topology, Error, false, "unknown gear",
@@ -662,11 +712,22 @@ diagnostic_codes! {
     TopologyMultipleGrpcHub = "GBX0304", Topology, Error, true, "more than one gRPC hub in an application",
         prevents = Prevents::error("cf-gears-toolkit", "RegistryError", "MultipleGrpcHubs");
 
-    /// A process exposes REST interfaces but contains no REST host to mount them.
+    /// A process's REST interfaces have no REST host that can serve them.
+    ///
+    /// A host process with REST gears and no `rest_host` gear is served by the
+    /// runtime's built-in HTTP host (gears-rust ADR-0011 section 5): the generator writes
+    /// its `http_host` section. That host is a public listener -- only exposed
+    /// operations, internal ones 404 -- so this is reported when a consumer in
+    /// another application reaches a gear in such a process over REST, and when
+    /// no address could be assigned at all.
     TopologyRestWithoutHost = "GBX0305", Topology, Error, false, "REST gears with no REST host",
         prevents = Prevents::error("cf-gears-toolkit", "RegistryError", "RestRequiresHost");
 
-    /// A process contains a database-backed gear but no database is configured.
+    /// A selected gear needs a database but its deployment profile has no usable
+    /// external Postgres configuration. This includes gears reached by closure,
+    /// invalid or colliding database names and missing Kubernetes Secret references.
+    /// Configure `database = postgres(...)` on the profile; see ADR-0025.
+    /// Resolution, lock verification and generation never connect or expand passwords.
     TopologyDbWithoutDatabase = "GBX0306", Topology, Error, false, "database gear with no database configured";
 
     /// The requested shape cannot exist in the `embedded` profile, which is a
@@ -842,9 +903,25 @@ diagnostic_codes! {
     /// (ADR `cpt-gearbox-adr-one-per-installation`).
     TopologyDuplicateRegistration = "GBX0320", Topology, Warning, false, "two applications register the same directory name";
 
+    /// A production profile breaks a production rule (gears-rust ADR-0011
+    /// sections 1 and 3, Gearbox ADR-0026 section 6): the public
+    /// listener serves internal operations, a multi-process profile has no
+    /// platform auth of its kind (`kube` on Kubernetes, `shared_secret`
+    /// self-hosted), an embedded hub binds TCP, a hub socket sits in a shared
+    /// temporary directory, a hub does not enforce platform auth, or tenant
+    /// `AuthN` accepts everyone. Every profile is a production target unless it
+    /// says `development = True`, which reports the same findings as warnings.
+    TopologyNotProductionReady = "GBX0325", Topology, Error, false, "a production profile breaks a production rule";
+
+    /// A profile's `platform_auth` cannot be applied as written: `api-gateway`,
+    /// which carries the platform credential to the hubs and workers, is not
+    /// selected, or its `internal_auth` names another provider. Two answers to
+    /// one question are not merged; the description keeps one.
+    TopologyPlatformAuthUnapplied = "GBX0326", Topology, Error, false, "a profile's platform auth cannot be applied";
+
     /// A product selects a gear that is described but has no code yet.
     ///
-    /// `maturity = "design"` in its `gear.gdl`: the catalogue knows the gear's
+    /// `implementation = "design"` in its `gear.gdl`: the catalogue knows the gear's
     /// id, purpose and documents, and there is no crate to link. Distinct from
     /// GBX0301 because "not in the catalogue" sends the reader looking for a
     /// typo or a closed source root, and neither is the problem.
@@ -962,6 +1039,72 @@ diagnostic_codes! {
     /// from it is a narrower claim than refusing to resolve it, and the remedy
     /// is one string in one attribute.
     BindingWiringKeySkew = "GBX0412", Binding, Error, false, "the endpoint override key names a different provider than the consumer declared";
+
+    /// A `bind(mode = ...)` asks for a placement the description forbids
+    /// (ADR `cpt-gearbox-adr-product-placement` section 2).
+    ///
+    /// `mode = local` is honoured by placing the provider with the consumer --
+    /// unless an `application(...)` pins the provider elsewhere, which is two
+    /// statements that cannot both hold. `mode = remote` is honoured by leaving
+    /// them apart -- unless a `deps` chain or an `include` puts the provider in
+    /// the consumer's process, where the client hub finds the local instance
+    /// and the remote client is never used. Both name what forces the
+    /// contradiction. An embedded profile is one process by definition, so a
+    /// mode there is inapplicable rather than contradicted (GBX0407).
+    BindingModeContradicted = "GBX0413", Binding, Error, false, "binding mode contradicted by the placement the description forces";
+
+    /// A gear given its own application is also linked into another one by a
+    /// `deps` chain (ADR `cpt-gearbox-adr-product-placement` section 3).
+    ///
+    /// The second copy is not a reference to the first: it is another
+    /// instance, with its own state, serving that process's in-process
+    /// callers. The description reads as "this runs separately" and the
+    /// product runs it twice. `deps` is link-time, so only the gear's source can
+    /// sever the edge (`#[toolkit::consumes]` plus `consume(...)`). Gears
+    /// replicated into every process by design -- `types-registry`,
+    /// `authn-resolver` (ADR `cpt-gearbox-adr-referenced-gears`) -- are exempt;
+    /// a duplicate directory *registration* is GBX0320.
+    PlacementDuplicatedByDeps = "GBX0414", Binding, Error, false, "a separately placed gear is linked into another application by `deps`";
+
+    /// A requester of a cluster primitive sits in an application without the
+    /// `cluster` gear, and the profile is not Kubernetes
+    /// (ADR `cpt-gearbox-adr-product-placement` section 4).
+    ///
+    /// The cluster SDK reaches a remote cluster at
+    /// `cluster.<POD_NAMESPACE>.svc.cluster.local:50051` and has no other way
+    /// to find it: no directory lookup, no configured endpoint. Outside
+    /// Kubernetes there is no such name, so the requester would start and fail
+    /// its first coordination call.
+    RemoteClusterNeedsKubernetes = "GBX0415", Binding, Error, true, "a remote cluster binding needs a Kubernetes profile",
+        prevents = Prevents::error("cf-gears-cluster-sdk", "ClusterError", "InvalidConfig");
+
+    /// More than one application of a Kubernetes profile links the `cluster`
+    /// gear (ADR `cpt-gearbox-adr-product-placement` section 4).
+    ///
+    /// Every process that links cluster gets a Service named `cluster`, which is
+    /// what the SDK addresses; two such processes need two Services under one
+    /// name, and the chart cannot install. Remote requesters would also split
+    /// between unrelated coordination state.
+    ClusterInSeveralApplications = "GBX0416", Binding, Error, false, "the `cluster` gear is in several applications of a Kubernetes profile";
+
+    /// An application serves REST and links no tenant authenticator
+    /// (ADR `cpt-gearbox-adr-product-placement` section 8).
+    ///
+    /// The runtime refuses to start a process that serves tenant-authenticated
+    /// operations without a tenant authenticator, rather than serving them
+    /// unauthenticated (gears-rust ADR-0011 section 3). A replicated Types
+    /// Registry alone is enough to trip it. Reported before generation, naming
+    /// the gears whose routes need it.
+    ApplicationWithoutAuthenticator = "GBX0417", Binding, Error, false, "an application serving REST has no tenant authenticator";
+
+    /// A requester reaches `cluster` remotely, and the cluster gear does not
+    /// provide the contract it needs over gRPC
+    /// (ADR `cpt-gearbox-adr-product-placement` section 4).
+    ///
+    /// The SDK's remote client speaks gRPC to the primitive's service and to the
+    /// profile service it resolves the scope through; a provider that does not
+    /// declare them is a binding the runtime cannot make.
+    RemoteClusterWithoutGrpc = "GBX0418", Binding, Error, false, "a remote cluster contract is not provided over gRPC";
 
     // ---------------------------------------------------------------- GBX05xx
     /// A cluster provider was selected automatically.
@@ -1293,6 +1436,12 @@ diagnostic_codes! {
     /// reading.
     GapUnmodelledGearArgument = "GBX0608", RuntimeGap, Warning, true, "a gear attribute argument is not modelled by this tool";
 
+    /// A gear names a permission this tool cannot read: a constant, a variable
+    /// or a helper instead of a string literal (gears-rust
+    /// `cpt-cf-adr-operation-permissions` section 6). The gear's permission set is
+    /// incomplete, so GBX0124 cannot tell whether the product maps all of it.
+    GapPermissionUnreadable = "GBX0609", RuntimeGap, Warning, true, "a gear names a permission this tool cannot read";
+
     // ---------------------------------------------------------------- GBX07xx
     /// Generation would overwrite an operator-owned file whose edits cannot be
     /// merged.
@@ -1363,6 +1512,7 @@ diagnostic_codes! {
     /// product's doing -- which is a fact an operator has to be told.
     GenTemplateOverridden = "GBX0708", Generator, Warning, false, "a product template replaced a builtin";
 
+
     /// A crate the product takes from a registry differs from what was published.
     ///
     /// `crates = registry(...)` on a source says its gears are published, and
@@ -1382,6 +1532,20 @@ diagnostic_codes! {
     /// The registry could not be asked at all -- offline, or cargo failed -- so
     /// every crate of the source stays a path dependency.
     GenRegistryUnavailable = "GBX0711", Generator, Warning, false, "the registry could not be reached";
+
+    /// A product's edited template could not take a new builtin.
+    ///
+    /// Generation writes every template into the product and remembers the
+    /// default each copy came from, so a newer default reaches an edited copy by
+    /// a three-way merge. When the new default changes the lines the edit
+    /// changed, or the copy has no record of its default (it was written by hand
+    /// before generation kept one), the copy is left as it is and still renders:
+    /// the product keeps working, and silently does not get the fix. Reported so
+    /// someone merges by hand, or deletes the copy to take the default.
+    GenTemplateBehindDefault = "GBX0712", Generator, Warning, false, "a product template did not take the new builtin";
+
+    /// A UI package or composition cannot be built for this product.
+    UiInvalid = "GBX0720", Generator, Error, false, "invalid UI composition or package";
 }
 
 /// A diagnostic code string that this build does not know.

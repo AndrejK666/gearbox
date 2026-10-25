@@ -18,11 +18,13 @@ use serde::Serialize;
 
 use crate::canonical::canonicalize_order;
 
-/// The `(consumer, contract)` pair that identifies one binding.
+/// The `(consumer, contract, consumer_application)` triple that identifies one
+/// binding: a gear linked into several processes has a binding in each.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct BindingKey {
     pub consumer: GearId,
     pub contract: ContractId,
+    pub consumer_application: ApplicationId,
 }
 
 /// The `(scope, primitive)` pair that identifies one cluster binding.
@@ -300,6 +302,9 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
     // "unchanged". Collections and diagnostics have their own lists; profile
     // is `profile_changed`.
     let gearbox_ir::ResolvedProduct {
+        ui: before_ui,
+        sqlite_databases: before_sqlite,
+        database: before_db,
         schema_version: before_schema,
         product: before_header,
         kubernetes: before_k8s,
@@ -312,8 +317,12 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
         cuttable_if_declared: _,
         provenance: _,
         diagnostics: _,
+        permissions: before_permissions,
     } = before;
     let gearbox_ir::ResolvedProduct {
+        ui: after_ui,
+        sqlite_databases: after_sqlite,
+        database: after_db,
         schema_version: after_schema,
         product: after_header,
         kubernetes: after_k8s,
@@ -326,8 +335,49 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
         cuttable_if_declared: _,
         provenance: _,
         diagnostics: _,
+        permissions: after_permissions,
     } = after;
 
+    let mut before_database = database_fields(before_db.as_ref());
+    let mut after_database = database_fields(after_db.as_ref());
+    for (fields, sqlite) in [
+        (&mut before_database, before_sqlite),
+        (&mut after_database, after_sqlite),
+    ] {
+        fields.extend(
+            sqlite
+                .iter()
+                .map(|(id, db)| (format!("sqlite_databases.{id}.file"), db.file.clone())),
+        );
+    }
+    let mut database_keys = std::collections::BTreeSet::new();
+    database_keys.extend(before_database.keys());
+    database_keys.extend(after_database.keys());
+    for key in database_keys {
+        compare(
+            key,
+            before_database.get(key).cloned().unwrap_or_default(),
+            after_database.get(key).cloned().unwrap_or_default(),
+        );
+    }
+
+    compare("ui", format!("{before_ui:?}"), format!("{after_ui:?}"));
+    // One line per permission: a changed grant names what it grants.
+    let mut permission_keys = std::collections::BTreeSet::new();
+    permission_keys.extend(before_permissions.keys());
+    permission_keys.extend(after_permissions.keys());
+    for permission in permission_keys {
+        let scopes = |map: &std::collections::BTreeMap<String, Vec<String>>| {
+            map.get(permission)
+                .map(|s| s.join(", "))
+                .unwrap_or_default()
+        };
+        compare(
+            &format!("permissions.{permission}"),
+            scopes(before_permissions),
+            scopes(after_permissions),
+        );
+    }
     compare(
         "schema_version",
         before_schema.to_string(),
@@ -340,6 +390,7 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
             version,
             profile: _,
             profile_kind,
+            development,
             layout,
             gearbox_version,
             lock_hash,
@@ -347,7 +398,10 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
         (
             id.clone(),
             version.clone(),
-            profile_kind.clone(),
+            format!(
+                "{profile_kind}{}",
+                if *development { " (development)" } else { "" }
+            ),
             layout.clone(),
             gearbox_version.clone(),
             lock_hash.clone(),
@@ -409,6 +463,44 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
 
     out.sort();
     out
+}
+
+fn database_fields(
+    database: Option<&gearbox_ir::PostgresDatabase>,
+) -> std::collections::BTreeMap<String, String> {
+    let Some(gearbox_ir::PostgresDatabase {
+        host,
+        port,
+        user,
+        password,
+        params,
+        database_names,
+        existing_secret,
+    }) = database
+    else {
+        return std::collections::BTreeMap::new();
+    };
+    let mut fields = std::collections::BTreeMap::from([
+        ("database.host".to_owned(), host.clone()),
+        ("database.port".to_owned(), port.to_string()),
+        ("database.user".to_owned(), user.clone()),
+        ("database.password".to_owned(), password.clone()),
+        (
+            "database.existing_secret".to_owned(),
+            existing_secret.clone().unwrap_or_default(),
+        ),
+    ]);
+    fields.extend(
+        params
+            .iter()
+            .map(|(k, v)| (format!("database.params.{k}"), v.clone())),
+    );
+    fields.extend(
+        database_names
+            .iter()
+            .map(|(k, v)| (format!("database.database_names.{k}"), v.clone())),
+    );
+    fields
 }
 
 /// Append `+`/`-`/`~` lines for one category, in that order.
@@ -544,6 +636,7 @@ fn by_binding_key(product: &ResolvedProduct) -> BTreeMap<BindingKey, Vec<&Resolv
             BindingKey {
                 consumer: b.consumer.clone(),
                 contract: b.contract.clone(),
+                consumer_application: b.consumer_application.clone(),
             },
             b,
         )

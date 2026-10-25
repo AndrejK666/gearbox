@@ -66,6 +66,23 @@ fn a_minimal_product_evaluates() {
 }
 
 #[test]
+fn product_ui_explicitly_selects_modules_and_package_paths() {
+    let (intent, codes, messages) = eval(&product(
+        "ui = ui_product(shell = path(\"../../ui/shell\"), sdk = path(\"../../ui/sdk\"), modules = [\"settings-service\"]),",
+    ));
+    assert!(codes.is_empty(), "{codes:?} {messages}");
+    let ui = intent.unwrap().ui.unwrap();
+    assert_eq!(ui.shell, "../../ui/shell");
+    assert_eq!(
+        ui.modules
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>(),
+        ["settings-service"]
+    );
+}
+
+#[test]
 fn use_gear_on_the_third_line_records_line_two() {
     // 0-based: a call written on the third source line must not claim the start
     // of the file. That is the unit proof behind "the link opens on use_gear".
@@ -345,6 +362,24 @@ product(
 }
 
 #[test]
+fn a_product_source_is_a_whole_repository() {
+    let src = r#"
+product(
+    id = "demo", version = "0.1.0",
+    sources = [source(id = "s", at = git(url = "https://example.com/x.git", tag = "v1", path = "gears"))],
+    profiles = [embedded(id = "dev")],
+    default_profile = "dev",
+    gears = [],
+)
+"#;
+    let (_, _, messages) = eval(src);
+    assert!(
+        messages.contains("a product's source is a whole repository"),
+        "{messages}"
+    );
+}
+
+#[test]
 fn a_branch_is_accepted_but_recorded_as_not_immutable() {
     let src = r#"
 product(
@@ -423,7 +458,8 @@ fn a_cluster_scope_without_a_cache_is_refused() {
 fn gear_is_not_callable_in_a_product() {
     // Separate global sets, so a file that mixes the two fails at the call
     // rather than producing half of each.
-    let (_, _, messages) = eval(r#"gear(maturity = "stable", package = cargo(crate_name = "c", lib = "c"))"#);
+    let (_, _, messages) =
+        eval(r#"gear(maturity = "stable", package = cargo(crate_name = "c", lib = "c"))"#);
     assert!(
         messages.contains("gear"),
         "expected an unbound-name error naming `gear`: {messages}"
@@ -797,4 +833,213 @@ fn a_checkout_can_take_its_crates_from_a_registry() {
         !codes.is_empty() && messages.contains("crates"),
         "{codes:?} {messages}"
     );
+}
+
+#[test]
+fn a_product_declares_its_gdl_version_too() {
+    let src = r#"
+product(
+    gdl_version = "1.0",
+    id = "demo", version = "0.1.0",
+    sources = [source(id = "s", at = path("."))],
+    profiles = [embedded(id = "dev")],
+    default_profile = "dev",
+    gears = [],
+)
+"#;
+    let (intent, codes, messages) = eval(src);
+    assert!(intent.is_some(), "{codes:?} {messages}");
+}
+
+#[test]
+fn postgres_is_typed_in_every_deployment_profile() {
+    for constructor in [
+        r#"embedded(id = "dev", database = DB)"#,
+        r#"self_hosted(id = "dev", host = "host", worker_discovery = "static", database = DB)"#,
+        r#"kubernetes(id = "dev", discovery = "static", database = DB)"#,
+    ] {
+        let source = format!(r#"product(id = "demo", version = "0.1.0", sources = [source(id = "local", at = path("."))], profiles = [{constructor}], default_profile = "dev", gears = [])"#)
+            .replace("DB", r#"postgres(host = "db.example.com", user = "app", password = "${PG_PASSWORD}")"#);
+        let (intent, _, messages) = eval(&source);
+        let intent = intent.unwrap_or_else(|| panic!("{messages}"));
+        let db = intent.profiles[&ProfileId::new("dev").unwrap()]
+            .database()
+            .unwrap();
+        assert_eq!(db.port, 5432);
+        assert_eq!(db.password_env(), Some("PG_PASSWORD"));
+    }
+}
+
+#[test]
+fn postgres_refuses_literal_defaulted_passwords_and_invalid_connections() {
+    for database in [
+        r#"postgres(host = "db", user = "app", password = "literal")"#,
+        r#"postgres(host = "db", user = "app", password = "${PG_PASSWORD:-literal}")"#,
+        r#"postgres(host = "db", user = "app", password = "${PG_PASSWORD}", port = 0)"#,
+        r#"postgres(host = "db", user = "app", password = "${PG_PASSWORD}", port = 65536)"#,
+        r#"postgres(host = "", user = "app", password = "${PG_PASSWORD}")"#,
+        r#"postgres(host = "db", user = "app", password = "${PG_PASSWORD}", database_names = {"some-gear": "Bad-name"})"#,
+        r#"postgres(host = "db", user = "app", password = "${PG_PASSWORD}", existing_secret = "Bad/Secret")"#,
+    ] {
+        let source = format!(
+            r#"product(id = "demo", version = "0.1.0", sources = [source(id = "local", at = path("."))], profiles = [embedded(id = "dev", database = {database})], default_profile = "dev", gears = [])"#
+        );
+        assert!(eval(&source).0.is_none(), "accepted {database}");
+    }
+}
+
+#[test]
+fn ui_entry_points_are_named_same_origin_paths() {
+    let (intent, codes, messages) = eval(&product(
+        "ui = ui_product(shell = path(\"shell\"), sdk = path(\"sdk\"), modules = [], entry_points = {\"Console\": \"/#operator\"}),",
+    ));
+    assert!(codes.is_empty(), "{messages}");
+    assert_eq!(
+        intent.unwrap().ui.unwrap().entry_points["Console"],
+        "/#operator"
+    );
+    for route in ["https://example.com", "//example.com", "/../private"] {
+        let (_, codes, _) = eval(&product(&format!(
+            "ui = ui_product(shell = path(\"shell\"), sdk = path(\"sdk\"), modules = [], entry_points = {{\"Console\": \"{route}\"}}),"
+        )));
+        assert!(!codes.is_empty());
+    }
+}
+
+/// A product with these profiles and one gear, for the per-profile arguments.
+fn profiles_product(profiles: &str, gear: &str) -> String {
+    format!(
+        r#"
+product(
+    id = "demo", version = "0.1.0",
+    sources = [source(id = "gears-rust", at = path("../gears-rust"))],
+    profiles = [embedded(id = "dev"), {profiles}],
+    default_profile = "dev",
+    gears = [{gear}],
+)
+"#
+    )
+}
+
+#[test]
+fn platform_auth_is_recorded_on_the_profile() {
+    let src = profiles_product(
+        r#"kubernetes(id = "prod", discovery = "static", platform_auth = "kube"),
+        self_hosted(id = "local", host = "gateway", worker_discovery = "directory",
+                    platform_auth = "shared_secret")"#,
+        r#"use_gear("api-gateway", source = "gears-rust")"#,
+    );
+    let (intent, codes, messages) = eval(&src);
+    assert!(codes.is_empty(), "{codes:?} {messages}");
+    let intent = intent.unwrap();
+    let auth = |id: &str| intent.profiles[&ProfileId::new(id).unwrap()].platform_auth();
+    assert_eq!(auth("prod"), Some(gearbox_ir::PlatformAuth::Kube));
+    assert_eq!(auth("local"), Some(gearbox_ir::PlatformAuth::SharedSecret));
+    assert_eq!(auth("dev"), None);
+}
+
+#[test]
+fn a_kube_token_off_a_cluster_is_refused() {
+    let src = profiles_product(
+        r#"self_hosted(id = "local", host = "gateway", worker_discovery = "directory",
+                    platform_auth = "kube")"#,
+        r#"use_gear("api-gateway", source = "gears-rust")"#,
+    );
+    let (_, _, messages) = eval(&src);
+    assert!(
+        messages.contains(r#"`platform_auth = "kube"`"#) && messages.contains("self-hosted"),
+        "{messages}"
+    );
+
+    let src = profiles_product(
+        r#"kubernetes(id = "prod", discovery = "static", platform_auth = "mtls")"#,
+        r#"use_gear("api-gateway", source = "gears-rust")"#,
+    );
+    let (_, _, messages) = eval(&src);
+    assert!(messages.contains("mtls"), "{messages}");
+}
+
+#[test]
+fn profile_config_is_recorded_per_declared_profile() {
+    let src = profiles_product(
+        r#"kubernetes(id = "prod", discovery = "static")"#,
+        r#"use_gear("api-gateway", source = "gears-rust",
+                    config = {"public": {"exposed_only": True}},
+                    profile_config = {"prod": {"auth_disabled": False}})"#,
+    );
+    let (intent, codes, messages) = eval(&src);
+    assert!(codes.is_empty(), "{codes:?} {messages}");
+    let intent = intent.unwrap();
+    let gateway = &intent.selected_gears[0];
+    let prod = &gateway.profile_config[&ProfileId::new("prod").unwrap()];
+    assert_eq!(prod["auth_disabled"], serde_json::json!(false));
+    assert_eq!(gateway.profile_config.len(), 1);
+}
+
+#[test]
+fn profile_config_for_an_undeclared_profile_is_reported() {
+    let src = profiles_product(
+        r#"kubernetes(id = "prod", discovery = "static")"#,
+        r#"use_gear("api-gateway", source = "gears-rust", profile_config = {"staging": {}})"#,
+    );
+    let out = GdlEngine::new().eval_product(&identity(), &src);
+    let reported = out
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains("staging"))
+        .expect("the undeclared profile is reported");
+    assert!(
+        reported.message.contains("not declared"),
+        "{}",
+        reported.message
+    );
+    assert_ne!(
+        reported.location.as_ref().map(|l| l.range),
+        Some(gearbox_ir::Range::whole_file()),
+        "at the use_gear call, not the whole file"
+    );
+    assert!(reported.location.is_some());
+
+    let src = profiles_product(
+        r#"kubernetes(id = "prod", discovery = "static")"#,
+        r#"use_gear("api-gateway", source = "gears-rust", profile_config = {"prod": 1})"#,
+    );
+    let (intent, _, messages) = eval(&src);
+    assert!(messages.contains("must be a map"), "{messages}");
+    assert!(intent.is_none());
+}
+
+/// GDL 1.4: `permissions` maps each permission a gear declares to the scopes
+/// that grant it (gears-rust `cpt-cf-adr-operation-permissions` §2).
+#[test]
+fn permissions_map_to_scopes() {
+    let (intent, codes, messages) = eval(&product(
+        r#"permissions = {"settings.values.write": ["operator", "bootstrap"], "lab.view": ["*"], "lab.none": []},"#,
+    ));
+    assert!(codes.is_empty(), "{codes:?} {messages}");
+    let permissions = intent.unwrap().permissions;
+    assert_eq!(
+        permissions["settings.values.write"],
+        ["operator", "bootstrap"]
+    );
+    assert_eq!(permissions["lab.view"], ["*"]);
+    assert!(permissions["lab.none"].is_empty());
+}
+
+/// A malformed name maps nothing the runtime will look up, so it is refused at
+/// the call, as is a scope that is not a string.
+#[test]
+fn a_malformed_permission_mapping_is_refused() {
+    for (extra, named) in [
+        (r#"permissions = {"Settings": ["operator"]},"#, "Settings"),
+        (
+            r#"permissions = {"settings.write": "operator"},"#,
+            "list of scopes",
+        ),
+        (r#"permissions = {"settings.write": [""]},"#, "not a scope"),
+    ] {
+        let (intent, codes, messages) = eval(&product(extra));
+        assert!(intent.is_none() || !codes.is_empty(), "{extra}");
+        assert!(messages.contains(named), "{extra}: {messages}");
+    }
 }

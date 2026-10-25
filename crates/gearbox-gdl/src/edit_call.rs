@@ -846,51 +846,45 @@ pub struct CreateProductParams {
 /// String fields are escaped so the result always parses as GDL.
 #[must_use]
 pub fn render_product_template(params: &CreateProductParams) -> String {
-    let sources = params
+    let sources: Vec<_> = params
         .sources
         .iter()
         .map(|(id, at)| {
-            format!(
-                "        source(id = {}, at = path({}))",
-                quote_string(id),
-                quote_string(&at.replace('\\', "/"))
-            )
+            minijinja::context! {
+                id => quote_string(id),
+                at => quote_string(&at.replace('\\', "/")),
+            }
         })
-        .collect::<Vec<_>>()
-        .join(",\n");
-    let id = quote_string(&params.id);
-    let name = quote_string(&params.name);
-    let version = quote_string(&params.version);
+        .collect();
     let profile_id = quote_string(&params.profile_id);
     let profile_kind = sanitized_profile_kind(&params.profile_kind);
     let profile = render_profile_entry(profile_kind, &profile_id);
-    let comment_name = params.name.replace(['\n', '\r'], " ");
-    format!(
-        r"# Generated product description for {comment_name}.
-#
-# Edit this file in Gearbox Studio. Comments carry the reasoning for choices
-# made here — preserve them when changing the description.
-
-product(
-    id = {id},
-    name = {name},
-    version = {version},
-
-    sources = [
-{sources}
-    ],
-
-    profiles = [
-        {profile},
-    ],
-    default_profile = {profile_id},
-
-    gears = [
-    ],
-)
-"
+    let mut env = minijinja::Environment::new();
+    env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
+    env.render_str(
+        PRODUCT_TEMPLATE,
+        minijinja::context! {
+            comment => params.name.replace(['\n', '\r'], " "),
+            id => quote_string(&params.id),
+            name => quote_string(&params.name),
+            version => quote_string(&params.version),
+            sources => sources,
+            profile => profile,
+            profile_id => profile_id,
+        },
+    )
+    // The template is compiled in and every value it names is passed above, so
+    // a render failure is a bug in this crate, not in the wizard's input.
+    .map_or_else(
+        |e| unreachable!("the product scaffold template renders: {e}"),
+        |body| format!("{}\n", body.trim_end()),
     )
 }
+
+/// The new-product scaffold. It lives with every other template Gearbox
+/// renders, under the generator's `templates/`.
+const PRODUCT_TEMPLATE: &str =
+    include_str!("../../gearbox-engine/src/generate/templates/scaffold/product.gdl.jinja");
 
 /// The scaffold entry for a new profile. `id` arrives already quoted.
 ///

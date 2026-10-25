@@ -136,7 +136,11 @@ test.describe("a product resolved across profiles", () => {
     await openProduct(studio.page, "prod");
     const prod = await shown(studio.page);
     expect(new Set(prod.modes)).toEqual(new Set(["remote"]));
-    expect(new Set(prod.mechanisms)).toEqual(new Set(["consumes-static"]));
+    // Plus the `audit` worker's cluster requests: it runs apart from `cluster`,
+    // and the cluster SDK owns that address (ADR-0026 section 4).
+    expect(new Set(prod.mechanisms)).toEqual(
+      new Set(["consumes-static", "provides-client-wiring"]),
+    );
   });
 
   test("the plugin linked for a profile is the one that profile selected [PRD cpt-gearbox-fr-plugin-selection]", async ({
@@ -211,17 +215,14 @@ test.describe("a product resolved across profiles", () => {
     studio,
   }) => {
     // prod is the only profile with more than one application, so it is the only place
-    // overlap could show. On this corpus it does not, and that is a property of
-    // the corpus rather than of the resolver: the two extra anchors --
-    // `api-contracts` and `api-contracts-consumer` -- declare no `deps`, so their
-    // closures are singletons and nothing can be shared.
+    // overlap could show. Each of its workers serves REST and so includes
+    // `authn-resolver` (GBX0417), whose closure -- the AuthN plugin and
+    // `types-registry` -- the gateway links too: one gear, three binaries.
     //
-    // Reported as not observed rather than passed. The claim is real -- a gear
-    // reached by two closures is linked into both binaries, and drawing that as a
-    // partition would tell a reader a cut exists where none can -- but this
-    // product cannot demonstrate it, and saying otherwise would be a green tick
-    // for an untested claim. The graph view's closure test covers the same
-    // property on the catalogue side, where it *is* observable.
+    // The skip stays for a corpus where that stops being true. The claim is real
+    // -- a gear reached by two closures is linked into both binaries, and drawing
+    // that as a partition would tell a reader a cut exists where none can -- and
+    // a product that cannot demonstrate it should say so rather than pass.
     await openProduct(studio.page, "prod");
     const state = await shown(studio.page);
     expect(state.applications.length).toBeGreaterThan(1);

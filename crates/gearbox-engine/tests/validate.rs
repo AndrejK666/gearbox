@@ -15,23 +15,13 @@
 use std::path::{Path, PathBuf};
 
 use gearbox_engine::{SourceRoot, validate::validate};
-use gearbox_ir::{DiagnosticCode, SourceId};
+use gearbox_ir::{DiagnosticCode, Severity, SourceId};
+
+#[path = "common/corpus.rs"]
+mod corpus_support;
 
 fn gears_rust() -> Option<PathBuf> {
-    // Walks up instead of counting `..`, and the difference is not cosmetic.
-    // `CARGO_MANIFEST_DIR/../../../gears-rust` is the sibling of the *repository*
-    // root, so from a git worktree -- `.claude/worktrees/<name>/crates/...` -- it
-    // resolved to nothing. Every real-tree test then skipped, printed a reason
-    // nobody reads, and the suite went green having touched none of the corpus.
-    // An agent working in a worktree got that silently.
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            return candidate.canonicalize().ok();
-        }
-        dir = dir.parent()?;
-    }
+    corpus_support::root()
 }
 
 fn roots() -> Option<Vec<SourceRoot>> {
@@ -56,12 +46,13 @@ macro_rules! require_tree {
 /// fixture, because the join has to work against a description that also
 /// declares profiles, bindings and cluster scopes -- a fixture with one gear in
 /// it would not exercise the same code.
-fn product_with(extra: &[&str]) -> Option<(tempdir::Dir, gearbox_ir::ProductIntent)> {
+fn product_with(extra: &[&str]) -> (tempdir::Dir, gearbox_ir::ProductIntent) {
     let original = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../products/payments-demo/product.gdl")
         .canonicalize()
-        .ok()?;
-    let text = std::fs::read_to_string(&original).ok()?;
+        .expect("the repository's product description must exist");
+    let text = std::fs::read_to_string(&original)
+        .expect("the repository's product description must be readable");
     let anchor = "        use_gear(\"api-gateway\", source = \"gears-rust\"),";
     assert!(text.contains(anchor), "the product's shape changed");
 
@@ -82,7 +73,7 @@ fn product_with(extra: &[&str]) -> Option<(tempdir::Dir, gearbox_ir::ProductInte
     // not spend time wondering.
     let scan = gearbox_engine::product::load_product(&path, None);
     let intent = scan.intent.expect("the patched product still evaluates");
-    Some((dir, intent))
+    (dir, intent)
 }
 
 /// A minimal temporary directory that cleans itself up.
@@ -127,12 +118,15 @@ mod tempdir {
 }
 
 #[test]
-fn the_real_tree_validates_clean() {
+fn the_real_tree_has_no_unexpected_diagnostics() {
     require_tree!(roots);
     let report = validate(&roots, None);
     let problems: Vec<String> = report
         .diagnostics
         .iter()
+        // The local corpus may be a fork; the CLI still reports its remote URL.
+        .filter(|d| d.code != DiagnosticCode::GdlSourceMismatch)
+        .filter(|d| d.severity != Severity::Hint)
         .map(|d| format!("[{}] {}", d.code, d.message))
         .collect();
     assert!(problems.is_empty(), "{problems:#?}");
@@ -142,10 +136,7 @@ fn the_real_tree_validates_clean() {
 #[test]
 fn the_real_product_selects_only_described_gears() {
     require_tree!(roots);
-    let Some((_dir, intent)) = product_with(&[]) else {
-        eprintln!("skipping: product.gdl not found");
-        return;
-    };
+    let (_dir, intent) = product_with(&[]);
     let report = validate(&roots, Some(&intent));
     assert_eq!(report.error_count(), 0, "{:#?}", report.diagnostics);
 }
@@ -185,11 +176,7 @@ fn a_gear_that_exists_in_rust_but_has_no_description_is_gbx0208() {
     require_tree!(roots);
     let (_fixture, extra) = undescribed_root();
     let roots: Vec<SourceRoot> = roots.into_iter().chain([extra]).collect();
-    let Some((_dir, intent)) = product_with(&["use_gear(\"widget\", source = \"gears-rust\"),"])
-    else {
-        eprintln!("skipping: product.gdl not found");
-        return;
-    };
+    let (_dir, intent) = product_with(&["use_gear(\"widget\", source = \"gears-rust\"),"]);
     let report = validate(&roots, Some(&intent));
 
     let found = report
@@ -198,7 +185,7 @@ fn a_gear_that_exists_in_rust_but_has_no_description_is_gbx0208() {
         .find(|d| d.code == DiagnosticCode::ValidateMissingDescription)
         .expect("GBX0208");
     assert!(
-        found.message.contains("widgets/widget"),
+        found.message.replace('\\', "/").contains("widgets/widget"),
         "the crate has to be named, or the operator cannot act: {}",
         found.message
     );
@@ -218,7 +205,7 @@ fn a_gear_that_exists_in_rust_but_has_no_description_is_gbx0208() {
         .as_deref()
         .expect("GBX0208 cites the attribute");
     assert!(
-        evidence.contains("/src/"),
+        evidence.replace('\\', "/").contains("/src/"),
         "the evidence path is joined onto the crate directory and must include \
          `src/`, or it points at a file that does not exist: {evidence}"
     );
@@ -227,12 +214,7 @@ fn a_gear_that_exists_in_rust_but_has_no_description_is_gbx0208() {
 #[test]
 fn a_gear_nothing_declares_is_gbx0301_with_a_spelling_hint() {
     require_tree!(roots);
-    let Some((_dir, intent)) =
-        product_with(&["use_gear(\"api-gatewey\", source = \"gears-rust\"),"])
-    else {
-        eprintln!("skipping: product.gdl not found");
-        return;
-    };
+    let (_dir, intent) = product_with(&["use_gear(\"api-gatewey\", source = \"gears-rust\"),"]);
     let report = validate(&roots, Some(&intent));
 
     let found = report
@@ -256,12 +238,7 @@ fn a_far_away_name_gets_no_guess() {
     // A hint is a guess, and a guess that is wrong sends the reader down the
     // wrong path. Above the distance threshold there is simply no suggestion.
     require_tree!(roots);
-    let Some((_dir, intent)) =
-        product_with(&["use_gear(\"zzz-nonesuch\", source = \"gears-rust\"),"])
-    else {
-        eprintln!("skipping: product.gdl not found");
-        return;
-    };
+    let (_dir, intent) = product_with(&["use_gear(\"zzz-nonesuch\", source = \"gears-rust\"),"]);
     let report = validate(&roots, Some(&intent));
     let help = report
         .diagnostics

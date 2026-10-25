@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use gearbox_ir::{
     ApplicationId, ApplicationPin, BindingIntent, BindingMode, ClusterScopeIntent, ContractId,
     DeploymentProfileDecl, Diagnostic, DiagnosticCode, Diagnostics, Discovery, GearId,
-    GearSelection, Location, PluginSelection, Preference, ProductIntent, ProfileId,
+    GearSelection, Location, PlatformAuth, PluginSelection, Preference, ProductIntent, ProfileId,
     ProviderBinding, SourceDecl, SourceId, Transport,
 };
 
@@ -115,6 +115,31 @@ pub fn build(
 
     let sources = build_sources(uri, decl, diagnostics);
 
+    let ui = decl.ui.as_ref().and_then(|ui| {
+        let modules: Result<std::collections::BTreeSet<_>, _> = ui
+            .modules
+            .iter()
+            .map(|id| GearId::new(id.clone()))
+            .collect();
+        match modules {
+            Ok(modules) => Some(gearbox_ir::ui::ProductUi {
+                shell: ui.shell.clone(),
+                sdk: ui.sdk.clone(),
+                source: ui.source.clone(),
+                npm_lock: ui.npm_lock.clone(),
+                entry_points: ui.entry_points.iter().cloned().collect(),
+                modules,
+            }),
+            Err(error) => {
+                diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::GdlEval,
+                    format!("invalid UI module id: {error}"),
+                    "use gear ids in ui_product(modules = [...])",
+                ));
+                None
+            }
+        }
+    });
     Some(ProductIntent {
         id: decl.id.clone(),
         display_name: decl.display_name.clone(),
@@ -130,6 +155,8 @@ pub fn build(
         sources,
         profiles,
         default_profile,
+        ui,
+        permissions: decl.permissions.clone(),
     })
 }
 
@@ -382,6 +409,22 @@ fn build_gears(
                 }
             }
         }
+        let profile_config = record
+            .profile_config
+            .iter()
+            .filter_map(|(name, config)| {
+                // Reported at the `use_gear(...)` that names it.
+                let scoped = scoped_profiles_at(
+                    &Location::or_file(record.declared_at.as_ref(), uri),
+                    std::slice::from_ref(name),
+                    &format!("use_gear(\"{gear}\", profile_config = ...)"),
+                    profiles,
+                    diagnostics,
+                );
+                let profile = scoped.into_iter().next()?;
+                Some((profile, config.iter().cloned().collect()))
+            })
+            .collect();
         selected.push(GearSelection {
             gear,
             source,
@@ -389,6 +432,7 @@ fn build_gears(
             package: record.package.clone(),
             features: record.features.clone(),
             config: record.config.iter().cloned().collect(),
+            profile_config,
             plugins,
             declared_at: record.declared_at.clone(),
         });
@@ -514,6 +558,7 @@ fn build_bindings(
             mode: binding_mode(&record.mode),
             transport: record.transport.as_deref().and_then(transport),
             endpoint: record.endpoint.clone(),
+            critical: record.critical,
             profiles: scoped,
             declared_at: record.declared_at.clone(),
         });
@@ -594,6 +639,19 @@ fn build_application_pins(
             declared_at: record.declared_at.clone(),
             name,
             anchor,
+            include: record
+                .include
+                .iter()
+                .filter_map(|id| {
+                    gear_id(
+                        record.declared_at.as_ref(),
+                        uri,
+                        id,
+                        "application.include",
+                        diagnostics,
+                    )
+                })
+                .collect(),
             // Not checked here: whether the anchor declares this role is a
             // question for the catalogue, which this layer does not have.
             role: record.role.clone(),
@@ -651,6 +709,23 @@ fn scoped_profiles(
     profiles: &Profiles,
     diagnostics: &mut Diagnostics,
 ) -> BTreeSet<ProfileId> {
+    scoped_profiles_at(
+        &Location::file(uri.to_owned()),
+        names,
+        what,
+        profiles,
+        diagnostics,
+    )
+}
+
+/// As [`scoped_profiles`], reported at `at`.
+fn scoped_profiles_at(
+    at: &Location,
+    names: &[String],
+    what: &str,
+    profiles: &Profiles,
+    diagnostics: &mut Diagnostics,
+) -> BTreeSet<ProfileId> {
     let mut out = BTreeSet::new();
     for name in names {
         match ProfileId::new(name.clone()) {
@@ -658,7 +733,7 @@ fn scoped_profiles(
                 out.insert(id);
             }
             Ok(id) => diagnostics.push(invalid(
-                Location::file(uri.to_owned()),
+                at.clone(),
                 format!("{what} is scoped to profile `{id}`, which is not declared"),
                 format!(
                     "declared profiles: {}",
@@ -666,7 +741,7 @@ fn scoped_profiles(
                 ),
             )),
             Err(e) => diagnostics.push(invalid(
-                Location::file(uri.to_owned()),
+                at.clone(),
                 format!("{what} is scoped to `{name}`, which is not a valid profile id: {e}"),
                 "profile ids are kebab-case",
             )),
@@ -803,6 +878,9 @@ fn deployment_profile(
     match record.kind.as_str() {
         "embedded" => Some(DeploymentProfileDecl::Embedded {
             id: id.clone(),
+            database: record.database.as_ref().map(|db| db.settings.clone()),
+            sqlite_databases: record.sqlite_databases.clone(),
+            development: record.development,
             declared_at: record.declared_at.clone(),
         }),
         "self-hosted" => {
@@ -833,6 +911,8 @@ fn deployment_profile(
             };
             Some(DeploymentProfileDecl::SelfHosted {
                 id: id.clone(),
+                database: record.database.as_ref().map(|db| db.settings.clone()),
+                sqlite_databases: record.sqlite_databases.clone(),
                 host,
                 discovery: discovery(
                     uri,
@@ -843,11 +923,21 @@ fn deployment_profile(
                 )?,
                 target_dir: record.target_dir.clone(),
                 cargo_profile,
+                platform_auth: platform_auth(
+                    uri,
+                    record,
+                    id,
+                    &[PlatformAuth::SharedSecret],
+                    diagnostics,
+                )?,
+                development: record.development,
                 declared_at: record.declared_at.clone(),
             })
         }
         "kubernetes" => Some(DeploymentProfileDecl::Kubernetes {
             id: id.clone(),
+            database: record.database.as_ref().map(|db| db.settings.clone()),
+            sqlite_databases: record.sqlite_databases.clone(),
             discovery: discovery(
                 uri,
                 id,
@@ -857,6 +947,14 @@ fn deployment_profile(
             )?,
             namespace: record.namespace.clone(),
             image_registry: record.image_registry.clone(),
+            platform_auth: platform_auth(
+                uri,
+                record,
+                id,
+                &[PlatformAuth::Kube, PlatformAuth::SharedSecret],
+                diagnostics,
+            )?,
+            development: record.development,
             declared_at: record.declared_at.clone(),
         }),
         other => {
@@ -868,6 +966,44 @@ fn deployment_profile(
             None
         }
     }
+}
+
+/// `platform_auth = "..."`, when it is one this kind of profile can carry: a
+/// `ServiceAccount` token exists only on a cluster. `Some(None)` when absent;
+/// `None` when it was reported.
+#[expect(
+    clippy::option_option,
+    reason = "absent (`Some(None)`) and refused (`None`, so `?` drops the profile) are different answers"
+)]
+fn platform_auth(
+    uri: &str,
+    record: &ProfileRecord,
+    id: &ProfileId,
+    allowed: &[PlatformAuth],
+    diagnostics: &mut Diagnostics,
+) -> Option<Option<PlatformAuth>> {
+    let Some(raw) = record.platform_auth.as_deref() else {
+        return Some(None);
+    };
+    if let Some(auth) = allowed.iter().find(|a| a.as_str() == raw) {
+        return Some(Some(*auth));
+    }
+    diagnostics.push(invalid(
+        Location::or_file(record.declared_at.as_ref(), uri),
+        format!(
+            "profile `{id}` sets `platform_auth = \"{raw}\"`, which a {} profile cannot carry",
+            record.kind
+        ),
+        format!(
+            "use {}",
+            allowed
+                .iter()
+                .map(|a| format!("`\"{}\"`", a.as_str()))
+                .collect::<Vec<_>>()
+                .join(" or ")
+        ),
+    ));
+    None
 }
 
 fn is_cargo_profile_name(value: &str) -> bool {

@@ -22,26 +22,17 @@ use gearbox_ir::{
     ApplicationKind, Catalogue, DiagnosticCode, GearId, ProductIntent, ProfileId, SourceId,
 };
 
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn gears_rust() -> Option<PathBuf> {
-    // Walks up instead of counting `..`, and the difference is not cosmetic.
-    // `CARGO_MANIFEST_DIR/../../../gears-rust` is the sibling of the *repository*
-    // root, so from a git worktree -- `.claude/worktrees/<name>/crates/...` -- it
-    // resolved to nothing. Every real-tree test then skipped, printed a reason
-    // nobody reads, and the suite went green having touched none of the corpus.
-    // An agent working in a worktree got that silently.
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            return candidate.canonicalize().ok();
-        }
-        dir = dir.parent()?;
-    }
+    corpus_support::root()
 }
 
 fn catalogue() -> Option<Catalogue> {
     let root = gears_rust()?;
-    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root).ok()?;
+    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root)
+        .unwrap_or_else(|error| panic!("the discovered corpus must be readable: {error}"));
     Some(load_catalogue(&[source]).catalogue)
 }
 
@@ -149,7 +140,17 @@ fn the_severable_edge_actually_moves_a_gear_out() {
 
     let worker = &local.partition.applications[1];
     assert_eq!(worker.kind, ApplicationKind::Worker);
-    assert_eq!(worker.gears, vec![gid("api-contracts")]);
+    // The moved gear, plus the tenant authenticator the product includes so the
+    // worker can serve REST at all (GBX0417), with what `deps` links to it.
+    assert_eq!(
+        worker.gears,
+        vec![
+            gid("api-contracts"),
+            gid("types-registry"),
+            gid("authn-resolver"),
+            gid("static-authn-plugin"),
+        ]
+    );
 }
 
 #[test]
@@ -324,10 +325,12 @@ fn kubernetes_fills_the_chart_fields_and_binds_every_interface() {
         "registry.example.com/payments/gbx-api-gateway:0.1.0"
     );
     assert_eq!(gateway.subchart.as_deref(), Some(gateway.name.as_str()));
+    // `prod` is a production profile: neighbours dial the gateway's internal
+    // REST listener -- not the gRPC hub, and not the exposed-only public one.
     assert_eq!(
         gateway.service_port,
-        Some(8087),
-        "neighbours dial REST, not the gRPC hub: listens={:?}",
+        Some(8088),
+        "neighbours dial internal REST: listens={:?}",
         gateway.listens
     );
     for endpoint in &gateway.listens {
@@ -359,6 +362,53 @@ fn kubernetes_fills_the_chart_fields_and_binds_every_interface() {
 
 #[path = "support/resolve_fixtures.rs"]
 mod support;
+
+#[test]
+fn a_rest_host_pin_names_the_host_instead_of_creating_a_worker() {
+    let cat = support::catalogue_of(vec![
+        support::gear_with_caps(
+            "gateway",
+            &[
+                gearbox_ir::RuntimeCap::RestHost,
+                gearbox_ir::RuntimeCap::Rest,
+            ],
+            &[],
+        ),
+        support::gear_with_caps("events", &[gearbox_ir::RuntimeCap::Rest], &[]),
+        support::gear_with_caps("settings", &[gearbox_ir::RuntimeCap::Rest], &[]),
+    ]);
+    let mut intent = support::kubernetes(
+        &["gateway", "events", "settings"],
+        gearbox_ir::Discovery::Static,
+    );
+    support::pin(&mut intent, "demo-gateway", "gateway", 1);
+    support::pin(&mut intent, "demo-worker", "settings", 1);
+    let result = resolve(&cat, &intent, &pid("prod"));
+    assert_eq!(result.partition.applications.len(), 2);
+    let host = result
+        .partition
+        .applications
+        .iter()
+        .find(|app| app.name.as_str() == "demo-gateway")
+        .unwrap();
+    assert_eq!(host.kind, ApplicationKind::Host);
+    assert!(host.gears.contains(&gid("gateway")));
+    assert!(host.gears.contains(&gid("events")));
+    let worker = result
+        .partition
+        .applications
+        .iter()
+        .find(|app| app.name.as_str() == "demo-worker")
+        .unwrap();
+    assert_eq!(worker.kind, ApplicationKind::Worker);
+    assert!(worker.gears.contains(&gid("settings")));
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagnosticCode::TopologyRestHostInWorker)
+    );
+}
 
 #[test]
 fn two_pins_on_one_anchor_are_a_duplicate() {
@@ -429,6 +479,65 @@ fn two_pins_differing_by_role_are_not_a_duplicate() {
     );
 }
 
+/// An `include` places the gear. A provider of a severable edge
+/// used to become a worker of its own as well, so the gear ran in two processes
+/// and its remote consumer was bound to the stray copy.
+#[test]
+fn an_included_provider_is_placed_by_the_include_alone() {
+    let mut cat = support::catalogue_with_declared_edge();
+    cat.gears.insert(gid("other"), support::descriptor("other"));
+    let mut intent = support::self_hosted_intent(&["host", "provider", "other"]);
+    support::pin(&mut intent, "worker", "other", 1);
+    intent.application_pins[0].include.insert(gid("provider"));
+
+    let r = resolve(&cat, &intent, &pid("local"));
+    let holding: Vec<&str> = r
+        .partition
+        .applications
+        .iter()
+        .filter(|a| a.gears.contains(&gid("provider")))
+        .map(|a| a.name.as_str())
+        .collect();
+    assert_eq!(holding, ["worker"], "{:?}", r.partition.applications);
+    assert!(
+        !r.partition
+            .applications
+            .iter()
+            .any(|a| a.anchor == gid("provider")),
+        "no process is anchored on the included provider"
+    );
+}
+
+#[test]
+fn an_application_cannot_include_a_gear_outside_the_product() {
+    let cat = support::catalogue_of(vec![
+        support::gear_with_caps("host", &[], &[]),
+        support::gear_with_caps("moved", &[], &[]),
+        support::gear_with_caps("unselected", &[], &[]),
+    ]);
+    let mut intent = support::self_hosted(
+        &["host", "moved"],
+        gearbox_ir::Discovery::Static,
+        Some("target"),
+    );
+    support::pin(&mut intent, "worker", "moved", 1);
+    intent.application_pins[0].include.insert(gid("unselected"));
+    let result = resolve(&cat, &intent, &pid("local"));
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagnosticCode::GdlEval && d.message.contains("unselected"))
+    );
+    assert!(
+        !result
+            .partition
+            .applications
+            .iter()
+            .any(|app| app.gears.contains(&gid("unselected")))
+    );
+}
+
 #[test]
 fn a_pin_naming_a_role_the_anchor_does_not_declare_is_refused() {
     // The check cannot live in GDL lowering: whether a gear declares a role is
@@ -492,4 +601,67 @@ fn a_product_id_that_is_not_an_application_name_falls_back_to_the_anchor() {
     let r = resolve(&cat, &intent, &pid("dev"));
     assert_eq!(r.partition.applications.len(), 1);
     assert_eq!(r.partition.applications[0].name.as_str(), "host");
+}
+
+fn duplicated(r: &gearbox_engine::resolve::Resolution) -> Vec<&str> {
+    r.diagnostics
+        .iter()
+        .filter(|d| d.code == gearbox_ir::DiagnosticCode::PlacementDuplicatedByDeps)
+        .map(|d| d.message.as_str())
+        .collect()
+}
+
+#[test]
+fn a_pinned_gear_a_deps_chain_also_links_is_refused() {
+    // OAGW is given its own application while `lab-ui-backend` still
+    // `deps` on it, so the gateway would run a second OAGW.
+    let cat = support::catalogue_of(vec![
+        support::gear_with_caps("lab-ui-backend", &[], &["oagw"]),
+        support::gear_with_caps("oagw", &[], &[]),
+    ]);
+    let mut intent = support::self_hosted(
+        &["lab-ui-backend", "oagw"],
+        gearbox_ir::Discovery::Static,
+        Some("t"),
+    );
+    support::pin(&mut intent, "demo-oagw", "oagw", 1);
+    let r = resolve(&cat, &intent, &pid("local"));
+    let messages = duplicated(&r);
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("lab-ui-backend -> oagw")),
+        "{messages:?}"
+    );
+
+    // Without the dep there is one OAGW and nothing to report.
+    let cat = support::catalogue_of(vec![
+        support::gear_with_caps("lab-ui-backend", &[], &[]),
+        support::gear_with_caps("oagw", &[], &[]),
+    ]);
+    let r = resolve(&cat, &intent, &pid("local"));
+    assert!(duplicated(&r).is_empty(), "{:?}", duplicated(&r));
+    let copies = r
+        .partition
+        .applications
+        .iter()
+        .filter(|a| a.gears.iter().any(|g| g.as_str() == "oagw"))
+        .count();
+    assert_eq!(copies, 1);
+}
+
+#[test]
+fn a_gear_replicated_by_design_is_not_a_duplicate() {
+    let cat = support::catalogue_of(vec![
+        support::gear_with_caps("api", &[], &["types-registry"]),
+        support::gear_with_caps("types-registry", &[], &[]),
+    ]);
+    let mut intent = support::self_hosted(
+        &["api", "types-registry"],
+        gearbox_ir::Discovery::Static,
+        Some("t"),
+    );
+    support::pin(&mut intent, "registry", "types-registry", 1);
+    let r = resolve(&cat, &intent, &pid("local"));
+    assert!(duplicated(&r).is_empty(), "{:?}", duplicated(&r));
 }

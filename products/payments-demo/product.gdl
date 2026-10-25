@@ -1,3 +1,5 @@
+gdl_version = "1.4"
+
 # The Payments Demo product.
 #
 # All three deployment profiles are declared as DATA and selected at resolve
@@ -13,18 +15,34 @@ product(
 
     sources = [source(id = "gears-rust", at = path("../../../gears-rust"))],
 
+    # Service Discovery's listing declares `directory.read` (gears-rust
+    # cpt-cf-adr-operation-permissions); any authenticated caller could list
+    # before, and still can.
+    permissions = {"directory.read": ["*"]},
+
     profiles = [
-        embedded(id = "dev"),
+        embedded(development = True, id = "dev", database = postgres(
+            host = "127.0.0.1", user = "postgres", password = "${GEARS_PG_PASSWORD}",
+            params = {"sslmode": "disable"},
+        )),
         self_hosted(
+            development = True,
             id = "local",
             host = "gateway",
             worker_discovery = "directory",
+            database = postgres(host = "127.0.0.1", user = "postgres",
+                password = "${GEARS_PG_PASSWORD}", params = {"sslmode": "disable"}),
             target_dir = "../../../gears-rust/target",
         ),
+        # A production profile: its units authenticate each other with
+        # ServiceAccount tokens (GBX0325 is an error here, not a warning).
         kubernetes(
             id = "prod",
+            platform_auth = "kube",
             discovery = "static",
             namespace = "payments",
+            database = postgres(host = "postgres.example.com", user = "payments",
+                password = "${GEARS_PG_PASSWORD}", existing_secret = "payments-db"),
             image_registry = "registry.example.com/payments",
         ),
     ],
@@ -64,14 +82,25 @@ product(
                 # `local` takes the static plugin for the same reason `dev`
                 # does: it is a one-machine development profile, and validating
                 # tokens against a real issuer there is a decision nobody wants.
-                # Moving it here was not cosmetic -- the host refused to start
-                # with `missing field jwt`, because `OidcAuthNGearConfig.jwt` has
-                # no default and `oidc-authn-plugin` does not expose it, so no
-                # description can supply it. Found by running the product.
+                # `prod` states the issuer and audience the plugin validates
+                # against (`jwt`, which `OidcAuthNGearConfig` requires).
                 plugin("static-authn-plugin", profiles = ["dev", "local"],
                        config = {"mode": "accept_all"}),
-                plugin("oidc-authn-plugin", profiles = ["prod"],
-                       config = {"issuer": "https://id.example.com"}),
+                plugin("oidc-authn-plugin", profiles = ["prod"], config = {
+                    "jwt": {
+                        "trusted_issuers": [{"issuer": "https://id.example.com"}],
+                        "expected_audience": ["payments"],
+                        "claim_mapping": {
+                            "subject_id": "sub",
+                            "subject_tenant_id": "tenant_id",
+                            "token_scopes": "scope",
+                        },
+                    },
+                    "s2s_oauth": {
+                        "discovery_url": "https://id.example.com",
+                        "default_subject_type": "gts.cf.core.security.subject_user.v1~",
+                    },
+                }),
             ],
         ),
     ],
@@ -122,7 +151,13 @@ product(
     ],
 
     applications = [
-        application("audit", anchor = "api-contracts-consumer", replicas = 2, profiles = ["prod"]),
+        # A worker that serves REST validates tenant tokens itself, so each one
+        # links the tenant authenticator (GBX0417). `api-contracts` is the
+        # provider side of the remote PaymentApi binding.
+        application("api-contracts", anchor = "api-contracts", include = ["authn-resolver"],
+                    profiles = ["local", "prod"]),
+        application("audit", anchor = "api-contracts-consumer", include = ["authn-resolver"],
+                    replicas = 2, profiles = ["prod"]),
     ],
 
     preferences = [prefer.existing_infrastructure(), prefer.fewer_applications()],

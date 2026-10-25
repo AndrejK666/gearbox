@@ -503,6 +503,24 @@ fn a_new_directory_inside_the_workspace_is_allowed() {
     assert!(!wanted.exists(), "the gate resolves; it does not create");
 }
 
+/// A product's templates directory is written into the product, so it is held to
+/// the workspace: generation may create it there, and nowhere else.
+#[test]
+fn a_products_templates_directory_is_written_only_inside_the_workspace() {
+    let tmp = scratch("templates");
+    let workspace = tmp.join("ws");
+    std::fs::create_dir_all(workspace.join("products/p")).unwrap();
+    let state = write_state(workspace.clone());
+    writable_templates_dir(&state, &workspace.join("products/p/templates"))
+        .expect("a templates directory beside a product in the workspace");
+
+    let elsewhere = tmp.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let err = writable_templates_dir(&state, &elsewhere.join("templates"))
+        .expect_err("a declared templates directory outside the workspace");
+    assert!(err.contains("outside the declared workspace"), "{err}");
+}
+
 /// A folder the person chose outside the workspace is a generation target when it
 /// is new, holds only dotfiles, or was generated before, and nothing else is.
 ///
@@ -1403,4 +1421,135 @@ fn a_scaffold_with_the_toolkit_is_a_gear_the_catalogue_projects() {
             .map(|d| (d.code, &d.message))
             .collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn a_plugin_scaffold_outside_its_hosts_source_resolves_in_a_product() {
+    use crate::protocol::{GearKind, PluginScaffold};
+    let workspace = scratch("plugin-cross-source");
+    let corpus = workspace.join("corpus");
+    let plugins = workspace.join("plugins");
+    std::fs::create_dir_all(&plugins).unwrap();
+    let files = [
+        (
+            "libs/toolkit/Cargo.toml",
+            "[package]\nname = \"cf-gears-toolkit\"\nversion = \"0.1.0\"\n[lib]\nname = \"toolkit\"\n",
+        ),
+        (
+            "host/Cargo.toml",
+            "[package]\nname = \"host\"\nversion = \"0.1.0\"\n[lib]\nname = \"host\"\n",
+        ),
+        (
+            "host/src/lib.rs",
+            "#[toolkit::gear(name = \"host\")] pub struct Host;",
+        ),
+        (
+            "sdk/Cargo.toml",
+            "[package]\nname = \"host-sdk\"\nversion = \"0.1.0\"\n[lib]\nname = \"host_sdk\"\n",
+        ),
+        (
+            "sdk/src/lib.rs",
+            r#"pub trait HostPluginClient: Send + Sync {} #[gts_type_schema(base = PluginV1, type_id = gts_id!("cf.toolkit.plugins.plugin.v1~x.host.plugin.v1~"), description = "d", properties = "")] pub struct HostSpec;"#,
+        ),
+        (
+            "host/gear.gdl",
+            r#"gear(name = "Host", maturity = "stable", package = cargo(crate_name = "host", lib = "host", path = "."), sdk = cargo(crate_name = "host-sdk", lib = "host_sdk", path = "../sdk"), extension_points = [extension_point("x.host.plugin.v1~", trait = "HostPluginClient")])"#,
+        ),
+    ];
+    for (relative, body) in files {
+        let path = corpus.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+    let mut state = state_with_roots(workspace.clone(), std::slice::from_ref(&corpus));
+    let host_scan = gearbox_engine::load_catalogue(&state.roots);
+    assert!(
+        !host_scan.catalogue.diagnostics.has_errors(),
+        "{:?}",
+        host_scan.catalogue.diagnostics
+    );
+    let point = &host_scan.catalogue.gears[&GearId::new("host").unwrap()].extension_points[0];
+    let response = scaffold_gear(
+        &mut state,
+        RequestId::from(1),
+        &ScaffoldGearParams {
+            id: "new-plugin".to_owned(),
+            name: "New Plugin".to_owned(),
+            version: "0.1.0".to_owned(),
+            kind: GearKind::Plugin,
+            plugin: Some(PluginScaffold {
+                spec: point.spec.clone(),
+                trait_ident: point.trait_ident.clone(),
+                crate_name: "host-sdk".to_owned(),
+                lib_ident: "host_sdk".to_owned(),
+                path: "../../corpus/sdk".to_owned(),
+            }),
+            destination_dir: plugins.display().to_string(),
+            dry_run: false,
+        },
+    );
+    assert!(response.response_result.is_ok(), "{response:?}");
+    let gdl = std::fs::read_to_string(plugins.join("new-plugin/gear.gdl")).unwrap();
+    assert!(
+        !gdl.lines()
+            .any(|line| line.trim_start().starts_with("sdk ="))
+    );
+    let mut roots = state.roots.clone();
+    roots.push(
+        gearbox_engine::SourceRoot::open(SourceId::new("plugins").unwrap(), &plugins).unwrap(),
+    );
+    let scan = gearbox_engine::load_catalogue(&roots);
+    assert!(
+        !scan.catalogue.diagnostics.has_errors(),
+        "{:?}",
+        scan.catalogue.diagnostics
+    );
+    assert!(
+        scan.catalogue.gears[&GearId::new("new-plugin").unwrap()]
+            .implements
+            .as_ref()
+            .unwrap()
+            .point
+            .is_some()
+    );
+    let product =
+        gearbox_gdl::edit::render_product_template(&gearbox_gdl::edit::CreateProductParams {
+            id: "scaffold-product".to_owned(),
+            name: "Scaffold Product".to_owned(),
+            version: "0.1.0".to_owned(),
+            sources: vec![
+                ("corpus".to_owned(), "corpus".to_owned()),
+                ("plugins".to_owned(), "plugins".to_owned()),
+            ],
+            profile_kind: "embedded".to_owned(),
+            profile_id: "dev".to_owned(),
+        });
+    let added =
+        gearbox_gdl::edit::add_gear("file:///product.gdl", &product, "host", "corpus").unwrap();
+    let added = gearbox_gdl::edit::add_gear_plugin(
+        "file:///product.gdl",
+        added.changed().unwrap(),
+        "host",
+        "new-plugin",
+    )
+    .unwrap();
+    let product_path = workspace.join("product.gdl");
+    std::fs::write(&product_path, added.changed().unwrap()).unwrap();
+    let intent = gearbox_engine::load_product(&product_path, None)
+        .intent
+        .unwrap();
+    let resolution = gearbox_engine::resolve::resolve(
+        &scan.catalogue,
+        &intent,
+        &gearbox_ir::ProfileId::new("dev").unwrap(),
+    );
+    assert!(!resolution.has_errors(), "{:?}", resolution.diagnostics);
+    assert!(
+        resolution
+            .closure
+            .members
+            .contains_key(&GearId::new("new-plugin").unwrap())
+    );
+    // Generation's ownership rule still refuses a scaffold inside the corpus.
+    assert!(writable_out_root(&state, &corpus.join("new-plugin")).is_err());
 }

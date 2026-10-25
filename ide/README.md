@@ -1,5 +1,17 @@
 # Gearbox Studio (Eclipse Theia)
 
+## Native macOS ARM64 application
+
+From this directory, use Node 24 and run `npm ci`, then `npm run package:mac`.
+The local application is `../dist/desktop/mac-arm64/Gearbox.app`. It contains
+production Theia/Electron, the optimized release Gearbox CLI, and the official
+standalone Darwin ARM64 Node build matching the packaging Node version. Packaging
+checks the Node archive against the vendor's published SHA256 list. Native npm
+modules are rebuilt for Electron. The application uses this checkout as its
+workspace; generated product bundles are not packaged. The local app is
+unsigned and is intended for this Mac; distribution signing/notarization is a
+separate release step.
+
 The editor front end for the Gearbox engine. Domain views today: **Start**, **Catalogue**,
 **Product**, **Inspector**, **Graph**, **Conflicts**, **Lock**, **Generate** and the **AI
 Chat** (ADR-0017), which answers from the resolver's own output through typed read-only tools. Two working
@@ -35,11 +47,22 @@ bundle is on disk. Both pass `ANTHROPIC_API_KEY` through if it is set, e.g.
 root (see `.env.example`) for `ANTHROPIC_API_KEY` and refuses to pass on a `NODE_OPTIONS` that
 leaves Node with no CA store. A variable already exported in the shell always wins over the file.
 
-The AI chat is optional: resolving, generating and every diagnostic work without a key, and the
-chat says so rather than failing. Its key comes from **Gearbox: Settings** (`gearbox.ai.apiKey`,
-which wins) or from `ANTHROPIC_API_KEY` in the backend's environment. **Gearbox: Check AI
-Connection** probes the provider and reports what the backend actually sees -- it sends no key, so
-it works before one is set.
+The AI chat is optional: resolving, generating and diagnostics work without
+it. When an installed Claude Code is signed in, the Gearbox chat uses
+that existing login through Anthropic's Agent SDK. Gearbox never reads or copies
+the OAuth token; Claude Code manages Keychain access and refresh. The CLI is found
+in the usual native installation or the installed Anthropic VS Code extension;
+`GEARBOX_CLAUDE_BIN` can select an absolute CLI path. Built-in filesystem/shell
+tools, user/project settings and persisted SDK sessions are disabled. Only the
+current request's Gearbox tools are exposed through an in-process MCP server;
+Theia's existing confirmation and product-edit preview still govern writes.
+
+The existing Anthropic API provider remains a fallback. Its key comes from
+**Gearbox: Settings** (`gearbox.ai.apiKey`) or `ANTHROPIC_API_KEY` in the backend
+environment. **Gearbox: Check AI Connection** still probes that API transport,
+not Claude Code's subscription login. For an explicit live SDK/tool integration
+check, run `node scripts/claude-code-smoke.cjs --live`; it consumes a model request
+through the existing login and prints no credential or account details.
 
 Studio opens its own workspace: the repository root plus every source root the engine reports. That
 is what gives the Explorer something to browse, lets a generated `product.lock` be opened at all, and

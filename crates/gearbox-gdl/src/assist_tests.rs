@@ -335,3 +335,47 @@ fn the_product_vocabulary_offers_product_constructs() {
         "a product description cannot declare a gear: {labels:?}"
     );
 }
+
+/// Every parameter a person can write has a sentence for completion and hover.
+///
+/// This is what tells a reader which fields exist and what each is for, so
+/// none can be left bare: a new parameter without a `# Arguments` line fails
+/// here, in the commit that adds it.
+#[test]
+fn every_parameter_is_documented() {
+    let mut bare = Vec::new();
+    for file in ["gear.gdl", "product.gdl"] {
+        let docs = vocabulary_for(std::path::Path::new(file)).expect("a vocabulary");
+        for (name, item) in &docs.members {
+            if !matches!(item, DocItem::Member(DocMember::Function(_))) {
+                continue;
+            }
+            for param in parameters(docs, name, &[]) {
+                if param.detail.as_deref().is_none_or(|d| d.trim().is_empty()) {
+                    bare.push(format!("{file}: {name}({})", param.label));
+                }
+            }
+        }
+    }
+    assert!(
+        bare.is_empty(),
+        "{} undocumented:\n{}",
+        bare.len(),
+        bare.join("\n")
+    );
+}
+
+#[test]
+fn a_parameter_sentence_survives_its_line_breaks() {
+    let docs = vocabulary_for(std::path::Path::new("gear.gdl")).expect("a vocabulary");
+    let sdk = parameters(docs, "gear", &[])
+        .into_iter()
+        .find(|p| p.label == "sdk")
+        .expect("gear(sdk)");
+    let detail = sdk.detail.expect("documented");
+    assert!(
+        detail.starts_with("The gear's SDKs, in any language"),
+        "{detail}"
+    );
+    assert!(detail.ends_with("A plugin has none."), "{detail}");
+}

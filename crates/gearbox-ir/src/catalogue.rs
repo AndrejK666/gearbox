@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::contract::{CargoRef, ContractDescriptor, ProviderDescriptor};
+use crate::contract::{CargoRef, ContractDescriptor, PackageRef, ProviderDescriptor};
 use crate::diagnostics::Diagnostics;
 use crate::ids::{ContractId, GearId, RelPath, SourceId};
 use crate::requirement::{ClusterProviderDecl, Requirement};
@@ -119,8 +119,11 @@ pub enum Visibility {
 ///
 /// Ordered by promise, so `<` reads as "less settled than" -- except
 /// `Deprecated`, which is last because it is the end of the line, not because
-/// it promises most. A gear with no code is not here: it is `maturity =
-/// "design"`, kept in [`Catalogue::designs`].
+/// it promises most. A gear with no code is not here: it is `implementation =
+/// "design"`, has no maturity, and is kept in [`Catalogue::designs`].
+///
+/// One of two axes. This one is what a gear promises its users; how much of
+/// it is written is [`Implementation`].
 ///
 /// No `Default`. The description must say, and a missing value is refused at
 /// evaluation: `Stable` as a default makes forgetting the field a promise.
@@ -138,6 +141,14 @@ pub enum Maturity {
 }
 
 impl Maturity {
+    /// Every level, in order of increasing promise.
+    pub const ALL: [Self; 4] = [
+        Self::Experimental,
+        Self::Preview,
+        Self::Stable,
+        Self::Deprecated,
+    ];
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -147,6 +158,122 @@ impl Maturity {
             Self::Deprecated => "deprecated",
         }
     }
+
+    /// The level a description spells, if it is one.
+    #[must_use]
+    pub fn parse(spelling: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.as_str() == spelling)
+    }
+}
+
+/// How much of a gear is written: the status `GEARS.md` marks with `[ ]` and
+/// `[x]`, for the whole gear.
+///
+/// The other axis from [`Maturity`]. A `stable` gear may still have work
+/// planned; an `experimental` one may be complete. Absent means the
+/// description does not say, which is not a claim either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum Implementation {
+    /// Documents, perhaps an SDK; no crate yet. Such a gear is in
+    /// [`Catalogue::designs`], not [`Catalogue::gears`].
+    Design,
+    /// Code exists and work on it continues.
+    InProgress,
+    /// Everything the gear sets out to do is written.
+    Done,
+}
+
+impl Implementation {
+    /// Every value, in order of progress.
+    pub const ALL: [Self; 3] = [Self::Design, Self::InProgress, Self::Done];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Design => "design",
+            Self::InProgress => "in-progress",
+            Self::Done => "done",
+        }
+    }
+
+    /// The value a description spells, if it is one.
+    #[must_use]
+    pub fn parse(spelling: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|i| i.as_str() == spelling)
+    }
+}
+
+/// A hand-written chart that packages one executable unit anchored on this gear
+/// (`gear(deploy = helm_chart(...))`, GDL 1.3).
+///
+/// When a product application *is* that unit -- anchored on this gear, linking
+/// exactly `gears` (plugins aside) -- the generator ships this chart instead of
+/// generating one, and the unit's own image instead of a generated crate: the
+/// chart owns the unit's ports, listeners and hardening, and the product
+/// supplies only its gears' configuration (`configOverlay`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct UnitChart {
+    /// The chart directory, relative to the source root.
+    pub path: RelPath,
+    /// The image repository the unit's Dockerfile builds, without registry or tag.
+    pub image: String,
+    /// The non-plugin gears the unit's binary links.
+    pub gears: BTreeSet<GearId>,
+    /// The Services the chart fixes, by endpoint name (`grpc`, `internal`,
+    /// `rest`, or `serve` for a worker's own listener) to `service:port`. The
+    /// resolver addresses the process by these, not by names and ports it
+    /// would have chosen for a generated chart.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub services: BTreeMap<String, String>,
+}
+
+/// An authentication plane a gear's REST operations use (gears-rust ADR-0008,
+/// ADR-0011 section 3). Anonymous operations need no validator, so they are not
+/// a plane here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum RestPlane {
+    /// Operations a tenant bearer token authenticates; served only with a
+    /// tenant authenticator (`authn-resolver`) in the process.
+    Tenant,
+    /// Operations the platform token authenticates (`.platform()`).
+    Platform,
+}
+
+impl RestPlane {
+    /// Every value.
+    pub const ALL: [Self; 2] = [Self::Tenant, Self::Platform];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Tenant => "tenant",
+            Self::Platform => "platform",
+        }
+    }
+
+    /// The value a description spells, if it is one.
+    #[must_use]
+    pub fn parse(spelling: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.as_str() == spelling)
+    }
+}
+
+/// One thing a gear lets its users do, and whether it is written yet.
+///
+/// What a `GEARS.md` line holds: `- [x] p1 - enqueue and execute jobs`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct Scenario {
+    pub text: String,
+
+    /// `p1` (first) to `p5`, when the description gives one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+
+    /// Whether it is written.
+    #[serde(default)]
+    pub done: bool,
 }
 
 /// A gear's lifecycle declaration.
@@ -296,6 +423,13 @@ pub struct ConfigFieldDecl {
     /// a generator cannot do that for a field it cannot tell from a hostname.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub secret: bool,
+
+    /// One level of a struct-typed field: the fields of the struct its type
+    /// names, when the scanned crate declares it. The control is still
+    /// [`ConfigFieldType::Complex`]; a check reads these to name a required
+    /// key missing from a set value (`jwt.claim_mapping`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<ConfigFieldDecl>,
 }
 
 /// A gear's configuration surface, as its description curates it.
@@ -358,6 +492,25 @@ pub struct ResolvedSource {
 // `PartialEq` without `Eq`: a descriptor now carries a projected config default,
 // which may be a float, and floats have no total equality. Nothing keys a map on
 // a descriptor -- `GearId` does that -- so the marker was never load-bearing.
+/// Whether `name` is a permission name as gears-rust
+/// `toolkit::api::operation_policy::is_valid_permission_name` reads one: at
+/// least two dot-separated segments of `[a-z0-9_-]`, each starting with a
+/// letter or a digit (`settings.values.write`).
+#[must_use]
+pub fn is_valid_permission_name(name: &str) -> bool {
+    let segments: Vec<&str> = name.split('.').collect();
+    segments.len() >= 2
+        && segments.iter().all(|segment| {
+            segment
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                && segment
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+        })
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct GearDescriptor {
     pub id: GearId,
@@ -382,6 +535,15 @@ pub struct GearDescriptor {
     /// uses below `stable` (GBX0322-0324) instead.
     pub maturity: Maturity,
 
+    /// How much of the gear is written, when the description says. Never
+    /// `Design`: a gear with no code is a [`DesignGear`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub implementation: Option<Implementation>,
+
+    /// What the gear lets its users do, in the order declared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scenarios: Vec<Scenario>,
+
     /// Which declared source this gear was read from.
     pub source: SourceId,
 
@@ -389,6 +551,23 @@ pub struct GearDescriptor {
     pub gdl_path: RelPath,
 
     pub package: CargoRef,
+
+    /// This gear's SDKs, in every language it has one: the Rust SDK first, then
+    /// the others in the order declared.
+    ///
+    /// Located, not projected: nothing in the gear's crate says where its SDKs
+    /// are. At most one is Cargo; that one is also what the projector reads for
+    /// the traits the gear's extension points name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sdks: Vec<PackageRef>,
+
+    /// Where this gear lives in a git repository, when it says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<GitOrigin>,
+
+    /// Where this gear's tests are, as declared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tests: Vec<Located>,
 
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub runtime_caps: BTreeSet<RuntimeCap>,
@@ -420,6 +599,18 @@ pub struct GearDescriptor {
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub serves: Vec<EndpointDecl>,
+
+    /// The planes the gear's REST operations use, when its description says
+    /// (`rest_planes = [...]`). `None` is not "none": undeclared, the resolver
+    /// assumes tenant operations, the fail-closed reading of the runtime's start
+    /// check (GBX0417). `Some` of an empty set is a gear whose REST capability
+    /// serves only probes. An authored claim: the runtime is what checks it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest_planes: Option<BTreeSet<RestPlane>>,
+
+    /// The hand-written chart of the unit this gear anchors, if it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_chart: Option<UnitChart>,
 
     /// The client trait the gear macro asserts is object-safe, if declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -464,6 +655,20 @@ pub struct GearDescriptor {
     /// refusal is this tool's (ADR `cpt-gearbox-adr-one-per-installation`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub one_per_installation: bool,
+
+    /// The abstract permissions the gear's operations declare, or that its
+    /// code asks for (gears-rust `cpt-cf-adr-operation-permissions` section 6):
+    /// string literals in `.permission("...")`, `#[permission("...")]` on its
+    /// SDK's `rest_contract` methods, and `PermissionMap::holds(_, "...")`.
+    /// A product maps each to the scopes that grant it.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub permissions: BTreeSet<String>,
+
+    /// Where the gear names a permission this tool could not read -- a
+    /// constant or a variable instead of a literal -- so [`Self::permissions`]
+    /// is known to be incomplete. Each entry is a `file:line` in the crate.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unreadable_permissions: Vec<String>,
 
     /// The Cargo features the gear's own crate declares.
     ///
@@ -535,6 +740,8 @@ pub struct GearDescriptor {
     /// Where `gear(...)` was written in this gear's description.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_at: Option<crate::diagnostics::Location>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<crate::ui::GearUi>,
 }
 
 /// How far a gear has got through a staged catalogue load.
@@ -585,7 +792,7 @@ pub struct PendingGear {
     pub category: Option<String>,
 }
 
-/// A gear described before it has code: `maturity = "design"` in its `gear.gdl`.
+/// A gear described before it has code: `implementation = "design"` in its `gear.gdl`.
 ///
 /// **A separate collection, not a state of [`GearDescriptor`].** A descriptor's
 /// facts are projected from a crate -- its package, capabilities, contracts --
@@ -616,10 +823,19 @@ pub struct DesignGear {
 
     pub gdl_path: RelPath,
 
-    /// The SDK crate, when one exists ahead of the gear -- `llm-gateway` and
-    /// `model-registry` publish their SDKs first.
+    /// The SDKs that exist ahead of the gear, in any language, ordered as on
+    /// [`GearDescriptor::sdks`] -- `llm-gateway` and `model-registry` publish
+    /// their Rust SDKs first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sdks: Vec<PackageRef>,
+
+    /// Where this gear will live in a git repository, when it says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sdk: Option<CargoRef>,
+    pub origin: Option<GitOrigin>,
+
+    /// What the gear will let its users do, in the order declared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scenarios: Vec<Scenario>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docs: Option<GearDocs>,
@@ -652,14 +868,156 @@ pub struct GearDocs {
     /// the REST projections, and only four gears in the platform check one in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openapi: Option<RelPath>,
+
+    /// The documents that are not on disk here, as web links.
+    ///
+    /// A document declared as a URL is one. So is a declared path that is not
+    /// in this checkout when the gear names its `source = git(...)`: the link
+    /// points at the same path in that repository. A path on disk always wins.
+    #[serde(default, skip_serializing_if = "DocUrls::is_empty")]
+    pub urls: DocUrls,
 }
 
 impl GearDocs {
     /// Whether anything was found at all, so the caller can skip an empty block.
     #[must_use]
     pub fn is_empty(&self) -> bool {
+        self.prd.is_none()
+            && self.design.is_none()
+            && self.adr.is_empty()
+            && self.openapi.is_none()
+            && self.urls.is_empty()
+    }
+}
+
+/// [`GearDocs`] as web links, for what is not on disk.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DocUrls {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prd: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub design: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adr: Vec<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openapi: Option<String>,
+}
+
+impl DocUrls {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
         self.prd.is_none() && self.design.is_none() && self.adr.is_empty() && self.openapi.is_none()
     }
+}
+
+/// Where something a description points at is: on disk, or on the web.
+///
+/// One of the two is set. `path` when the target is in this checkout, relative
+/// to the source root; `url` when it is not, either because the description
+/// wrote a URL or because the gear's `source = git(...)` says where it is.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct Located {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<RelPath>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// Where a gear lives in a git repository, from `source = git(...)`.
+///
+/// What a reader holding only the description follows to the code and the
+/// documents. Paths in the description are looked for on disk first; this is
+/// the fallback, and what `validate` checks a checkout against.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct GitOrigin {
+    /// The repository, as declared: `https://...` or `git@host:org/repo`.
+    pub url: String,
+
+    /// The gear's directory inside the repository; `.` for its root.
+    pub path: RelPath,
+
+    /// The tag, revision or branch, when one is declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+}
+
+impl GitOrigin {
+    /// A web link to `relative`, a path written relative to the gear's
+    /// directory, in this repository.
+    ///
+    /// `None` when the path climbs out of the repository. Hosts differ in where
+    /// the reference goes: `/blob/` for GitHub and most others, `/-/blob/` for
+    /// GitLab, `/src/` for Bitbucket. Without a reference the link follows the
+    /// default branch (`HEAD`).
+    #[must_use]
+    pub fn web_url(&self, relative: &str) -> Option<String> {
+        let target = self.path.resolve(relative).ok()?;
+        let base = web_base(&self.url);
+        let reference = self.reference.as_deref().unwrap_or("HEAD");
+        let infix = if base.contains("://gitlab.") {
+            "-/blob"
+        } else if base.contains("://bitbucket.org/") {
+            "src"
+        } else {
+            "blob"
+        };
+        Some(if target.is_here() {
+            format!("{base}/tree/{reference}")
+        } else {
+            format!("{base}/{infix}/{reference}/{target}")
+        })
+    }
+
+    /// Whether `remote` is this repository or a fork of it.
+    ///
+    /// A fork keeps the host and the repository's name and changes the owner:
+    /// a checkout of `me/gears-rust` is a checkout of `org/gears-rust` for the
+    /// purpose of finding a path in it. A different name is a different
+    /// repository.
+    #[must_use]
+    pub fn same_or_fork(&self, remote: &str) -> bool {
+        let host_and_name = |url: &str| {
+            let normalized = Self::normalized_url(url);
+            let mut segments = normalized.split('/');
+            let host = segments.next().unwrap_or_default().to_owned();
+            let name = segments.next_back().unwrap_or_default().to_owned();
+            (host, name)
+        };
+        host_and_name(&self.url) == host_and_name(remote)
+    }
+
+    /// The repository in the one spelling two remotes can be compared in:
+    /// host and path, lowercase, with no scheme, user or `.git`.
+    #[must_use]
+    pub fn normalized_url(url: &str) -> String {
+        web_base(url)
+            .split_once("://")
+            .map_or_else(|| url.to_owned(), |(_, rest)| rest.to_owned())
+            .to_lowercase()
+    }
+}
+
+/// `git@host:org/repo.git` and `https://host/org/repo.git` as `https://host/org/repo`.
+fn web_base(url: &str) -> String {
+    let url = url.trim().trim_end_matches('/');
+    let url = url.strip_suffix(".git").unwrap_or(url);
+    if let Some((scheme, rest)) = url.split_once("://") {
+        // `ssh://git@host/org/repo` and `https://user@host/...`: drop the user.
+        let rest = rest.split_once('@').map_or(rest, |(_, host)| host);
+        let scheme = if scheme.starts_with("http") {
+            scheme
+        } else {
+            "https"
+        };
+        return format!("{scheme}://{rest}");
+    }
+    // scp-like: `git@host:org/repo`.
+    let rest = url.split_once('@').map_or(url, |(_, host)| host);
+    format!("https://{}", rest.replacen(':', "/", 1))
 }
 
 /// One curated Cargo feature, and the deployment kinds it belongs to.

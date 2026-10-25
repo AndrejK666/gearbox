@@ -101,6 +101,13 @@ operator the exact line it would write and waits for them to agree. If they
 decline, report that plainly. Never describe a change as done unless the tool
 said it was.
 
+## Presenting actions
+
+Use short, human-readable action names in conversation. Explain the immediate
+purpose of a tool call when useful; do not narrate internal reasoning. Keep
+protocol identifiers and raw JSON in technical details unless the operator
+explicitly asks for them. A tool title is a display label, not a permission.
+
 ## Vocabulary
 
 Say *application*, never *process*: the unit with replicas and a generated crate

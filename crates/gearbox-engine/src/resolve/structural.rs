@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 
 use gearbox_ir::{
     ApplicationId, ApplicationKind, Catalogue, DeploymentProfileDecl, Diagnostic, DiagnosticCode,
-    Diagnostics, Discovery, GearId, ResolvedApplication, RuntimeCap,
+    Diagnostics, Discovery, GearId, ResolvedApplication, RestPlane, RuntimeCap,
 };
 
 use super::partition::Partition;
@@ -39,6 +39,7 @@ pub fn check(
         check_singletons(catalogue, application, uri, diagnostics);
         check_worker_shape(application, uri, diagnostics);
         check_rest_without_host(catalogue, application, uri, diagnostics);
+        check_tenant_authenticator(catalogue, application, uri, diagnostics);
         check_grpc_without_hub(catalogue, application, uri, diagnostics);
         check_host_with_nothing_to_host(catalogue, application, uri, diagnostics);
         check_replicated_singletons(catalogue, application, uri, diagnostics);
@@ -384,6 +385,73 @@ fn check_grpc_without_hub(
     );
 }
 
+/// The gear that turns a bearer token into a tenant security context.
+const AUTHN_RESOLVER: &str = "authn-resolver";
+
+/// GBX0417: a process serving REST with no tenant authenticator refuses to
+/// start (gears-rust ADR-0011 section 3), so say so before a binary exists.
+///
+/// Per-operation authentication is not projected, so the rule is the process's:
+/// REST gears and no `authn-resolver`. A REST gear whose operations are all
+/// anonymous or platform-plane would start anyway; the help says what to add if
+/// it does serve tenant operations, which every REST gear in the corpus does.
+fn check_tenant_authenticator(
+    catalogue: &Catalogue,
+    application: &ResolvedApplication,
+    uri: &str,
+    diagnostics: &mut Diagnostics,
+) {
+    if application
+        .gears
+        .iter()
+        .any(|g| g.as_str() == AUTHN_RESOLVER)
+    {
+        return;
+    }
+    // A gear that says its REST operations use no tenant plane -- cluster, whose
+    // REST capability serves only probes -- needs no tenant authenticator.
+    // Undeclared is read as tenant, as the runtime would find it.
+    let rest_gears: Vec<&GearId> = application
+        .gears
+        .iter()
+        .filter(|g| has_cap(catalogue, g, RuntimeCap::Rest))
+        .filter(|g| {
+            catalogue
+                .gears
+                .get(*g)
+                .and_then(|gear| gear.rest_planes.as_ref())
+                .is_none_or(|planes| planes.contains(&RestPlane::Tenant))
+        })
+        .collect();
+    if rest_gears.is_empty() {
+        return;
+    }
+    diagnostics.push(
+        Diagnostic::error(
+            DiagnosticCode::ApplicationWithoutAuthenticator,
+            format!(
+                "application `{}` serves REST from {} and links no `{AUTHN_RESOLVER}`: the \
+                 runtime refuses to serve tenant-authenticated operations without a tenant \
+                 authenticator",
+                application.name,
+                rest_gears
+                    .iter()
+                    .map(|g| format!("`{g}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            format!(
+                "add `include = [\"{AUTHN_RESOLVER}\"]` to application `{}` (with an AuthN \
+                 plugin selected on `{AUTHN_RESOLVER}`). A gear whose REST operations use no \
+                 tenant plane says so in its `gear.gdl` with `rest_planes`",
+                application.name
+            ),
+        )
+        .with_evidence("libs/toolkit/src/runtime/oop_serve.rs (ensure_validators)")
+        .at(Location(uri)),
+    );
+}
+
 /// A process with REST gears and no REST host has nowhere to publish them.
 fn check_rest_without_host(
     catalogue: &Catalogue,
@@ -392,8 +460,12 @@ fn check_rest_without_host(
     diagnostics: &mut Diagnostics,
 ) {
     // Only meaningful for a host process: a worker publishes through `oop_serve`,
-    // which needs no `rest_host` gear at all.
-    if application.kind != ApplicationKind::Host || application.rest_host.is_some() {
+    // which needs no `rest_host` gear at all. A host with an address for the
+    // built-in HTTP host is served by it (`partition::assign_builtin_hosts`).
+    if application.kind != ApplicationKind::Host
+        || application.rest_host.is_some()
+        || application.serve.is_some()
+    {
         return;
     }
     let rest_gears: Vec<&GearId> = application
@@ -422,6 +494,59 @@ fn check_rest_without_host(
         )
         .at(Location(uri)),
     );
+}
+
+/// A remote consumer of a gear behind the built-in HTTP host.
+///
+/// That host is a public listener (gears-rust ADR-0011 section 5): it serves only
+/// `.exposed()` operations and answers 404 for the rest, and a contract's REST
+/// routes are internal. The binding resolves, the consumer starts, and every
+/// call fails -- so it is the same refusal as a process with no REST host at all,
+/// reported under the same code.
+pub fn check_builtin_host_providers(
+    partition: &Partition,
+    bindings: &[gearbox_ir::ResolvedBinding],
+    uri: &str,
+    diagnostics: &mut Diagnostics,
+) {
+    // Only REST: a gRPC binding is served by the process's hub, not its HTTP host.
+    for binding in bindings
+        .iter()
+        .filter(|b| b.is_remote() && b.transport == gearbox_ir::Transport::Rest)
+    {
+        let Some(provider) = partition
+            .applications
+            .iter()
+            .find(|a| a.name == binding.provider_application)
+        else {
+            continue;
+        };
+        if provider.kind != ApplicationKind::Host
+            || provider.rest_host.is_some()
+            || provider.serve.is_none()
+        {
+            continue;
+        }
+        diagnostics.push(
+            Diagnostic::error(
+                DiagnosticCode::TopologyRestWithoutHost,
+                format!(
+                    "`{}` in application `{}` reaches `{}` in `{}` over REST, but `{}` has no REST \
+                     host gear: its built-in HTTP host serves only exposed operations",
+                    binding.consumer,
+                    binding.consumer_application,
+                    binding.provider,
+                    binding.provider_application,
+                    binding.provider_application,
+                ),
+                "select a gear with the `rest_host` capability (api-gateway) into the provider's \
+                 application -- its internal listener serves every operation -- or place the \
+                 consumer in the same application",
+            )
+            .with_evidence("libs/toolkit/src/runtime/http_host.rs:1")
+            .at(Location(uri)),
+        );
+    }
 }
 
 /// Directory discovery needs two gears the description never names.

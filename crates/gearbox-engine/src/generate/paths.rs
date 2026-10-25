@@ -4,6 +4,7 @@
 //! filesystem anything. That matters because the generated tree does not exist
 //! yet when the relative dependency paths inside it are computed.
 
+use std::borrow::Cow;
 use std::path::{Component, Path, PathBuf};
 
 use gearbox_ir::RelPath;
@@ -23,7 +24,15 @@ use super::GenerateError;
 /// actually matters here -- would still be ours to decide.
 #[must_use]
 pub fn relative(from: &Path, target: &Path) -> Option<PathBuf> {
-    if !from.is_absolute() || !target.is_absolute() {
+    let from = portable(from);
+    let target = portable(target);
+    if !from.is_absolute()
+        || !target.is_absolute()
+        || from
+            .components()
+            .chain(target.components())
+            .any(|c| c == Component::ParentDir)
+    {
         return None;
     }
 
@@ -51,11 +60,17 @@ pub fn relative(from: &Path, target: &Path) -> Option<PathBuf> {
             // path it never canonicalized. Refusing beats emitting a relative
             // path that is wrong in a way nothing will notice until `cargo
             // build` looks for a directory that is not there.
-            Component::ParentDir => return None,
-            Component::CurDir | Component::Prefix(_) | Component::RootDir => {}
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir => return None,
+            Component::CurDir => {}
         }
     }
     for component in target_parts {
+        if matches!(
+            component,
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir
+        ) {
+            return None;
+        }
         out.push(component);
     }
 
@@ -81,31 +96,27 @@ where
     I: IntoIterator<Item = &'a Path>,
 {
     let mut iter = paths.into_iter();
-    let first = iter.next()?;
-    if !first.is_absolute() {
+    let first = portable(iter.next()?);
+    if !first.is_absolute() || first.components().any(|c| c == Component::ParentDir) {
         return None;
     }
-    let mut prefix: Vec<Component<'_>> = first.components().collect();
+    let mut prefix = first.into_owned();
     for path in iter {
-        if !path.is_absolute() {
+        let path = portable(path);
+        if !path.is_absolute() || path.components().any(|c| c == Component::ParentDir) {
             return None;
         }
-        let other: Vec<Component<'_>> = path.components().collect();
         let shared = prefix
-            .iter()
-            .zip(other.iter())
+            .components()
+            .zip(path.components())
             .take_while(|(a, b)| a == b)
             .count();
-        prefix.truncate(shared);
-        if prefix.is_empty() {
+        prefix = prefix.components().take(shared).collect();
+        if !prefix.is_absolute() {
             return None;
         }
     }
-    let mut out = PathBuf::new();
-    for component in prefix {
-        out.push(component);
-    }
-    Some(out)
+    Some(prefix)
 }
 
 /// A path inside the generated tree, as a `RelPath`.
@@ -131,18 +142,56 @@ pub fn rel(parts: &[&str]) -> Result<RelPath, GenerateError> {
 /// hash exists to guarantee.
 #[must_use]
 pub fn to_slash(path: &Path) -> String {
-    path.components()
-        .map(|c| match c {
-            Component::Normal(part) => part.to_string_lossy().into_owned(),
-            Component::ParentDir => "..".to_owned(),
-            Component::CurDir => ".".to_owned(),
-            // The root's own component contributes nothing but the separator
-            // `join` puts in front of the next one.
-            Component::RootDir => String::new(),
-            Component::Prefix(prefix) => prefix.as_os_str().to_string_lossy().into_owned(),
-        })
-        .collect::<Vec<_>>()
-        .join("/")
+    let path = portable(path);
+    let mut out = String::new();
+    for component in path.components() {
+        if component == Component::RootDir {
+            out.push('/');
+            continue;
+        }
+        if !out.is_empty() && !out.ends_with('/') {
+            out.push('/');
+        }
+        let part = component.as_os_str().to_string_lossy();
+        if matches!(component, Component::Prefix(_)) {
+            out.push_str(&part.replace('\\', "/"));
+        } else {
+            out.push_str(&part);
+        }
+    }
+    out
+}
+
+/// Compare ordinary and canonical Windows roots without touching the filesystem.
+fn portable(path: &Path) -> Cow<'_, Path> {
+    #[cfg(windows)]
+    if path.is_absolute() {
+        use std::path::Prefix;
+        if let Some(Component::Prefix(prefix)) = path.components().next() {
+            let root = match prefix.kind() {
+                Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => Some(PathBuf::from(format!(
+                    "{}:\\",
+                    char::from(drive.to_ascii_uppercase())
+                ))),
+                Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                    let mut root = PathBuf::from(r"\\");
+                    root.push(server);
+                    root.push(share);
+                    Some(root)
+                }
+                _ => None,
+            };
+            if let Some(mut root) = root {
+                for part in path.components().skip(1) {
+                    if part != Component::RootDir {
+                        root.push(part);
+                    }
+                }
+                return Cow::Owned(root);
+            }
+        }
+    }
+    Cow::Borrowed(path)
 }
 
 /// `path` with `.` and `..` collapsed, without touching the filesystem.
@@ -176,17 +225,28 @@ pub fn normalize(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    fn absolute(path: &str) -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(format!("C:{path}"))
+        } else {
+            PathBuf::from(path)
+        }
+    }
+
     #[test]
     fn relative_walks_up_then_down() {
-        let from = Path::new("/a/b/c/d");
-        let target = Path::new("/a/x/y");
-        assert_eq!(relative(from, target), Some(PathBuf::from("../../../x/y")));
+        let from = absolute("/a/b/c/d");
+        let target = absolute("/a/x/y");
+        assert_eq!(
+            relative(&from, &target),
+            Some(PathBuf::from("../../../x/y"))
+        );
     }
 
     #[test]
     fn relative_to_self_is_dot() {
-        let path = Path::new("/a/b");
-        assert_eq!(relative(path, path), Some(PathBuf::from(".")));
+        let path = absolute("/a/b");
+        assert_eq!(relative(&path, &path), Some(PathBuf::from(".")));
     }
 
     #[test]
@@ -199,7 +259,7 @@ mod tests {
     fn relative_refuses_an_uncanonicalized_from() {
         // `/a/b/../c` and `/a/c` are the same directory, but only after the
         // filesystem is consulted -- and this function may not consult it.
-        assert!(relative(Path::new("/a/b/../c"), Path::new("/a/d")).is_none());
+        assert!(relative(&absolute("/a/b/../c"), &absolute("/a/d")).is_none());
     }
 
     #[test]
@@ -218,20 +278,46 @@ mod tests {
 
     #[test]
     fn common_ancestor_stops_at_the_last_shared_component() {
-        let a = Path::new("/a/b/c/d");
-        let b = Path::new("/a/b/x");
-        assert_eq!(common_ancestor([a, b]), Some(PathBuf::from("/a/b")));
+        let a = absolute("/a/b/c/d");
+        let b = absolute("/a/b/x");
+        assert_eq!(
+            common_ancestor([a.as_path(), b.as_path()]),
+            Some(absolute("/a/b"))
+        );
     }
 
     #[test]
     fn common_ancestor_of_one_path_is_itself() {
-        let path = Path::new("/a/b");
-        assert_eq!(common_ancestor([path]), Some(PathBuf::from("/a/b")));
+        let path = absolute("/a/b");
+        assert_eq!(common_ancestor([path.as_path()]), Some(absolute("/a/b")));
     }
 
     #[test]
     fn common_ancestor_refuses_a_relative_input() {
         assert!(common_ancestor([Path::new("/a"), Path::new("b")]).is_none());
         assert!(common_ancestor(Vec::<&Path>::new()).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_roots_and_rendering() {
+        let plain = Path::new(r"C:\gbx\out\apps\demo");
+        let canonical = Path::new(r"\\?\C:\gbx\corpus\gear");
+        assert_eq!(
+            relative(plain, canonical),
+            Some(PathBuf::from("../../../corpus/gear"))
+        );
+        assert_eq!(
+            common_ancestor([plain, canonical]),
+            Some(PathBuf::from(r"C:\gbx"))
+        );
+        assert_eq!(to_slash(canonical), "C:/gbx/corpus/gear");
+        assert!(relative(plain, Path::new(r"D:\gear")).is_none());
+        assert!(common_ancestor([plain, Path::new(r"D:\gear")]).is_none());
+        let unc = Path::new(r"\\server\share\out");
+        let verbatim = Path::new(r"\\?\UNC\server\share\src");
+        assert_eq!(relative(unc, verbatim), Some(PathBuf::from("../src")));
+        assert_eq!(to_slash(verbatim), "//server/share/src");
+        assert!(common_ancestor([unc, Path::new(r"\\other\share\src")]).is_none());
     }
 }

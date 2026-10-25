@@ -89,6 +89,8 @@ pub enum FileKind {
     Shell,
     /// Anything with no better answer -- `.dockerignore`, a `.gitignore`.
     Text,
+    /// Opaque bytes, with no text preview or comment syntax.
+    Binary,
 }
 
 impl FileKind {
@@ -103,6 +105,7 @@ impl FileKind {
             Self::Dockerfile => "dockerfile",
             Self::Shell => "shell",
             Self::Text => "text",
+            Self::Binary => "binary",
         }
     }
 
@@ -116,7 +119,7 @@ impl FileKind {
         match self {
             Self::Rust => Some("//"),
             Self::Toml | Self::Yaml | Self::Dockerfile | Self::Shell | Self::Text => Some("#"),
-            Self::Json => None,
+            Self::Json | Self::Binary => None,
         }
     }
 }
@@ -265,6 +268,38 @@ impl FromIterator<FileEntry> for FileSet {
         }
         set
     }
+}
+
+/// A product's copy of one generation template, as generation leaves it.
+///
+/// Generation writes every template into the product's templates directory and
+/// keeps, beside each copy, the default it was written from. That is how a copy
+/// nobody touched follows a new default while an edited one keeps its edits.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProductTemplate {
+    /// The template key, e.g. `helm/deployment.yaml`.
+    pub key: String,
+    /// The copy's absolute path.
+    pub path: String,
+    pub status: TemplateStatus,
+    /// What applying does to the copy.
+    pub action: FileAction,
+}
+
+/// Whether a product's template is still the builtin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum TemplateStatus {
+    /// The copy is the current builtin.
+    Default,
+    /// Someone edited the copy; it carries the current builtin's changes too.
+    Edited,
+    /// An edited copy that could not take the current builtin's changes: they
+    /// overlap the edits, or there is no record of what the copy was made from.
+    /// It still renders as it is (GBX0712).
+    Behind,
+    /// A file this build renders no key for. Kept, and unused.
+    Unknown,
 }
 
 /// What applying a [`FileSet`] would do to one path.

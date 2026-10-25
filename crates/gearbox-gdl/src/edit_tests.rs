@@ -2088,3 +2088,28 @@ fn a_source_in_use_is_refused_and_an_absent_one_is_unchanged() {
         Edit::Unchanged
     );
 }
+
+#[test]
+fn a_created_product_accepts_another_source_and_gear() {
+    let created = render_product_template(&CreateProductParams {
+        id: "roundtrip".to_owned(),
+        name: "Roundtrip".to_owned(),
+        version: "0.1.0".to_owned(),
+        sources: vec![("corpus".to_owned(), "../corpus".to_owned())],
+        profile_kind: "embedded".to_owned(),
+        profile_id: "dev".to_owned(),
+    });
+    let added = add_source(URI, &created, "new-gears", "gears").unwrap();
+    let added = add_gear(URI, added.changed().unwrap(), "new-service", "new-gears").unwrap();
+    let evaluated =
+        crate::GdlEngine::new().eval_product(&product_identity(), added.changed().unwrap());
+    assert!(
+        !evaluated.diagnostics.has_errors(),
+        "{:?}",
+        evaluated.diagnostics
+    );
+    let intent = evaluated.value.unwrap();
+    assert_eq!(intent.sources.len(), 2);
+    assert_eq!(intent.selected_gears.len(), 1);
+    assert_eq!(intent.selected_gears[0].gear.as_str(), "new-service");
+}

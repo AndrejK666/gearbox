@@ -1,16 +1,25 @@
 {{ header }}
 FROM rust:{{ rust_channel }}-bookworm AS build
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev cmake \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
 WORKDIR /src/{{ out_rel }}
-RUN cargo build --release --package {{ crate_name }}
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/src/{{ out_rel }}/target,sharing=locked \
+    cargo build --release --package {{ crate_name }} \
+ && cp target/release/{{ bin_name }} /usr/local/bin/{{ bin_name }}
 
 FROM debian:bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --uid {{ uid }} --system --no-create-home app
-COPY --from=build --chown={{ uid }}:{{ uid }} /src/{{ out_rel }}/target/release/{{ bin_name }} /usr/local/bin/{{ bin_name }}
+ && useradd --uid {{ uid }} --system --no-create-home app \
+ && mkdir -p {{ home_dir }} \
+ && chown {{ uid }}:{{ uid }} {{ home_dir }}
+COPY --from=build --chown={{ uid }}:{{ uid }} /usr/local/bin/{{ bin_name }} /usr/local/bin/{{ bin_name }}
 COPY --from=build --chown={{ uid }}:{{ uid }} /src/{{ out_rel }}/config/{{ application }}.yaml /etc/gearbox/{{ application }}.yaml
 USER {{ uid }}
 {% for port in ports %}EXPOSE {{ port }}

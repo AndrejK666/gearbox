@@ -1,0 +1,116 @@
+# Scaffolded gear description for {{ comment }}.
+#
+# The gear's id is not written here: it comes from `#[toolkit::gear(name = ...)]`
+# in the crate. This file names the package the catalogue joins that id against.
+#
+# Every field: {{ reference }}
+# The commented lines below are fields this gear may need. Uncomment one to use it.
+
+gdl_version = "{{ version }}"
+
+gear(
+    name = {{ name }},
+    deps = [],  # Keep this list equal to #[toolkit::gear(deps = [...])].
+    # New code makes no promise yet. Raise it -- preview, then stable -- when
+    # the gear has earned it; there is no default because `stable` would be one.
+    maturity = "experimental",
+    # How much is written; "done" once every scenario below is.
+    implementation = "in-progress",
+    package = cargo(
+        crate_name = {{ crate_name }},
+        lib = {{ lib }},
+        path = ".",
+    ),
+{% if kind == "plugin" and plugin %}
+    # `description`, `category` and `visibility` are yours to fill in.
+    #
+    # description = "What this plugin does, in one sentence.",
+    # category = "core-platform-integration",
+    # visibility = "internal",
+
+    # **The declaration that makes this a plugin**, written from the host you
+    # chose: the GTS spec its instances register under. Implement `{{ plugin.trait_ident }}`
+    # from `{{ plugin.crate_name }}` (`lib = "{{ plugin.lib }}"`, at `{{ plugin.path }}`) -- the catalogue warns
+    # (GBX0526) while nothing in this crate does. A plugin declares no `sdk`: the
+    # host's SDK is the host's.
+    implements = {{ plugin.spec }},
+
+    # A plugin's own `vendor` and `priority` are the join key its host's selector
+    # matches against, and both are read from this crate's config struct. What is
+    # declared is only that they are worth showing an integrator.
+    #
+    # config_schema = config(exposes = ["vendor", "priority"]),
+{% elif kind == "minimal" %}
+    # Uncomment once this gear reads configuration. `exposes` is the only half
+    # written here: which settings are worth putting in front of an integrator.
+    # Their names, types, defaults and doc comments are read from the struct the
+    # gear deserializes into, which is found from the `ctx.config*()` call in
+    # `impl Gear::init` -- so nothing about the struct is repeated here.
+    #
+    # config_schema = config(exposes = ["bind_addr"]),
+{% elif kind == "service" %}
+    # The three fields a described service carries beyond its crate. `category`
+    # is checked against the known set and warns when it is not one of them;
+    # `visibility = "public"` is what makes a gear selectable by a product.
+    #
+    # description = "What this gear does, in one sentence.",
+    # category = "core-platform-integration",
+    # visibility = "internal",
+
+    # Contracts are declared -- unlike `runtime_caps` and `colocated_deps`, which
+    # #[toolkit::gear] owns and GBX0210 refuses to see restated here. `provides`
+    # names the trait this gear implements for others; `consumes` names one it
+    # needs, and the transports come from the provider's side.
+    #
+    # provides = [provide(contract = "PaymentApi", version = "v1")],
+    # consumes = [consume(contract = "TenantApi", version = "v1")],
+
+    # Uncomment once this gear reads configuration. `exposes` is the only half
+    # written here: which settings are worth putting in front of an integrator.
+    # Their names, types, defaults and doc comments are read from the struct the
+    # gear deserializes into, which is found from the `ctx.config*()` call in
+    # `impl Gear::init` -- so nothing about the struct is repeated here.
+    #
+    # config_schema = config(exposes = ["bind_addr"]),
+{% else %}
+    # description = "What this plugin does, in one sentence.",
+    # category = "core-platform-integration",
+    # visibility = "internal",
+
+    # **The declaration that makes this a plugin**: the GTS spec of the point it
+    # implements, as its host declares it in `extension_points`. A spec no described
+    # gear declares is refused (GBX0519), so uncomment it once the host is known.
+    # A plugin declares no `sdk` -- the host's SDK is the host's.
+    #
+    # implements = "cf.core.authn_resolver.plugin.v1~",
+
+    # A plugin's own `vendor` and `priority` are the join key its host's selector
+    # matches against, and both are read from this crate's config struct. What is
+    # declared is only that they are worth showing an integrator.
+    #
+    # config_schema = config(exposes = ["vendor", "priority"]),
+{% endif %}{% if kind != "plugin" %}
+    # This gear's SDKs, in any language. At most one `cargo(...)`.
+    #
+    # sdk = [
+    #     cargo(crate_name = "cf-my-gear-sdk", lib = "my_gear_sdk", path = "../my-gear-sdk"),
+    #     npm(name = "@cf/my-gear-sdk", path = "../my-gear-sdk-ts"),
+    # ],
+{% endif %}
+    # The repository and directory this gear is in. A reader with only this file
+    # -- in Studio, in a registry -- follows it to the code and the documents.
+    # Paths in this file are looked for on disk first.
+    #
+    # source = git(url = "https://github.com/<org>/<repo>", path = "gears/<this-gear>"),
+
+    # Documents not at `docs/` beside the gear, and tests: paths or URLs.
+    #
+    # docs = docs(prd = "docs/PRD.md", design = "docs/DESIGN.md", openapi = "https://..."),
+    # tests = ["tests"],
+
+    # What a user can do with this gear, and what is written already.
+    #
+    # scenarios = [
+    #     scenario("What a user can do, in one sentence.", priority = "p1", done = False),
+    # ],
+)

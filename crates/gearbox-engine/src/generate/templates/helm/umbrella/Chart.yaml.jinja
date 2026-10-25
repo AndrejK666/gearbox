@@ -1,0 +1,14 @@
+<< header >>
+apiVersion: v2
+name: << product >>
+description: Generated gearbox chart; workloads live in charts/
+type: application
+version: "<< version >>"
+appVersion: "<< version >>"
+dependencies:
+<% for dep in dependencies %>  - name: << dep.name >>
+<% if dep.name != dep.key %>    alias: << dep.key >>
+<% endif %>    version: "<< dep.version >>"
+    repository: "file://charts/<< dep.key >>"
+    condition: << dep.key >>.enabled
+<% endfor %>

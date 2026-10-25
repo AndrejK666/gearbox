@@ -256,12 +256,16 @@ mod tests {
     fn fixture() -> ResolvedProduct {
         let gears = ["zeta-gear", "alpha-gear"].map(|id| gear(id, &["types-registry", "cluster"]));
         ResolvedProduct {
+            ui: None,
+            database: None,
+            sqlite_databases: BTreeMap::new(),
             schema_version: LOCK_SCHEMA_VERSION,
             product: ResolvedProductHeader {
                 id: "lock-test".to_owned(),
                 version: "0.1.0".to_owned(),
                 profile: ProfileId::new("dev").unwrap(),
                 profile_kind: "embedded".to_owned(),
+                development: false,
                 layout: gearbox_ir::DEFAULT_LAYOUT.to_owned(),
                 gearbox_version: "0.1.0".to_owned(),
                 lock_hash: String::new(),
@@ -297,6 +301,7 @@ mod tests {
                 serve: None,
                 image: None,
                 subchart: None,
+                unit_chart: None,
                 service_port: None,
             }],
             bindings: Vec::new(),
@@ -304,6 +309,7 @@ mod tests {
             cuttable_if_declared: Vec::new(),
             provenance: Vec::new(),
             diagnostics: gearbox_ir::Diagnostics::new(),
+            permissions: std::collections::BTreeMap::new(),
         }
     }
 

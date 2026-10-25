@@ -104,14 +104,14 @@ impl GdlEngine {
 
         // A design gear has no crate by definition; `gear()` refused a
         // `package` on one, so only a stable gear can be missing it.
-        if decl.package.is_none() && decl.maturity != Some(crate::Maturity::Design) {
+        if decl.package.is_none() && !decl.is_design() {
             diagnostics.push(
                 Diagnostic::error(
                     DiagnosticCode::GdlEval,
                     "gear has no `package = cargo(...)`",
                     "declare the crate: `package = cargo(crate_name = \"...\", lib = \"...\")`. \
                      It is what tells the projector which crate to scan. A gear with no code \
-                     yet is `maturity = \"design\"` and names its `id` instead.",
+                     yet is `implementation = \"design\"` and names its `id` instead.",
                 )
                 .at(Location::file(identity.uri.clone())),
             );
@@ -191,6 +191,17 @@ fn evaluate<T>(
         return Err(diagnostics);
     }
 
+    let version = match crate::version::declared(&identity.uri, source) {
+        Ok(version) => version,
+        Err(refused) => {
+            let mut diagnostics: Diagnostics = [*refused].into_iter().collect();
+            diagnostics.finish();
+            return Err(diagnostics);
+        }
+    };
+    // A newer minor is read anyway; if it fails, that is the likely reason.
+    let newer = version.filter(|v| *v > crate::version::CURRENT);
+
     let ast = match AstModule::parse(&identity.uri, source.to_owned(), &dialect()) {
         Ok(ast) => ast,
         Err(e) => {
@@ -231,7 +242,15 @@ fn evaluate<T>(
         // A fragment that recorded its own finding is already in `diagnostics`;
         // restating it as a parent-file GBX0102 would hide the real span.
         if !is_recorded(&e) {
-            diagnostics.push(starlark_error(&identity.uri, &e, classify(&e)));
+            let mut diagnostic = starlark_error(&identity.uri, &e, classify(&e));
+            if let Some(newer) = newer {
+                diagnostic = diagnostic.with_help(format!(
+                    "this file is written for GDL {newer}, and this Gearbox reads GDL {}: \
+                     update Gearbox, or remove what the newer version added",
+                    crate::version::CURRENT
+                ));
+            }
+            diagnostics.push(diagnostic);
         }
         diagnostics.finish();
         return Err(diagnostics);

@@ -1,0 +1,30 @@
+terraform {
+  required_version = ">= 1.5, < 2.0"
+  required_providers {
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.17.0"
+    }
+  }
+}
+
+provider "helm" {
+  kubernetes {
+    config_path    = pathexpand(var.kubeconfig)
+    config_context = var.kube_context
+  }
+}
+
+resource "helm_release" "product" {
+  name             = var.release_name
+  namespace        = var.namespace
+  chart            = coalesce(var.chart_directory, "${path.module}/../helm/{{ product }}")
+  create_namespace = false
+  atomic           = true
+  wait             = true
+  timeout          = 600
+  values           = var.values_file == null ? [] : [file(var.values_file)]
+  lifecycle {
+    prevent_destroy = true
+  }
+}

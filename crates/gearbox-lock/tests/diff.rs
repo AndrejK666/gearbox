@@ -393,11 +393,13 @@ fn detects_an_added_and_a_removed_binding() {
     let mut after = support::fixture();
     let mut binding = after.bindings[0].clone();
     binding.consumer = GearId::new("api-gateway").unwrap();
+    let consumer_application = binding.consumer_application.clone();
     after.bindings.push(binding);
 
     let expected = gearbox_lock::BindingKey {
         consumer: GearId::new("api-gateway").unwrap(),
         contract: support::payment_api_v1(),
+        consumer_application,
     };
 
     let d = gearbox_lock::diff(&before, &after);

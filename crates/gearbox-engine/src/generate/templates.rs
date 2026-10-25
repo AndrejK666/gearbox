@@ -1,15 +1,16 @@
 //! The templates generation renders, and the overlay a product may supply.
 //!
-//! Builtins are compiled in via `include_str!`. A product that needs the
-//! Dockerfile or a Helm template to match a house style drops a file at
-//! `<dir of product.gdl>/templates/<key>.jinja` and that source wins. The
-//! key *is* the contract: it is the path under this module's `templates/`
-//! directory, without the `.jinja` suffix. A misspelled key is a file
-//! nobody reads, which is why [`TemplateSet::get`] names the key it wanted
-//! rather than silently falling through.
+//! Builtins are compiled in via `include_str!`. Generation writes each one
+//! into the product, as `<templates dir>/<key>.jinja`, and renders from that
+//! copy, so a product that needs the Dockerfile or a Helm template to match a
+//! house style edits the file; [`super::product_templates`] keeps an untouched
+//! copy following new builtins. The key *is* the contract: it is the path
+//! under this module's `templates/` directory, without the `.jinja` suffix. A
+//! misspelled key is a file nobody reads, which is why [`TemplateSet::get`]
+//! names the key it wanted rather than silently falling through.
 //!
-//! **`generate` never reads the filesystem.** The CLI and the RPC server
-//! load the overlay (see [`TemplateSet::load_for_product`]) and pass the
+//! **`generate` never reads the filesystem.** The CLI and the RPC server read
+//! the product's templates (see [`super::product_templates::sync`]) and pass the
 //! bytes in. That is what keeps `--dry-run` a preview of the same function
 //! that writes, not a second implementation that happens to agree today.
 //!
@@ -20,13 +21,30 @@
 //! | `main.rs` | host `<layout>/<p>/src/main.rs` |
 //! | `worker_main.rs` | worker `<layout>/<p>/src/main.rs` |
 //! | `registered_gears.rs` | `<layout>/<p>/src/registered_gears.rs` |
+//! | `rust-toolchain.toml` | `rust-toolchain.toml` |
 //! | `docker/Dockerfile` | `docker/<p>/Dockerfile` |
-//! | `docker/dockerignore` | `docker/.dockerignore` |
+//! | `docker/dockerignore` | `docker/<p>/Dockerfile.dockerignore` |
+//! | `docker/build.sh` | `docker/build.sh` |
+//! | `helm/umbrella/Chart.yaml` | `helm/<product>/Chart.yaml` |
+//! | `helm/Chart.yaml` | `helm/<product>/charts/<sub>/Chart.yaml` |
 //! | `helm/helpers.tpl` | `helm/<product>/charts/<sub>/templates/_helpers.tpl` |
 //! | `helm/deployment.yaml` | `helm/<product>/charts/<sub>/templates/deployment.yaml` |
 //! | `helm/service.yaml` | `helm/<product>/charts/<sub>/templates/service.yaml` |
 //! | `helm/configmap.yaml` | `helm/<product>/charts/<sub>/templates/configmap.yaml` |
 //! | `helm/serviceaccount.yaml` | `helm/<product>/charts/<sub>/templates/serviceaccount.yaml` |
+//! | `ui/index.html` | `ui/index.html` (`product_id`) |
+//! | `ui/src/main.tsx` | `ui/src/main.tsx` (`shell` JSON-quoted, `shell_name`) |
+//! | `ui/src/module-registry.ts` | `ui/src/module-registry.ts` (`modules`: `index`, JSON-quoted `from`) |
+//! | `ui/tsconfig.json`, `ui/vite.config.ts`, `ui/Dockerfile` | the same paths |
+//! | `ui/dockerignore` | `ui/.dockerignore` |
+//! | `ui/nginx.conf` | `ui/nginx.conf` (`gateway`, `gateway_port`) |
+//! | `helm/ui/deployment.yaml` | `helm/<product>/templates/ui-deployment.yaml` (`name`, `port`) |
+//! | `helm/ui/service.yaml` | `helm/<product>/templates/ui-service.yaml` (`name`, `port`) |
+//! | `terraform/helm/main.tf` | `terraform/main.tf` (`product`) |
+//! | `terraform/helm/variables.tf` | `terraform/variables.tf` (`product_json`, `namespace_json`) |
+//! | `terraform/helm/outputs.tf` | `terraform/outputs.tf` |
+//! | `terraform/helm/README.md` | `terraform/README.md` (`product`) |
+//! | `standalone/gitignore` | `.gitignore`, written once, in an output folder outside the workspace |
 //!
 //! An overlay for a key this build does not render is kept and reported (so
 //! the operator can see it was read) and otherwise unused.
@@ -46,13 +64,20 @@
 //! - `worker_main.rs`: those plus `gear_name`, `roles`, `version`
 //! - `registered_gears.rs`: `header`, `idents`
 //! - `docker/Dockerfile`: `header`, `rust_channel`, `crate_name`, `bin_name`,
-//!   `process`, `out_rel`, `uid`, `ports`
-//! - `docker/dockerignore`: `header`, `secret_dirs`
+//!   `application`, `out_rel`, `uid`, `home_dir`, `ports`
+//! - `docker/dockerignore`: `header`, `source_dirs`, `output_dir`, `secret_dirs`
+//! - `docker/build.sh`: `header`, `context` (the shell-quoted path to the build
+//!   context), `built` (`name`, quoted `image`) and `unit_charts` (`name`, quoted
+//!   `message`)
+//! - `rust-toolchain.toml`: `header`, `channel`
+//! - `helm/umbrella/Chart.yaml`: `header`, `product`, `version`, `dependencies`
+//!   (`name`, `key`, `version`)
+//! - `helm/Chart.yaml`: `header`, `name`, `version`
 //! - `helm/helpers.tpl`: `name`, `process`
 //! - `helm/deployment.yaml`: `name`, `process`, `config_filename`, `http_port`,
-//!   `liveness_path`, `readiness_path`, `home_dir`, `container_ports`
+//!   `liveness_path`, `readiness_path`, `home_dir`, `container_ports`, `directory_endpoint`, `bin_name`
 //! - `helm/service.yaml`: `name`, `service_name`, `ports`, `cluster_service`,
-//!   `cluster_port`
+//!   `cluster_port`, `cluster_target_port`
 //! - `helm/configmap.yaml`: `name`, `config_filename`
 //! - `helm/serviceaccount.yaml`: `name`
 //!
@@ -75,6 +100,20 @@
 /// author is told the table is the contract, so the contract has to be checkable.
 #[cfg(test)]
 const HELM_CONTEXT_DOC: &[(&str, &[&str])] = &[
+    (
+        "helm/umbrella/Chart.yaml",
+        &[
+            "header",
+            "product",
+            "version",
+            "dependencies",
+            "name",
+            "key",
+        ],
+    ),
+    ("helm/Chart.yaml", &["header", "name", "version"]),
+    ("helm/ui/deployment.yaml", &["name", "port"]),
+    ("helm/ui/service.yaml", &["name", "port"]),
     ("helm/helpers.tpl", &["name", "application"]),
     (
         "helm/deployment.yaml",
@@ -87,6 +126,8 @@ const HELM_CONTEXT_DOC: &[(&str, &[&str])] = &[
             "readiness_path",
             "home_dir",
             "container_ports",
+            "directory_endpoint",
+            "bin_name",
         ],
     ),
     (
@@ -97,6 +138,7 @@ const HELM_CONTEXT_DOC: &[(&str, &[&str])] = &[
             "ports",
             "cluster_service",
             "cluster_port",
+            "cluster_target_port",
         ],
     ),
     ("helm/configmap.yaml", &["name", "config_filename"]),
@@ -109,6 +151,50 @@ use std::path::Path;
 use minijinja::{Environment, UndefinedBehavior};
 
 use super::GenerateError;
+
+/// Every key generation renders, as the module docs list them.
+///
+/// The one list: [`TemplateSet::builtin`] answers each of these, and writing a
+/// product's templates walks it.
+pub const KEYS: &[&str] = &[
+    "main.rs",
+    "worker_main.rs",
+    "registered_gears.rs",
+    "rust-toolchain.toml",
+    "docker/Dockerfile",
+    "docker/dockerignore",
+    "docker/build.sh",
+    "helm/umbrella/Chart.yaml",
+    "helm/Chart.yaml",
+    "helm/helpers.tpl",
+    "helm/deployment.yaml",
+    "helm/service.yaml",
+    "helm/configmap.yaml",
+    "helm/serviceaccount.yaml",
+    "helm/ui/deployment.yaml",
+    "helm/ui/service.yaml",
+    "ui/index.html",
+    "ui/src/main.tsx",
+    "ui/src/module-registry.ts",
+    "ui/tsconfig.json",
+    "ui/vite.config.ts",
+    "ui/dockerignore",
+    "ui/Dockerfile",
+    "ui/nginx.conf",
+    "terraform/helm/main.tf",
+    "terraform/helm/variables.tf",
+    "terraform/helm/outputs.tf",
+    "terraform/helm/README.md",
+    "standalone/gitignore",
+];
+
+/// The templates a new gear is scaffolded from. Not per product, so never
+/// overlaid or written into one: there is no product yet when they render.
+pub const SCAFFOLD_KEYS: &[&str] = &[
+    "scaffold/gear.gdl",
+    "scaffold/Cargo.toml",
+    "scaffold/lib.rs",
+];
 
 /// A set of template sources, keyed as described in the module docs.
 ///
@@ -156,11 +242,28 @@ impl TemplateSet {
         product_file: &Path,
         declared: Option<&str>,
     ) -> Result<Self, GenerateError> {
+        match Self::dir_for_product(product_file, declared)? {
+            Some(dir) => load_overrides(&dir),
+            None => Ok(Self::new()),
+        }
+    }
+
+    /// The product's templates directory: the declared one, else `templates/`
+    /// beside the description. `None` only for a description with no parent.
+    ///
+    /// # Errors
+    /// Returns [`GenerateError::MissingTemplateDir`] when a declared directory
+    /// does not exist -- someone's intent gone wrong, as [`Self::load_for_product`]
+    /// explains. The conventional one may be absent; generation creates it.
+    pub fn dir_for_product(
+        product_file: &Path,
+        declared: Option<&str>,
+    ) -> Result<Option<std::path::PathBuf>, GenerateError> {
         let Some(parent) = product_file.parent() else {
-            return Ok(Self::new());
+            return Ok(None);
         };
         let Some(declared) = declared else {
-            return load_overrides(&parent.join("templates"));
+            return Ok(Some(parent.join("templates")));
         };
         let dir = parent.join(declared);
         if !dir.is_dir() {
@@ -169,18 +272,54 @@ impl TemplateSet {
                 at: dir.display().to_string(),
             });
         }
-        load_overrides(&dir)
+        Ok(Some(dir))
     }
 
     /// The compiled-in source for `key`, if this build has one.
     #[must_use]
     pub fn builtin(key: &str) -> Option<&'static str> {
         match key {
+            "ui/index.html" => Some(include_str!("templates/ui/index.html.jinja")),
+            "ui/src/main.tsx" => Some(include_str!("templates/ui/src/main.tsx.jinja")),
+            "ui/src/module-registry.ts" => {
+                Some(include_str!("templates/ui/src/module-registry.ts.jinja"))
+            }
+            "ui/tsconfig.json" => Some(include_str!("templates/ui/tsconfig.json.jinja")),
+            "ui/vite.config.ts" => Some(include_str!("templates/ui/vite.config.ts.jinja")),
+            "ui/dockerignore" => Some(include_str!("templates/ui/dockerignore.jinja")),
+            "ui/Dockerfile" => Some(include_str!("templates/ui/Dockerfile.jinja")),
+            "ui/nginx.conf" => Some(include_str!("templates/ui/nginx.conf.jinja")),
+            "helm/ui/deployment.yaml" => {
+                Some(include_str!("templates/helm/ui/deployment.yaml.jinja"))
+            }
+            "helm/ui/service.yaml" => Some(include_str!("templates/helm/ui/service.yaml.jinja")),
+            "terraform/helm/main.tf" => {
+                Some(include_str!("templates/terraform/helm/main.tf.jinja"))
+            }
+            "terraform/helm/variables.tf" => {
+                Some(include_str!("templates/terraform/helm/variables.tf.jinja"))
+            }
+            "terraform/helm/outputs.tf" => {
+                Some(include_str!("templates/terraform/helm/outputs.tf.jinja"))
+            }
+            "terraform/helm/README.md" => {
+                Some(include_str!("templates/terraform/helm/README.md.jinja"))
+            }
+            "rust-toolchain.toml" => Some(include_str!("templates/rust-toolchain.toml.jinja")),
+            "standalone/gitignore" => Some(include_str!("templates/standalone/gitignore.jinja")),
+            "scaffold/gear.gdl" => Some(include_str!("templates/scaffold/gear.gdl.jinja")),
+            "scaffold/Cargo.toml" => Some(include_str!("templates/scaffold/Cargo.toml.jinja")),
+            "scaffold/lib.rs" => Some(include_str!("templates/scaffold/lib.rs.jinja")),
             "main.rs" => Some(include_str!("templates/main.rs.jinja")),
             "worker_main.rs" => Some(include_str!("templates/worker_main.rs.jinja")),
             "registered_gears.rs" => Some(include_str!("templates/registered_gears.rs.jinja")),
             "docker/Dockerfile" => Some(include_str!("templates/docker/Dockerfile.jinja")),
             "docker/dockerignore" => Some(include_str!("templates/docker/dockerignore.jinja")),
+            "docker/build.sh" => Some(include_str!("templates/docker/build.sh.jinja")),
+            "helm/umbrella/Chart.yaml" => {
+                Some(include_str!("templates/helm/umbrella/Chart.yaml.jinja"))
+            }
+            "helm/Chart.yaml" => Some(include_str!("templates/helm/Chart.yaml.jinja")),
             "helm/helpers.tpl" => Some(include_str!("templates/helm/helpers.tpl.jinja")),
             "helm/deployment.yaml" => Some(include_str!("templates/helm/deployment.yaml.jinja")),
             "helm/service.yaml" => Some(include_str!("templates/helm/service.yaml.jinja")),
@@ -210,13 +349,20 @@ impl TemplateSet {
         })
     }
 
-    /// Keys the product overlaid, in sorted order.
+    /// Keys whose source is not this build's builtin, in sorted order.
     ///
     /// Reported so an unexpected chart has a visible cause: without this,
-    /// a house-style Dockerfile looks like a generator change.
+    /// a house-style Dockerfile looks like a generator change. A product's copy
+    /// that is still the builtin is not an override: generation writes every
+    /// template into the product, and naming all of them would hide the one
+    /// that matters.
     #[must_use]
     pub fn overridden(&self) -> Vec<String> {
-        self.overrides.keys().cloned().collect()
+        self.overrides
+            .iter()
+            .filter(|(key, body)| Self::builtin(key) != Some(body.as_str()))
+            .map(|(key, _)| key.clone())
+            .collect()
     }
 
     #[must_use]
@@ -236,7 +382,13 @@ fn load_overrides(dir: &Path) -> Result<TemplateSet, GenerateError> {
     }
 
     let mut overrides = BTreeMap::new();
-    for entry in walkdir::WalkDir::new(dir) {
+    // `.base/` holds what each copy was written from, not templates to render.
+    let walk = walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_entry(|entry| {
+            entry.depth() != 1 || entry.file_name() != super::product_templates::BASE_DIR
+        });
+    for entry in walk {
         let entry = entry.map_err(|source| GenerateError::Io {
             what: "cannot walk template overrides",
             path: source.path().unwrap_or(dir).to_path_buf(),
@@ -272,6 +424,10 @@ fn load_overrides(dir: &Path) -> Result<TemplateSet, GenerateError> {
 /// The result always ends in exactly one newline. minijinja strips the
 /// template's own trailing newline, and a Rust file without one is a file
 /// `rustfmt --check` and half the tools in the ecosystem complain about.
+///
+/// # Errors
+/// Returns [`GenerateError::Template`] when the source does not parse or names a
+/// variable `ctx` does not carry.
 pub fn render(
     what: &'static str,
     source: &str,
@@ -338,7 +494,7 @@ mod tests {
     #[test]
     fn every_helm_context_variable_is_documented() {
         // Jinja's own vocabulary, plus loop bindings, which are not context.
-        const NOT_CONTEXT: &[&str] = &["for", "in", "endfor", "if", "endif", "else", "port"];
+        const NOT_CONTEXT: &[&str] = &["for", "in", "endfor", "if", "endif", "else", "port", "dep"];
 
         for (key, documented) in HELM_CONTEXT_DOC {
             let source = TemplateSet::builtin(key).expect("a builtin");
@@ -380,18 +536,7 @@ mod tests {
 
     #[test]
     fn every_declared_key_has_a_builtin() {
-        for key in [
-            "main.rs",
-            "worker_main.rs",
-            "registered_gears.rs",
-            "docker/Dockerfile",
-            "docker/dockerignore",
-            "helm/helpers.tpl",
-            "helm/deployment.yaml",
-            "helm/service.yaml",
-            "helm/configmap.yaml",
-            "helm/serviceaccount.yaml",
-        ] {
+        for key in KEYS.iter().chain(SCAFFOLD_KEYS) {
             assert!(
                 TemplateSet::builtin(key).is_some(),
                 "`{key}` is in the contract but has no builtin"

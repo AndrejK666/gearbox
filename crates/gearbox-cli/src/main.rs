@@ -1083,6 +1083,7 @@ mod tests {
 
     fn gear(id: &str) -> GearDescriptor {
         GearDescriptor {
+            ui: None,
             id: GearId::new(id).unwrap(),
             display_name: id.to_owned(),
             description: None,
@@ -1091,6 +1092,11 @@ mod tests {
             maturity: gearbox_ir::Maturity::Stable,
             source: SourceId::new("gears-rust").unwrap(),
             gdl_path: RelPath::new(format!("gears/{id}/gear.gdl")).unwrap(),
+            sdks: Vec::new(),
+            implementation: None,
+            scenarios: Vec::new(),
+            origin: None,
+            tests: Vec::new(),
             package: CargoRef::new(
                 format!("cf-gears-{id}"),
                 id.replace('-', "_"),
@@ -1104,6 +1110,8 @@ mod tests {
             requires: Vec::new(),
             serves: Vec::new(),
             client_trait: None,
+            rest_planes: None,
+            unit_chart: None,
             cluster_providers: Vec::new(),
             extension_points: Vec::new(),
             implements: None,
@@ -1116,6 +1124,8 @@ mod tests {
             docs: None,
             gts_types: Vec::new(),
             declared_at: None,
+            permissions: std::collections::BTreeSet::new(),
+            unreadable_permissions: Vec::new(),
         }
     }
 

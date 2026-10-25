@@ -19,26 +19,17 @@ use gearbox_ir::{
     Catalogue, DiagnosticCode, Discovery, ProductIntent, ProfileId, RuntimeCap, SourceId,
 };
 
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn gears_rust() -> Option<PathBuf> {
-    // Walks up instead of counting `..`, and the difference is not cosmetic.
-    // `CARGO_MANIFEST_DIR/../../../gears-rust` is the sibling of the *repository*
-    // root, so from a git worktree -- `.claude/worktrees/<name>/crates/...` -- it
-    // resolved to nothing. Every real-tree test then skipped, printed a reason
-    // nobody reads, and the suite went green having touched none of the corpus.
-    // An agent working in a worktree got that silently.
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            return candidate.canonicalize().ok();
-        }
-        dir = dir.parent()?;
-    }
+    corpus_support::root()
 }
 
 fn catalogue() -> Option<Catalogue> {
     let root = gears_rust()?;
-    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root).ok()?;
+    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root)
+        .unwrap_or_else(|error| panic!("the discovered corpus must be readable: {error}"));
     Some(load_catalogue(&[source]).catalogue)
 }
 
@@ -191,8 +182,9 @@ fn a_rest_host_in_a_worker_is_refused() {
     // it serves through its own out-of-process router rather than the composed
     // gateway. Silent success is why this is an error.
     let cat = support::catalogue_of(vec![
-        support::gear_with_caps("host", &[], &[]),
-        support::gear_with_caps("moved", &[RuntimeCap::RestHost], &[]),
+        support::gear_with_caps("host", &[RuntimeCap::RestHost], &[]),
+        support::gear_with_caps("moved", &[RuntimeCap::Rest], &["embedded-host"]),
+        support::gear_with_caps("embedded-host", &[RuntimeCap::RestHost], &[]),
     ]);
     let mut intent = support::self_hosted(&["host", "moved"], Discovery::Static, Some("target"));
     support::pin(&mut intent, "worker", "moved", 1);
@@ -207,19 +199,58 @@ fn a_rest_host_in_a_worker_is_refused() {
 }
 
 #[test]
-fn rest_gears_with_no_host_are_refused() {
+fn rest_gears_with_no_host_are_served_by_the_builtin_host() {
+    // The runtime's built-in HTTP host serves them (gears-rust ADR-0011 section 5
+    // step 4) once the configuration has an `http_host` section, so the process
+    // is given that listener's address instead of being refused.
     let cat = support::catalogue_of(vec![support::gear_with_caps(
         "api",
         &[RuntimeCap::Rest],
         &[],
     )]);
     let r = resolve(&cat, &support::intent(&["api"]), &pid("dev"));
+    assert!(
+        !r.diagnostics
+            .iter()
+            .any(|d| d.code == DiagnosticCode::TopologyRestWithoutHost),
+        "{:?}",
+        r.diagnostics
+    );
+    let app = &r.partition.applications[0];
+    assert_eq!(app.kind, gearbox_ir::ApplicationKind::Host);
+    assert_eq!(
+        app.serve.as_ref().map(|s| s.listen_addr.as_str()),
+        Some("127.0.0.1:8080")
+    );
+}
+
+#[test]
+fn a_remote_consumer_of_a_builtin_host_provider_is_refused() {
+    // The built-in host is a public listener: exposed operations only, and a
+    // contract's REST routes are internal. A worker that reaches a gear in such
+    // a process resolves, starts, and gets 404 on every call.
+    let mut cat = support::catalogue_with_declared_edge();
+    cat.gears
+        .get_mut(&support::gid("provider"))
+        .unwrap()
+        .runtime_caps = [RuntimeCap::Rest].into_iter().collect();
+    // `anchor` keeps `provider` in the host process through `deps`.
+    let anchor = support::gear_with_caps("anchor", &[], &["provider"]);
+    cat.gears.insert(anchor.id.clone(), anchor);
+    let mut intent = support::self_hosted(&["anchor", "host", "provider"], Discovery::Static, None);
+    support::pin(&mut intent, "consumer-app", "host", 1);
+
+    let r = resolve(&cat, &intent, &pid("local"));
     let d = r
         .diagnostics
         .iter()
         .find(|d| d.code == DiagnosticCode::TopologyRestWithoutHost)
         .expect("GBX0305");
-    assert!(d.message.contains("api"), "{}", d.message);
+    assert!(
+        d.message.contains("consumer-app") && d.message.contains("built-in HTTP host"),
+        "{}",
+        d.message
+    );
 }
 
 #[test]
@@ -580,4 +611,84 @@ fn under_an_embedded_profile_none_of_this_can_fire() {
         "the pin is what is reported instead: {:?}",
         codes(&r)
     );
+}
+
+#[test]
+fn an_application_serving_rest_without_a_tenant_authenticator_is_refused() {
+    // The runtime refuses to start it (gears-rust ADR-0011 section 3).
+    let cat = support::catalogue_of(vec![
+        support::gear_with_caps("api", &[RuntimeCap::Rest, RuntimeCap::RestHost], &[]),
+        support::gear_with_caps("worker-api", &[RuntimeCap::Rest], &[]),
+        support::gear_with_caps("authn-resolver", &[], &[]),
+    ]);
+    let mut intent = support::self_hosted(
+        &["api", "worker-api", "authn-resolver"],
+        Discovery::Static,
+        Some("t"),
+    );
+    support::pin(&mut intent, "worker", "worker-api", 1);
+    let r = resolve(&cat, &intent, &pid("local"));
+    let found: Vec<&str> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == DiagnosticCode::ApplicationWithoutAuthenticator)
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(found.len(), 1, "only the worker lacks one: {found:?}");
+    assert!(
+        found[0].contains("`worker`") && found[0].contains("worker-api"),
+        "{}",
+        found[0]
+    );
+
+    intent
+        .application_pins
+        .iter_mut()
+        .find(|p| p.name.as_str() == "worker")
+        .unwrap()
+        .include = [support::gid("authn-resolver")].into_iter().collect();
+    // The include moves authn-resolver into the worker (and so out of the
+    // host, which is then reported instead -- the check follows placement).
+    let r = resolve(&cat, &intent, &pid("local"));
+    assert!(
+        r.diagnostics
+            .iter()
+            .filter(|d| d.code == DiagnosticCode::ApplicationWithoutAuthenticator)
+            .all(|d| !d.message.contains("`worker`")),
+        "{:?}",
+        r.diagnostics
+    );
+}
+
+#[test]
+fn a_gear_whose_rest_serves_no_tenant_plane_needs_no_authenticator() {
+    // Cluster's REST capability serves only probes (`rest_planes = []`); a
+    // platform-only gear validates the platform token, not a tenant's. Neither
+    // makes the runtime ask for a tenant authenticator. Undeclared still does.
+    for (planes, refused) in [
+        (Some(vec![]), false),
+        (Some(vec![gearbox_ir::RestPlane::Platform]), false),
+        (Some(vec![gearbox_ir::RestPlane::Tenant]), true),
+        (None, true),
+    ] {
+        let mut worker = support::gear_with_caps("worker-api", &[RuntimeCap::Rest], &[]);
+        worker.rest_planes = planes.clone().map(|p| p.into_iter().collect());
+        let cat = support::catalogue_of(vec![
+            support::gear_with_caps("api", &[RuntimeCap::Rest, RuntimeCap::RestHost], &[]),
+            worker,
+            support::gear_with_caps("authn-resolver", &[], &[]),
+        ]);
+        let mut intent = support::self_hosted(
+            &["api", "worker-api", "authn-resolver"],
+            Discovery::Static,
+            Some("t"),
+        );
+        support::pin(&mut intent, "worker", "worker-api", 1);
+        let r = resolve(&cat, &intent, &pid("local"));
+        let reported = r.diagnostics.iter().any(|d| {
+            d.code == DiagnosticCode::ApplicationWithoutAuthenticator
+                && d.message.contains("`worker`")
+        });
+        assert_eq!(reported, refused, "rest_planes = {planes:?}");
+    }
 }

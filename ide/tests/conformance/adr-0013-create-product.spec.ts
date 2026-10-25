@@ -657,11 +657,16 @@ test.describe("a gear created for a product ends up in it", () => {
   // the wrong subject for this claim. The demo's own source is a sibling
   // checkout, which is the ordinary shape. The description and the scaffolded
   // directory both go back in `finally`.
+  //
+  // **On its own Studio.** Run on the shared session, it left that session
+  // inside a product whose description had been edited behind it and then
+  // restored by `git checkout`, and the next claim on the session ("a config
+  // edit changes one line") failed in every full run while passing alone.
   const GEAR = "conformance-audit";
   const SCAFFOLD = join(REPO, "products/payments-demo/gears");
 
   test("Create Gear declares its folder as a source and adds the gear [ADR-0013 §Amendment: create for a product]", async ({
-    studio,
+    freshStudio: studio,
   }) => {
     expect(diffOf(DEMO_REL)).toBe("");
     try {
@@ -897,14 +902,16 @@ test.describe("edit config and profiles in the open product", () => {
     await openProduct(studio.page, "dev");
     const form = await configureGear(studio.page, "api-gateway");
 
-    // Free keys live under "Other keys" now -- see `openAdvancedKeys`, and
-    // retried together with the fill for the reason given there.
+    // Free keys live under "Other keys" now -- see `openAdvancedKeys`. Opened,
+    // filled and submitted as one retried step: the section folds on any
+    // remount, and one landing between the fill and the click left "Add key"
+    // hidden for the rest of the claim (a full run on 2026-10-21).
     await expect(async () => {
       await openAdvancedKeys(studio.page, ".gbx-composition-settings");
       await form.locator("[data-config-new-key]").fill("password", { timeout: 5_000 });
+      await form.locator("[data-config-new-value]").fill("literal", { timeout: 5_000 });
+      await form.locator('[data-add-config="api-gateway"]').click({ timeout: 5_000 });
     }).toPass({ timeout: 30_000 });
-    await form.locator("[data-config-new-value]").fill("literal");
-    await form.locator('[data-add-config="api-gateway"]').click();
     // Matched among the notifications rather than at the top of the stack. The
     // claim is that the refusal is *said*, and notifications accumulate in the
     // shared session -- reading `.first()` made this assert which message was

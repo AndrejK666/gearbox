@@ -134,6 +134,241 @@ pub fn resolve(
     out
 }
 
+/// The cluster gear's id, the name its Kubernetes Service is published under.
+const CLUSTER_GEAR: &str = "cluster";
+/// The gRPC hub, which serves cluster's coordination plane to other processes.
+const GRPC_HUB: &str = "grpc-hub";
+/// The port the cluster SDK dials by convention (`cluster_sdk::CLUSTER_GRPC_PORT`).
+const CLUSTER_GRPC_PORT: u16 = 50051;
+
+/// The profile contract every remote cluster client resolves its scope through.
+const CLUSTER_PROFILE_CONTRACT: &str = "cluster/ClusterProfileApi@v1";
+
+/// The contract a remote requester of `primitive` reaches.
+fn primitive_contract(primitive: ClusterPrimitive) -> &'static str {
+    match primitive {
+        ClusterPrimitive::Cache => "cluster/ClusterCacheApi@v1",
+        ClusterPrimitive::Lock => "cluster/DistributedLockApi@v1",
+        ClusterPrimitive::LeaderElection => "cluster/LeaderElectionApi@v1",
+    }
+}
+
+/// Remote cluster bindings: a requester in an application without the
+/// `cluster` gear reaches it over gRPC, addressed by the SDK
+/// (ADR `cpt-gearbox-adr-product-placement` section 4).
+///
+/// Recorded only for requesters that are apart from cluster, so a product that
+/// keeps them together resolves to the same lock as before. The checks are the
+/// conditions under which the SDK's address is real: a Kubernetes profile
+/// (GBX0415), one application serving cluster (GBX0416), and a hub in it
+/// listening on the network (GBX0314).
+pub fn remote_bindings(
+    catalogue: &Catalogue,
+    partition: &Partition,
+    cluster: &[ResolvedClusterBinding],
+    intent: &gearbox_ir::ProductIntent,
+    declaration: &gearbox_ir::DeploymentProfileDecl,
+    uri: &str,
+    diagnostics: &mut Diagnostics,
+) -> Vec<gearbox_ir::ResolvedBinding> {
+    let Ok(cluster_gear) = GearId::new(CLUSTER_GEAR) else {
+        return Vec::new();
+    };
+    let hosting: Vec<&ResolvedApplication> = partition
+        .applications
+        .iter()
+        .filter(|a| a.contains(&cluster_gear))
+        .collect();
+    let Some(serving) = hosting.first() else {
+        return Vec::new();
+    };
+
+    // Each process linking cluster renders a Service named `cluster`, so on
+    // Kubernetes two of them cannot install, whether or not anyone is remote.
+    if hosting.len() > 1
+        && matches!(
+            declaration,
+            gearbox_ir::DeploymentProfileDecl::Kubernetes { .. }
+        )
+    {
+        diagnostics.push(
+            Diagnostic::error(
+                DiagnosticCode::ClusterInSeveralApplications,
+                format!(
+                    "`cluster` is linked into {}: each renders a Service named `cluster`, which \
+                     the SDK addresses, and one chart cannot hold two",
+                    hosting
+                        .iter()
+                        .map(|a| format!("`{}`", a.name))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                "give `cluster` one application and reach it remotely from the others",
+            )
+            .at(Location::file(uri.to_owned())),
+        );
+    }
+
+    // (requester, its application, contract), once each.
+    let mut wanted: BTreeSet<(GearId, gearbox_ir::ApplicationId, &'static str)> = BTreeSet::new();
+    for binding in cluster {
+        for requester in &binding.requesters {
+            for application in &partition.applications {
+                if application.contains(requester) && !application.contains(&cluster_gear) {
+                    wanted.insert((
+                        requester.clone(),
+                        application.name.clone(),
+                        primitive_contract(binding.primitive),
+                    ));
+                }
+            }
+        }
+    }
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+
+    let gearbox_ir::DeploymentProfileDecl::Kubernetes { namespace, .. } = declaration else {
+        let apps: BTreeSet<&gearbox_ir::ApplicationId> = wanted.iter().map(|w| &w.1).collect();
+        diagnostics.push(
+            Diagnostic::error(
+                DiagnosticCode::RemoteClusterNeedsKubernetes,
+                format!(
+                    "{} reach `cluster` in another process, but profile `{}` is not \
+                     Kubernetes: the cluster SDK addresses it only by Kubernetes DNS",
+                    apps.iter()
+                        .map(|a| format!("`{a}`"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    declaration.id()
+                ),
+                "put `cluster` in the requester's application (`include = [\"cluster\"]`) \
+                 for this profile, or deploy it on Kubernetes",
+            )
+            .with_evidence("gears/system/cluster/cluster-sdk/src/wiring.rs:123")
+            .at(Location::file(uri.to_owned())),
+        );
+        return Vec::new();
+    };
+    let namespace = namespace.clone().unwrap_or_else(|| "default".to_owned());
+    let Ok(hub) = GearId::new(GRPC_HUB) else {
+        return Vec::new();
+    };
+    let hub_listen = intent
+        .selected_gears
+        .iter()
+        .find(|g| g.gear == hub)
+        .and_then(|g| g.config.get("listen_addr"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    let off_network = hub_listen
+        .as_deref()
+        .is_some_and(|addr| addr == "none" || addr.starts_with("uds://"));
+    if !serving.contains(&hub) || off_network {
+        diagnostics.push(
+            Diagnostic::error(
+                DiagnosticCode::TopologyGrpcWithoutHub,
+                format!(
+                    "`cluster` in application `{}` is reached remotely, but {}",
+                    serving.name,
+                    if off_network {
+                        format!(
+                            "its gRPC hub listens on `{}`, which no other process can dial",
+                            hub_listen.unwrap_or_default()
+                        )
+                    } else {
+                        "that application has no gRPC hub".to_owned()
+                    }
+                ),
+                "cluster's coordination plane is served by the application's gRPC hub on TCP; \
+                 select `grpc-hub` into it with a TCP `listen_addr` (and platform enforcement)",
+            )
+            .with_evidence("libs/toolkit/src/runtime/host_runtime.rs:800")
+            .at(Location::file(uri.to_owned())),
+        );
+    }
+
+    // The SDK derives this address itself. It is pinned only under static
+    // discovery, where there is no directory to wait for: the runtime then marks
+    // the dependency resolved at wiring, as for any static endpoint
+    // (ADR-0026 section 5). Under directory discovery readiness waits for the
+    // directory to know `cluster`.
+    let endpoint = (declaration.discovery() == Some(gearbox_ir::Discovery::Static)).then(|| {
+        format!("http://{CLUSTER_GEAR}.{namespace}.svc.cluster.local:{CLUSTER_GRPC_PORT}")
+    });
+    // The SDK's remote client needs each primitive's service and the profile
+    // service over gRPC; a declaration that does not say so is not a binding the
+    // runtime can make, and is refused rather than recorded.
+    let over_grpc = |contract: &str| {
+        catalogue.gears.get(&cluster_gear).is_some_and(|gear| {
+            gear.provides.iter().any(|p| {
+                p.contract.as_str() == contract
+                    && p.transports.contains(&gearbox_ir::Transport::Grpc)
+            })
+        })
+    };
+    let needed: BTreeSet<&str> = wanted
+        .iter()
+        .map(|w| w.2)
+        .chain(std::iter::once(CLUSTER_PROFILE_CONTRACT))
+        .collect();
+    let missing: Vec<&str> = needed.into_iter().filter(|c| !over_grpc(c)).collect();
+    if !missing.is_empty() {
+        diagnostics.push(
+            Diagnostic::error(
+                DiagnosticCode::RemoteClusterWithoutGrpc,
+                format!(
+                    "requesters reach `cluster` remotely, but it provides {} over no gRPC \
+                     transport",
+                    missing
+                        .iter()
+                        .map(|c| format!("`{c}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                "declare the provider with `grpc = grpc(...)` in cluster's `gear.gdl` (and \
+                 `#[toolkit::provides]` in its code), or keep the requesters with `cluster`",
+            )
+            .with_evidence("gears/system/cluster/cluster-sdk/src/client/remote.rs")
+            .at(Location::file(uri.to_owned())),
+        );
+        return Vec::new();
+    }
+    wanted
+        .into_iter()
+        .filter_map(|(requester, application, contract)| {
+            let contract = gearbox_ir::ContractId::new(contract).ok()?;
+            let client_sdk = catalogue.contracts.get(&contract).map(|c| c.sdk.clone());
+            catalogue
+                .contracts
+                .contains_key(&contract)
+                .then(|| gearbox_ir::ResolvedBinding {
+                    consumer: requester,
+                    consumer_application: application,
+                    contract,
+                    provider: cluster_gear.clone(),
+                    provider_application: serving.name.clone(),
+                    mode: gearbox_ir::ResolvedBindingMode::Remote,
+                    transport: gearbox_ir::Transport::Grpc,
+                    mechanism: gearbox_ir::BindingMechanism::ProvidesClientWiring,
+                    endpoint_source: Some(
+                        "cluster SDK: cluster.$POD_NAMESPACE.svc.cluster.local:50051".to_owned(),
+                    ),
+                    endpoint: endpoint.clone(),
+                    // Cluster requirements have no optional form; written once per
+                    // process as `gears.cluster-sdk.config.consumer_wiring.cluster`.
+                    critical: true,
+                    // Decided once every binding is known; see `resolve::resolve_at`.
+                    gates_readiness: false,
+                    // The SDK's remote half: the process links it so the
+                    // SDK's `ConsumerRegistration` exists to wire the client.
+                    client_sdk,
+                    selected: Selected::auto(),
+                })
+        })
+        .collect()
+}
+
 /// Everything one decision needs, so the signature stays readable.
 struct Context<'a> {
     scope: &'a str,
@@ -258,8 +493,22 @@ fn in_this_build(
     out
 }
 
-/// Whether the topology can put two things in different memory.
+/// Whether the cluster backends' state can be split across memories.
+///
+/// Process-local backends live in the process that hosts `cluster`. When exactly
+/// one unreplicated application hosts it, there is one copy of that state, and
+/// every other process reaches it over gRPC (ADR-0026 §4) -- or, on a profile
+/// that cannot, is refused before this matters (GBX0415, GBX0418). Otherwise a
+/// topology with more than one application or any replication spreads it.
 fn is_spread(partition: &Partition) -> bool {
+    let hosts: Vec<_> = partition
+        .applications
+        .iter()
+        .filter(|a| a.gears.iter().any(|g| g.as_str() == CLUSTER_GEAR))
+        .collect();
+    if let [host] = hosts.as_slice() {
+        return host.is_replicated();
+    }
     partition.applications.len() > 1
         || partition
             .applications

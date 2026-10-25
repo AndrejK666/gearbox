@@ -573,7 +573,7 @@ export interface GearboxClient {
 export type Row =
   | { readonly kind: "pending"; readonly gear: PendingGear }
   | { readonly kind: "projected"; readonly gear: GearDescriptor }
-  // Described with `maturity = "design"`: complete as declared and never
+  // Described with `implementation = "design"`: complete as declared and never
   // projected, so it arrives with the load result and stays this kind. Not a
   // gear a product can use -- every reader that wants one asks for "projected".
   | { readonly kind: "design"; readonly gear: DesignGear };

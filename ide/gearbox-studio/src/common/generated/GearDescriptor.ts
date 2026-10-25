@@ -8,21 +8,26 @@ import type { EndpointDecl } from "./EndpointDecl";
 import type { ExtensionPointDecl } from "./ExtensionPointDecl";
 import type { GearDocs } from "./GearDocs";
 import type { GearId } from "./GearId";
+import type { GearUi } from "./GearUi";
+import type { GitOrigin } from "./GitOrigin";
 import type { GtsTypeDecl } from "./GtsTypeDecl";
+import type { Implementation } from "./Implementation";
 import type { LifecycleDecl } from "./LifecycleDecl";
+import type { Located } from "./Located";
 import type { Location } from "./Location";
 import type { Maturity } from "./Maturity";
+import type { PackageRef } from "./PackageRef";
 import type { PluginImpl } from "./PluginImpl";
 import type { ProviderDescriptor } from "./ProviderDescriptor";
 import type { RelPath } from "./RelPath";
 import type { Requirement } from "./Requirement";
+import type { RestPlane } from "./RestPlane";
 import type { RuntimeCap } from "./RuntimeCap";
+import type { Scenario } from "./Scenario";
 import type { SourceId } from "./SourceId";
+import type { UnitChart } from "./UnitChart";
 import type { Visibility } from "./Visibility";
 
-/**
- * Everything known about one gear.
- */
 export type GearDescriptor = { id: GearId, 
 /**
  * Human-readable name. Free to change without breaking references, which is
@@ -38,13 +43,39 @@ display_name: string, description?: string | null, category?: string | null, vis
  */
 maturity: Maturity, 
 /**
+ * How much of the gear is written, when the description says. Never
+ * `Design`: a gear with no code is a [`DesignGear`].
+ */
+implementation?: Implementation | null, 
+/**
+ * What the gear lets its users do, in the order declared.
+ */
+scenarios?: Array<Scenario>, 
+/**
  * Which declared source this gear was read from.
  */
 source: SourceId, 
 /**
  * Where its description lives, relative to that source's root.
  */
-gdl_path: RelPath, package: CargoRef, runtime_caps?: Array<RuntimeCap>, 
+gdl_path: RelPath, package: CargoRef, 
+/**
+ * This gear's SDKs, in every language it has one: the Rust SDK first, then
+ * the others in the order declared.
+ *
+ * Located, not projected: nothing in the gear's crate says where its SDKs
+ * are. At most one is Cargo; that one is also what the projector reads for
+ * the traits the gear's extension points name.
+ */
+sdks?: Array<PackageRef>, 
+/**
+ * Where this gear lives in a git repository, when it says.
+ */
+origin?: GitOrigin | null, 
+/**
+ * Where this gear's tests are, as declared.
+ */
+tests?: Array<Located>, runtime_caps?: Array<RuntimeCap>, 
 /**
  * Gears that must be in the same binary as this one.
  *
@@ -67,6 +98,18 @@ consumes?: Array<Requirement>,
  * Non-contract requirements, which today means cluster primitives.
  */
 requires?: Array<Requirement>, serves?: Array<EndpointDecl>, 
+/**
+ * The planes the gear's REST operations use, when its description says
+ * (`rest_planes = [...]`). `None` is not "none": undeclared, the resolver
+ * assumes tenant operations, the fail-closed reading of the runtime's start
+ * check (GBX0417). `Some` of an empty set is a gear whose REST capability
+ * serves only probes. An authored claim: the runtime is what checks it.
+ */
+rest_planes?: Array<RestPlane> | null, 
+/**
+ * The hand-written chart of the unit this gear anchors, if it has one.
+ */
+unit_chart?: UnitChart | null, 
 /**
  * The client trait the gear macro asserts is object-safe, if declared.
  */
@@ -111,6 +154,20 @@ declared_roles?: Array<DeclaredRole>,
  * refusal is this tool's (ADR `cpt-gearbox-adr-one-per-installation`).
  */
 one_per_installation?: boolean, 
+/**
+ * The abstract permissions the gear's operations declare, or that its
+ * code asks for (gears-rust `cpt-cf-adr-operation-permissions` section 6):
+ * string literals in `.permission("...")`, `#[permission("...")]` on its
+ * SDK's `rest_contract` methods, and `PermissionMap::holds(_, "...")`.
+ * A product maps each to the scopes that grant it.
+ */
+permissions?: Array<string>, 
+/**
+ * Where the gear names a permission this tool could not read -- a
+ * constant or a variable instead of a literal -- so [`Self::permissions`]
+ * is known to be incomplete. Each entry is a `file:line` in the crate.
+ */
+unreadable_permissions?: Array<string>, 
 /**
  * The Cargo features the gear's own crate declares.
  *
@@ -181,4 +238,4 @@ gts_types?: Array<GtsTypeDecl>,
 /**
  * Where `gear(...)` was written in this gear's description.
  */
-declared_at?: Location | null, };
+declared_at?: Location | null, ui?: GearUi | null, };

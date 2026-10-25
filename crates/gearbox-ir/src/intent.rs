@@ -147,6 +147,33 @@ impl Discovery {
     }
 }
 
+/// How the processes of a multi-process profile authenticate each other on the
+/// platform plane (gears-rust ADR-0008; ADR-0011 section 3).
+///
+/// A property of the profile because it follows from where the processes run:
+/// a Kubernetes `ServiceAccount` token exists only on a cluster. The resolver
+/// writes it into `api-gateway`'s `internal_auth`, which the generator spreads
+/// to the hubs and workers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum PlatformAuth {
+    /// A projected `ServiceAccount` token, validated through `TokenReview`.
+    Kube,
+    /// One pre-shared secret, injected through the environment.
+    SharedSecret,
+}
+
+impl PlatformAuth {
+    /// The spelling a description and the runtime's `internal_auth.provider` use.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Kube => "kube",
+            Self::SharedSecret => "shared_secret",
+        }
+    }
+}
+
 /// A deployment profile, as declared.
 ///
 /// A composition-time concept: the runtime has no such type, only a per-gear
@@ -157,6 +184,16 @@ pub enum DeploymentProfileDecl {
     /// Everything in one process. Every contract binding is local by construction.
     Embedded {
         id: ProfileId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        database: Option<crate::PostgresDatabase>,
+        /// Explicit per-gear SQLite files relative to the gear home.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        sqlite_databases: BTreeMap<GearId, crate::SqliteDatabase>,
+        /// `development = True`: the production rules (gears-rust ADR-0011 sections 1 and 3,
+        /// Gearbox ADR-0026 section 6) are reported as warnings rather than errors, and
+        /// the generator keeps its development defaults. Absent means production.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        development: bool,
         /// Where `embedded(...)` was written in the product description.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         declared_at: Option<Location>,
@@ -168,6 +205,11 @@ pub enum DeploymentProfileDecl {
     /// implemented, so this profile is one machine.
     SelfHosted {
         id: ProfileId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        database: Option<crate::PostgresDatabase>,
+        /// Explicit per-gear SQLite files relative to the gear home.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        sqlite_databases: BTreeMap<GearId, crate::SqliteDatabase>,
         /// Which application is the host.
         host: ApplicationId,
         discovery: Discovery,
@@ -181,6 +223,14 @@ pub enum DeploymentProfileDecl {
         /// product cannot drift with the operator's environment.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cargo_profile: Option<String>,
+        /// `platform_auth = "shared_secret"`: how the processes authenticate each other.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        platform_auth: Option<PlatformAuth>,
+        /// `development = True`: the production rules (gears-rust ADR-0011 sections 1 and 3,
+        /// Gearbox ADR-0026 section 6) are reported as warnings rather than errors, and
+        /// the generator keeps its development defaults. Absent means production.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        development: bool,
         /// Where `self_hosted(...)` was written in the product description.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         declared_at: Option<Location>,
@@ -189,11 +239,24 @@ pub enum DeploymentProfileDecl {
     /// One container image and workload per process.
     Kubernetes {
         id: ProfileId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        database: Option<crate::PostgresDatabase>,
+        /// Explicit per-gear SQLite files relative to the gear home.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        sqlite_databases: BTreeMap<GearId, crate::SqliteDatabase>,
         discovery: Discovery,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         namespace: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         image_registry: Option<String>,
+        /// `platform_auth = "kube"` or `"shared_secret"`: how the units authenticate each other.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        platform_auth: Option<PlatformAuth>,
+        /// `development = True`: the production rules (gears-rust ADR-0011 sections 1 and 3,
+        /// Gearbox ADR-0026 section 6) are reported as warnings rather than errors, and
+        /// the generator keeps its development defaults. Absent means production.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        development: bool,
         /// Where `kubernetes(...)` was written in the product description.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         declared_at: Option<Location>,
@@ -201,6 +264,54 @@ pub enum DeploymentProfileDecl {
 }
 
 impl DeploymentProfileDecl {
+    /// SQLite overrides selected by this deployment profile.
+    #[must_use]
+    pub const fn sqlite_databases(&self) -> &BTreeMap<GearId, crate::SqliteDatabase> {
+        match self {
+            Self::Embedded {
+                sqlite_databases, ..
+            }
+            | Self::SelfHosted {
+                sqlite_databases, ..
+            }
+            | Self::Kubernetes {
+                sqlite_databases, ..
+            } => sqlite_databases,
+        }
+    }
+
+    /// The platform auth the description gave this profile; an embedded profile
+    /// has no platform plane between processes.
+    #[must_use]
+    pub const fn platform_auth(&self) -> Option<PlatformAuth> {
+        match self {
+            Self::Embedded { .. } => None,
+            Self::SelfHosted { platform_auth, .. } | Self::Kubernetes { platform_auth, .. } => {
+                *platform_auth
+            }
+        }
+    }
+
+    /// Whether the description marked this profile `development = True`.
+    #[must_use]
+    pub const fn development(&self) -> bool {
+        match self {
+            Self::Embedded { development, .. }
+            | Self::SelfHosted { development, .. }
+            | Self::Kubernetes { development, .. } => *development,
+        }
+    }
+
+    /// The external database selected by this deployment profile.
+    #[must_use]
+    pub const fn database(&self) -> Option<&crate::PostgresDatabase> {
+        match self {
+            Self::Embedded { database, .. }
+            | Self::SelfHosted { database, .. }
+            | Self::Kubernetes { database, .. } => database.as_ref(),
+        }
+    }
+
     #[must_use]
     pub const fn id(&self) -> &ProfileId {
         match self {
@@ -356,6 +467,13 @@ pub struct GearSelection {
     #[ts(type = "Record<string, unknown>")]
     pub config: BTreeMap<String, serde_json::Value>,
 
+    /// `profile_config = {"prod": {...}}`: per-profile configuration merged over
+    /// `config` when that profile is resolved -- maps key by key, any other value
+    /// replaced.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[ts(type = "Record<string, Record<string, unknown>>")]
+    pub profile_config: BTreeMap<ProfileId, BTreeMap<String, serde_json::Value>>,
+
     /// Implementations chosen for this gear's plugin extension points.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plugins: Vec<PluginSelection>,
@@ -469,6 +587,11 @@ pub struct BindingIntent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
 
+    /// Whether readiness waits for the provider, overriding the gear's
+    /// `consume(critical = ...)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub critical: Option<bool>,
+
     /// Profiles this applies to. Empty means all of them.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub profiles: BTreeSet<ProfileId>,
@@ -553,14 +676,19 @@ impl ClusterScopeIntent {
 
 /// An explicitly requested application.
 ///
-/// Only needed to name or replicate an application; the resolver derives the partition
-/// on its own otherwise.
+/// Names, replicates or adds process-local services to an application; the
+/// resolver derives the partition on its own otherwise.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct ApplicationPin {
     pub name: ApplicationId,
 
     /// The gear whose co-location closure this application is built from.
     pub anchor: GearId,
+
+    /// Additional gears from the product closure to co-locate in this process.
+    /// Their dependencies and selected plugins are included as well.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub include: BTreeSet<GearId>,
 
     /// Which of the anchor's declared roles this application runs as.
     ///
@@ -661,6 +789,14 @@ pub struct ProductIntent {
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub preferences: Vec<Preference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<crate::ui::ProductUi>,
+
+    /// Permission -> the token scopes that grant it, any of them
+    /// (`product(permissions = {...})`, gears-rust
+    /// `cpt-cf-adr-operation-permissions` section 2).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub permissions: BTreeMap<String, Vec<String>>,
 }
 
 impl ProductIntent {

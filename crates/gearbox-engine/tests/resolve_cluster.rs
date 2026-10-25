@@ -24,21 +24,11 @@ use gearbox_ir::{
     ProductIntent, ProfileId, RuntimeCap, SourceId,
 };
 
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn gears_rust() -> Option<PathBuf> {
-    // Walks up instead of counting `..`, and the difference is not cosmetic.
-    // `CARGO_MANIFEST_DIR/../../../gears-rust` is the sibling of the *repository*
-    // root, so from a git worktree -- `.claude/worktrees/<name>/crates/...` -- it
-    // resolved to nothing. Every real-tree test then skipped, printed a reason
-    // nobody reads, and the suite went green having touched none of the corpus.
-    // An agent working in a worktree got that silently.
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            return candidate.canonicalize().ok();
-        }
-        dir = dir.parent()?;
-    }
+    corpus_support::root()
 }
 
 fn pid(s: &str) -> ProfileId {
@@ -731,4 +721,295 @@ fn a_gated_primitive_is_not_a_candidate_without_its_feature() {
         .and_then(|d| d.help.clone())
         .expect("the remedy is named");
     assert!(help.contains("features = [\"k8s\"]"), "{help}");
+}
+
+fn remote_cluster_intent(kubernetes: bool) -> gearbox_ir::ProductIntent {
+    let gears = ["app", "cluster", "grpc-hub"];
+    let mut intent = if kubernetes {
+        support::kubernetes(&gears, gearbox_ir::Discovery::Static)
+    } else {
+        support::self_hosted(&gears, gearbox_ir::Discovery::Static, Some("t"))
+    };
+    support::pin(&mut intent, "cluster-app", "cluster", 1);
+    intent
+        .application_pins
+        .iter_mut()
+        .find(|p| p.name.as_str() == "cluster-app")
+        .unwrap()
+        .include = [support::gid("grpc-hub")].into_iter().collect();
+    support::bind_cluster(&mut intent, "app", "postgres", Some("existingSecret:pg"));
+    intent
+}
+
+fn messages_of(r: &gearbox_engine::resolve::Resolution, code: DiagnosticCode) -> Vec<&str> {
+    r.diagnostics
+        .iter()
+        .filter(|d| d.code == code)
+        .map(|d| d.message.as_str())
+        .collect()
+}
+
+#[test]
+fn a_requester_apart_from_cluster_gets_a_remote_grpc_binding() {
+    // `cluster` in its own application, the requester elsewhere,
+    // Kubernetes: a gRPC binding the SDK addresses.
+    let cat = support::remote_cluster_catalogue();
+    let r = resolve(&cat, &remote_cluster_intent(true), &pid("prod"));
+    let binding = r
+        .bindings
+        .iter()
+        .find(|b| b.provider.as_str() == "cluster")
+        .unwrap_or_else(|| panic!("no cluster binding: {:?}", r.diagnostics));
+    assert_eq!(binding.consumer.as_str(), "app");
+    assert_eq!(binding.contract.as_str(), "cluster/ClusterCacheApi@v1");
+    assert!(binding.is_remote());
+    assert_eq!(binding.transport, gearbox_ir::Transport::Grpc);
+    assert_eq!(
+        binding.mechanism,
+        gearbox_ir::BindingMechanism::ProvidesClientWiring
+    );
+    assert_eq!(
+        binding.endpoint.as_deref(),
+        Some("http://cluster.default.svc.cluster.local:50051")
+    );
+    assert!(messages_of(&r, DiagnosticCode::RemoteClusterNeedsKubernetes).is_empty());
+    assert!(
+        messages_of(&r, DiagnosticCode::TopologyGrpcWithoutHub).is_empty(),
+        "{:?}",
+        r.diagnostics
+    );
+}
+
+#[test]
+fn a_remote_cluster_needs_its_contracts_provided_over_grpc() {
+    // The binding used to need only that the contract
+    // existed somewhere. Without cluster providing it over gRPC -- and the
+    // profile contract the SDK resolves scopes through -- it is refused.
+    for drop in ["cluster/ClusterCacheApi@v1", "cluster/ClusterProfileApi@v1"] {
+        let mut cat = support::remote_cluster_catalogue();
+        for provided in &mut cat
+            .gears
+            .get_mut(&support::gid("cluster"))
+            .unwrap()
+            .provides
+        {
+            if provided.contract.as_str() == drop {
+                provided.transports.remove(&gearbox_ir::Transport::Grpc);
+            }
+        }
+        let r = resolve(&cat, &remote_cluster_intent(true), &pid("prod"));
+        let refused = messages_of(&r, DiagnosticCode::RemoteClusterWithoutGrpc);
+        assert!(
+            refused.iter().any(|m| m.contains(drop)),
+            "{drop}: {:?}",
+            r.diagnostics
+        );
+        assert!(r.bindings.iter().all(|b| b.provider.as_str() != "cluster"));
+    }
+}
+
+#[test]
+fn cluster_in_two_kubernetes_applications_is_refused_even_with_no_one_remote() {
+    // Each process linking cluster renders a Service
+    // named `cluster`, so two cannot install even when every requester has
+    // its own copy.
+    let cat = support::remote_cluster_catalogue();
+    let mut intent = remote_cluster_intent(true);
+    // The requester keeps a copy of its own, beside the cluster application.
+    support::pin(&mut intent, "app-own", "app", 1);
+    intent
+        .application_pins
+        .last_mut()
+        .unwrap()
+        .include
+        .insert(support::gid("cluster"));
+    let r = resolve(&cat, &intent, &pid("prod"));
+    let hosting = r
+        .partition
+        .applications
+        .iter()
+        .filter(|a| a.contains(&support::gid("cluster")))
+        .count();
+    assert!(hosting > 1, "{:?}", r.partition.applications);
+    assert!(
+        r.bindings.iter().all(|b| b.provider.as_str() != "cluster"),
+        "nobody is remote: {:?}",
+        r.bindings
+    );
+    assert!(
+        !messages_of(&r, DiagnosticCode::ClusterInSeveralApplications).is_empty(),
+        "{:?}",
+        r.diagnostics
+    );
+}
+
+#[test]
+fn a_remote_cluster_outside_kubernetes_is_refused() {
+    // The SDK has only Kubernetes DNS to find cluster by.
+    let cat = support::remote_cluster_catalogue();
+    let r = resolve(&cat, &remote_cluster_intent(false), &pid("local"));
+    assert!(!messages_of(&r, DiagnosticCode::RemoteClusterNeedsKubernetes).is_empty());
+    assert!(r.bindings.iter().all(|b| b.provider.as_str() != "cluster"));
+}
+
+#[test]
+fn cluster_in_two_applications_while_reached_remotely_is_refused() {
+    // Two Services named `cluster` cannot exist.
+    let cat = support::remote_cluster_catalogue();
+    let mut intent = remote_cluster_intent(true);
+    intent.selected_gears.push(intent.selected_gears[0].clone());
+    intent.selected_gears.last_mut().unwrap().gear = support::gid("other");
+    support::pin(&mut intent, "other-app", "other", 1);
+    intent
+        .application_pins
+        .iter_mut()
+        .find(|p| p.name.as_str() == "other-app")
+        .unwrap()
+        .include = [support::gid("cluster")].into_iter().collect();
+    let r = resolve(&cat, &intent, &pid("prod"));
+    assert!(
+        !messages_of(&r, DiagnosticCode::ClusterInSeveralApplications).is_empty(),
+        "{:?}",
+        r.diagnostics
+    );
+}
+
+#[test]
+fn a_cluster_hub_off_the_network_is_refused() {
+    // Remote requesters dial TCP; a UDS hub serves nobody outside.
+    let cat = support::remote_cluster_catalogue();
+    let mut intent = remote_cluster_intent(true);
+    let hub = intent
+        .selected_gears
+        .iter_mut()
+        .find(|g| g.gear.as_str() == "grpc-hub")
+        .unwrap();
+    hub.config.insert(
+        "listen_addr".to_owned(),
+        serde_json::json!("uds:///run/hub.sock"),
+    );
+    let r = resolve(&cat, &intent, &pid("prod"));
+    let messages = messages_of(&r, DiagnosticCode::TopologyGrpcWithoutHub);
+    assert!(
+        messages.iter().any(|m| m.contains("uds://")),
+        "{messages:?}"
+    );
+}
+
+/// A process-local backend in its own unreplicated cluster unit is one
+/// copy of the state -- every requester reaches it over gRPC -- so it is not
+/// GBX0503. The same unit replicated is.
+#[test]
+fn one_unreplicated_cluster_unit_holds_the_only_copy() {
+    let mut cat = support::cluster_catalogue(vec![(
+        ClusterPrimitive::Cache,
+        "main",
+        &["cluster.cache.linearizable"],
+    )]);
+    // The requester reaches cluster as a capability, not a `deps` edge, so it
+    // links no copy of its own.
+    cat.gears
+        .get_mut(&support::gid("app"))
+        .unwrap()
+        .colocated_deps
+        .clear();
+    let mut intent = support::kubernetes(&["app", "cluster"], Discovery::Directory);
+    support::bind_cluster(&mut intent, "main", "standalone", None);
+    support::pin(&mut intent, "coordination", "cluster", 1);
+    let profile = intent
+        .profiles
+        .keys()
+        .find(|p| p.as_str() != "dev")
+        .unwrap()
+        .clone();
+
+    let r = resolve(&cat, &intent, &profile);
+    let apps: Vec<_> = r
+        .partition
+        .applications
+        .iter()
+        .map(|a| (a.name.to_string(), a.gears.clone()))
+        .collect();
+    assert_eq!(apps.len(), 2, "requester and cluster unit apart: {apps:?}");
+    assert!(
+        codes(&r).contains(&DiagnosticCode::ClusterAutoSelected)
+            || r.cluster
+                .iter()
+                .any(|b| b.resolved.effective_provider() == Some("standalone")),
+        "the scope resolved onto standalone: {:?}",
+        r.diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !codes(&r).contains(&DiagnosticCode::ClusterProcessLocalInMultiProcess),
+        "{:?}",
+        r.diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+
+    intent
+        .application_pins
+        .iter_mut()
+        .find(|p| p.name.as_str() == "coordination")
+        .unwrap()
+        .replicas = 2;
+    let r = resolve(&cat, &intent, &profile);
+    assert!(
+        codes(&r).contains(&DiagnosticCode::ClusterProcessLocalInMultiProcess),
+        "{:?} {:?}",
+        r.partition
+            .applications
+            .iter()
+            .map(|a| (a.name.as_str(), a.replicas, a.gears.clone()))
+            .collect::<Vec<_>>(),
+        r.diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_remote_grpc_binding_into_a_builtin_host_process_is_not_gbx0305() {
+    // GBX0305 refuses a remote consumer of a process the
+    // built-in HTTP host serves, because that host is a public listener and a
+    // contract's REST routes are internal. A gRPC binding is served by the
+    // process's hub, not its HTTP host, so it must not be refused -- even
+    // though the provider's process has REST gears and no REST host.
+    let mut cat = support::remote_cluster_catalogue();
+    cat.gears
+        .get_mut(&support::gid("cluster"))
+        .unwrap()
+        .runtime_caps
+        .insert(gearbox_ir::RuntimeCap::Rest);
+    let mut intent = support::kubernetes(
+        &["app", "cluster", "grpc-hub"],
+        gearbox_ir::Discovery::Static,
+    );
+    support::pin(&mut intent, "app-worker", "app", 1);
+    support::bind_cluster(&mut intent, "app", "postgres", Some("existingSecret:pg"));
+
+    let r = resolve(&cat, &intent, &pid("prod"));
+    let binding = r
+        .bindings
+        .iter()
+        .find(|b| b.provider.as_str() == "cluster")
+        .unwrap_or_else(|| panic!("no cluster binding: {:?}", r.diagnostics));
+    assert_eq!(binding.transport, gearbox_ir::Transport::Grpc);
+    let provider = r
+        .partition
+        .applications
+        .iter()
+        .find(|a| a.name == binding.provider_application)
+        .expect("the provider's application");
+    assert!(
+        provider.rest_host.is_none() && provider.serve.is_some(),
+        "the premise: the built-in HTTP host serves cluster's process: {provider:?}"
+    );
+    assert!(
+        messages_of(&r, DiagnosticCode::TopologyRestWithoutHost).is_empty(),
+        "{:?}",
+        r.diagnostics
+    );
 }

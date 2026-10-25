@@ -344,7 +344,12 @@ pub fn project_field_str_default(files: &[RustFile], path: &str) -> Result<Optio
         .collect();
     let mut owner = match roots.as_slice() {
         [one] => (*one).to_owned(),
-        [] => return Err(format!("no `*Config` struct in the crate has a field `{}`", segments[0])),
+        [] => {
+            return Err(format!(
+                "no `*Config` struct in the crate has a field `{}`",
+                segments[0]
+            ));
+        }
         many => {
             return Err(format!(
                 "`{}` is a field of several config structs ({}); the selector cannot say which",
@@ -378,11 +383,15 @@ pub fn project_field_str_default(files: &[RustFile], path: &str) -> Result<Optio
             .trait_
             .as_ref()
             .is_some_and(|(_, p, _)| last_segment(p) == "Default");
-        let on_owner = matches!(&*imp.self_ty, syn::Type::Path(p) if last_segment(&p.path) == owner);
+        let on_owner =
+            matches!(&*imp.self_ty, syn::Type::Path(p) if last_segment(&p.path) == owner);
         if !(is_default && on_owner) {
             continue;
         }
-        if let Some((_, expr)) = struct_literal_fields(imp).into_iter().find(|(n, _)| n == last) {
+        if let Some((_, expr)) = struct_literal_fields(imp)
+            .into_iter()
+            .find(|(n, _)| n == last)
+        {
             return str_literal(expr)
                 .or_else(|| str_const(files, expr))
                 .map(Some)
@@ -391,8 +400,9 @@ pub fn project_field_str_default(files: &[RustFile], path: &str) -> Result<Optio
     }
     let read = serde_default_fn(&field.attrs);
     if let Some(name) = read.name {
-        let body = free_fn_body(files, &name)
-            .ok_or_else(|| format!("`{owner}.{last}` defaults through `{name}`, which is not found"))?;
+        let body = free_fn_body(files, &name).ok_or_else(|| {
+            format!("`{owner}.{last}` defaults through `{name}`, which is not found")
+        })?;
         return str_literal(body)
             .or_else(|| str_const(files, body))
             .map(Some)

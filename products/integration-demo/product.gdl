@@ -1,0 +1,158 @@
+gdl_version = "1.4"
+
+# The integration product: small on
+# purpose -- no database, no UI. It exists to prove direct routing and both
+# authentication planes on a real cluster, and to run the same gears once as
+# the embedded all-in-one binary.
+#
+# Units on `kind`:
+#   Flight Control  -- api-gateway's hand-written chart: the edge, the
+#                      directory, the hub, Types Registry, tenant AuthN (OIDC)
+#   cluster         -- cluster's hand-written chart: coordination over gRPC
+#   payments        -- the AuthZ bundle (anchor; `evaluate` is platform-plane)
+#                      and, linked beside it, the PaymentApi provider, internal
+#                      only. The directory has a record for each, so checkout
+#                      finds PaymentApi under its own name (gears-rust
+#                      ADR-0010 section 6)
+#   checkout        -- the consumer: `charge` exposed, `status` internal; calls
+#                      payments and cluster directly
+#
+# The issuer and audience are the mock IdP's (gears-rust
+# deploy/helm/mock-idp.sh); its CA is mounted at /app/oidc-ca by the install.
+
+# The `local` profile's issuer: `local.sh` serves a mock IdP here.
+LOCAL_ISSUER = "https://localhost:58443"
+ISSUER = "https://mock-idp.gearbox-p4.svc.cluster.local"
+
+product(
+    id = "integration-demo",
+    name = "Integration Demo",
+    version = "0.1.0",
+
+    sources = [source(id = "gears-rust", at = path("../../../gears-rust"))],
+
+    # Service Discovery's listing declares `directory.read` (gears-rust
+    # cpt-cf-adr-operation-permissions); any authenticated caller could list
+    # before, and still can.
+    permissions = {"directory.read": ["*"]},
+
+    profiles = [
+        kubernetes(
+            id = "kind",
+            discovery = "directory",
+            namespace = "gearbox-p4",
+            platform_auth = "kube",
+            # Every process links a Types Registry copy; they share this
+            # database, which the acceptance install deploys beside the product.
+            database = postgres(
+                host = "postgres.gearbox-p4.svc.cluster.local", user = "integration",
+                password = "${GEARS_PG_PASSWORD}", existing_secret = "integration-db",
+                params = {"sslmode": "disable"},
+            ),
+        ),
+        # One machine, Flight Control spawning its workers as local
+        # processes, the hub on a Unix socket, one shared secret on the platform
+        # plane. Production rules apply; `local.sh` runs it.
+        self_hosted(
+            id = "local",
+            host = "flight-control",
+            worker_discovery = "directory",
+            platform_auth = "shared_secret",
+            target_dir = "../../../gears-rust/target",
+            database = postgres(
+                host = "127.0.0.1", port = 55442, user = "integration",
+                password = "${GEARS_PG_PASSWORD}", params = {"sslmode": "disable"},
+            ),
+        ),
+        embedded(id = "all-in-one", sqlite_databases = {"types-registry": "types.sqlite3"}),
+    ],
+    default_profile = "kind",
+
+    gears = [
+        # The edge publishes its API description (`/openapi.json`) in every
+        # profile; Flight Control's chart turns it on too.
+        use_gear("api-gateway", source = "gears-rust", config = {"enable_docs": True}),
+        use_gear("service-discovery", source = "gears-rust"),
+        use_gear("grpc-hub", source = "gears-rust"),
+        use_gear("types-registry", source = "gears-rust"),
+        use_gear("cluster", source = "gears-rust"),
+        use_gear("api-contracts", source = "gears-rust"),
+        use_gear("api-contracts-consumer", source = "gears-rust"),
+        use_gear("authn-resolver", source = "gears-rust", plugins = [
+            # On `local` the CA is a path relative to the processes' working
+            # directory, where `local.sh` puts it.
+            plugin("oidc-authn-plugin", profiles = ["local"], config = {
+                "jwt": {
+                    "trusted_issuers": [{"issuer": LOCAL_ISSUER}],
+                    "expected_audience": ["integration-demo"],
+                    "claim_mapping": {
+                        "subject_id": "sub",
+                        "subject_tenant_id": "tenant_id",
+                        "token_scopes": "scope",
+                    },
+                },
+                "s2s_oauth": {
+                    "discovery_url": LOCAL_ISSUER,
+                    "default_subject_type": "gts.cf.core.security.subject_user.v1~",
+                },
+                "http_client": {"custom_ca_certificate_paths": ["oidc-ca/ca.crt"]},
+            }),
+            plugin("oidc-authn-plugin", profiles = ["kind", "all-in-one"], config = {
+                # `claim_mapping` has no default: which claims carry the
+                # subject, its tenant and its scopes.
+                "jwt": {
+                    "trusted_issuers": [{"issuer": ISSUER}],
+                    "expected_audience": ["integration-demo"],
+                    "claim_mapping": {
+                        "subject_id": "sub",
+                        "subject_tenant_id": "tenant_id",
+                        "token_scopes": "scope",
+                    },
+                },
+                "s2s_oauth": {
+                    "discovery_url": ISSUER,
+                    "default_subject_type": "gts.cf.core.security.subject_user.v1~",
+                },
+                "http_client": {"custom_ca_certificate_paths": ["/app/oidc-ca/ca.crt"]},
+            }),
+        ]),
+        use_gear("authz-resolver", source = "gears-rust", plugins = [
+            plugin("static-authz-plugin"),
+        ]),
+    ],
+
+    cluster_profiles = [
+        # On `kind` two cluster replicas share one Postgres backend, so the
+        # coordination survives either pod. The other profiles run cluster in
+        # one process, where the in-memory backend is the whole truth.
+        cluster_profile(
+            name = "event-broker",
+            profiles = ["kind"],
+            cache = provider(
+                "postgres",
+                secret_ref = "existingSecret:integration-db",
+                connection_string = "postgres://integration:${GEARS_PG_PASSWORD}@postgres.gearbox-p4.svc.cluster.local:5432/types_registry?sslmode=disable",
+                schema = "cluster",
+                pool_max_size = 5,
+            ),
+        ),
+        cluster_profile(name = "event-broker", cache = provider("standalone"),
+                        profiles = ["local", "all-in-one"]),
+    ],
+
+    applications = [
+        application("flight-control", anchor = "api-gateway",
+                    include = ["service-discovery", "grpc-hub", "types-registry", "authn-resolver"],
+                    profiles = ["kind", "local"]),
+        application("cluster", anchor = "cluster", include = ["grpc-hub"], replicas = 2,
+                    profiles = ["kind"]),
+        application("payments", anchor = "authz-resolver",
+                    include = ["api-contracts", "authn-resolver"], profiles = ["kind", "local"]),
+        application("checkout", anchor = "api-contracts-consumer", include = ["authn-resolver"],
+                    profiles = ["kind"]),
+        # Off Kubernetes the cluster SDK cannot address a remote cluster by DNS
+        # (GBX0415), so `local` links it, and a hub for its services, here.
+        application("checkout", anchor = "api-contracts-consumer",
+                    include = ["authn-resolver", "cluster", "grpc-hub"], profiles = ["local"]),
+    ],
+)

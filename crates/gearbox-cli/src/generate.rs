@@ -10,8 +10,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::Context as _;
+use gearbox_engine::generate::product_templates::{self, TemplateSync};
 use gearbox_engine::generate::{GenerateInput, TemplateSet, base_root_for, summarize};
-use gearbox_ir::{FileAction, FilePlan, ProductId, ProfileId};
+use gearbox_ir::{FileAction, FilePlan, ProductId, ProfileId, TemplateStatus};
 
 use crate::pipeline::{Outcome, Resolution};
 use crate::{Format, report};
@@ -74,7 +75,17 @@ pub fn run(
         .iter()
         .map(|root| (root.id.clone(), root.root.clone()))
         .collect();
-    let templates = TemplateSet::load_for_product(&product_file, intent.templates.as_deref())?;
+    // The product's own copy of every template, followed to this build's
+    // builtins; generation renders from it, and an apply writes it.
+    let template_sync = TemplateSet::dir_for_product(&product_file, intent.templates.as_deref())?
+        .map(|dir| product_templates::sync(&dir))
+        .transpose()?;
+    let templates = template_sync
+        .as_ref()
+        .map_or_else(TemplateSet::new, |sync| sync.set.clone());
+    if let Some(sync) = &template_sync {
+        diagnostics.extend(sync.diagnostics.as_slice().iter().cloned());
+    }
     // `crates = registry(...)`: which crates the build names by version, each
     // checked against what was published. Asks cargo, so only when a source
     // asked for it.
@@ -108,6 +119,13 @@ pub fn run(
         (plans, diagnostics, 0)
     } else {
         let outcome = gearbox_engine::apply_generate(&generated.files, &out_root, &base_root)?;
+        // Only beside a tree that was written: a refused apply leaves the
+        // product exactly as it was, templates included.
+        if !outcome.diagnostics.has_errors()
+            && let Some(sync) = &template_sync
+        {
+            sync.write()?;
+        }
         (outcome.plans, outcome.diagnostics, outcome.written)
     };
     diagnostics.extend(apply_diagnostics.as_slice().iter().cloned());
@@ -118,6 +136,9 @@ pub fn run(
         Format::Json => println!("{}", serde_json::to_string_pretty(&plans)?),
         Format::Text => {
             print_plans(&plans, &out_root, dry_run, written);
+            if let Some(sync) = &template_sync {
+                print_templates(sync, dry_run);
+            }
             if !generated.overridden_templates.is_empty() {
                 println!(
                     "  overrode templates: {}",
@@ -224,6 +245,40 @@ fn print_plans(plans: &[FilePlan], out_root: &Path, dry_run: bool, written: usiz
     }
     if counts.contains_key(&FileAction::Conflict) {
         println!("  nothing was written: resolve the conflicts above and re-run");
+    }
+}
+
+/// One line about the product's templates, and one per template that is not
+/// the builtin: those are the ones that explain an unexpected file.
+fn print_templates(sync: &TemplateSync, dry_run: bool) {
+    let written = sync.templates.iter().filter(|t| t.action.writes()).count();
+    let dir = sync
+        .templates
+        .first()
+        .and_then(|t| Path::new(&t.path).parent())
+        .map_or_else(String::new, |p| p.display().to_string());
+    println!(
+        "  templates in {dir}: {written} {} of {}",
+        if dry_run {
+            "would be written"
+        } else {
+            "written"
+        },
+        sync.templates.len()
+    );
+    for template in &sync.templates {
+        if template.status != TemplateStatus::Default {
+            println!("    {:<8} {}", status(template.status), template.key);
+        }
+    }
+}
+
+const fn status(status: TemplateStatus) -> &'static str {
+    match status {
+        TemplateStatus::Default => "default",
+        TemplateStatus::Edited => "edited",
+        TemplateStatus::Behind => "behind",
+        TemplateStatus::Unknown => "unknown",
     }
 }
 
@@ -350,6 +405,17 @@ mod tests {
             err.to_string()
         );
         assert!(!out.exists(), "the refusal came after a write");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_plain_and_verbatim_output_roots_agree_before_creation() {
+        let dir = scratch("windows-canonical");
+        let plain = dir.join("missing").join("app");
+        let canonical = dir.canonicalize().unwrap().join("missing").join("app");
+        assert_eq!(absolute(plain.clone()).unwrap(), canonical);
+        assert_eq!(absolute(canonical.clone()).unwrap(), canonical);
+        assert!(!plain.exists());
     }
 
     /// An output root reached through a symlink is the directory it points at,

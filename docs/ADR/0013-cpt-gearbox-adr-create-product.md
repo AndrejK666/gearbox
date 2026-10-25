@@ -1130,3 +1130,17 @@ Asserted in `write_gate_tests.rs` (`a_scaffold_with_the_toolkit_is_a_gear_the_ca
 all three kinds project and only GBX0519 remains; the toolkit and SDK paths cannot inject a line).
 Also asserted in the conformance claim "Create Gear declares its folder as a source and adds the
 gear": after the create, the product shows neither GBX0301 nor GBX0211.
+
+
+## Amendment 2026-10-18: cross-source plugin scaffold regression
+
+The RPC receives the complete plugin spec from the selected catalogue point,
+including its `cf.toolkit.plugins.plugin.v1~` base. GDL accepts the spec's own
+segment, so scaffold strips that base when writing `implements`. Passing a spec
+already in segment form remains supported. The Cargo SDK dependency may point
+into the host's separate source; no SDK locator is written in the plugin
+and no source-root write gate is relaxed.
+
+`a_plugin_scaffold_outside_its_hosts_source_resolves_in_a_product` covers the
+actual RPC scaffold, catalogue join and product resolution. The product template
+also has an add-source/add-gear evaluation round-trip regression.

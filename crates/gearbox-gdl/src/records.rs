@@ -70,6 +70,37 @@ macro_rules! gdl_record {
 }
 
 gdl_record! {
+    /// `ui_module(package = path(...), requires = [...])`
+    UiModuleRecord as "gdl_ui_module" {
+        pub package: String,
+        pub requires: Vec<String>,
+    }
+}
+
+gdl_record! {
+    /// `helm_chart(path = path(...), image = "...", gears = [...])`
+    HelmChartRecord as "gdl_helm_chart" {
+        pub path: String,
+        pub image: String,
+        pub gears: Vec<String>,
+        pub services: Vec<(String, String)>,
+    }
+}
+
+gdl_record! {
+    /// `ui_product(shell = path(...), sdk = path(...), modules = [...])`
+    UiProductRecord as "gdl_ui_product" {
+        pub shell: String,
+        pub sdk: String,
+        pub modules: Vec<String>,
+        #[allocative(skip)]
+        pub source: Option<gearbox_ir::SourceId>,
+        pub npm_lock: Option<String>,
+        pub entry_points: Vec<(String, String)>,
+    }
+}
+
+gdl_record! {
     /// `cargo(crate = ..., lib = ..., path = ..., features = [...], link = [...])`
     ///
     /// `lib` is mandatory rather than derived from `crate`: a crate with no
@@ -96,6 +127,34 @@ gdl_record! {
         /// Where `cargo(...)` was written.
         #[allocative(skip)]
         pub declared_at: Option<gearbox_ir::Location>,
+    }
+}
+
+gdl_record! {
+    /// `npm(...)`, `nuget(...)`, `go(...)` -- a package in an ecosystem Gearbox
+    /// locates but does not project.
+    ///
+    /// One record for all of them: past its name and path, nothing about a
+    /// non-Cargo package is read. `cargo(...)` stays separate because a build
+    /// needs its `lib`, features and link set.
+    PackageRecord as "gdl_package" {
+        #[allocative(skip)]
+        pub ecosystem: gearbox_ir::Ecosystem,
+        pub name: String,
+        pub path: String,
+        /// Where the constructor was written.
+        #[allocative(skip)]
+        pub declared_at: Option<gearbox_ir::Location>,
+    }
+}
+
+gdl_record! {
+    /// `scenario("...", priority = "p1", done = True)` -- one thing a gear lets
+    /// its users do, and whether it is written.
+    ScenarioRecord as "gdl_scenario" {
+        pub text: String,
+        pub priority: Option<String>,
+        pub done: bool,
     }
 }
 
@@ -403,12 +462,28 @@ gdl_record! {
         pub branch: Option<String>,
         /// Registry only: what a gear id is prefixed with to name its package.
         pub prefix: Option<String>,
+        /// Git only: the directory inside the repository, from `git(path = ...)`.
+        ///
+        /// A gear's `source` uses it to say where the gear sits; a product's
+        /// source is a whole repository and refuses it.
+        pub subdir: Option<String>,
+    }
+}
+
+gdl_record! {
+    /// `postgres(...)`: a validated external database connection.
+    PostgresRecord as "gdl_postgres" {
+        #[allocative(skip)]
+        pub settings: gearbox_ir::PostgresDatabase,
     }
 }
 
 gdl_record! {
     /// `embedded(...)`, `self_hosted(...)` or `kubernetes(...)`.
     ProfileRecord as "gdl_profile" {
+        pub database: Option<PostgresRecord>,
+        #[allocative(skip)]
+        pub sqlite_databases: std::collections::BTreeMap<gearbox_ir::GearId, gearbox_ir::SqliteDatabase>,
         /// `embedded`, `self-hosted` or `kubernetes`.
         pub kind: String,
         pub id: String,
@@ -418,6 +493,10 @@ gdl_record! {
         pub cargo_profile: Option<String>,
         pub namespace: Option<String>,
         pub image_registry: Option<String>,
+        /// `platform_auth = "kube" | "shared_secret"`, as written.
+        pub platform_auth: Option<String>,
+        /// `development = True`: production rules become warnings.
+        pub development: bool,
         /// Where this profile constructor was written.
         #[allocative(skip)]
         pub declared_at: Option<gearbox_ir::Location>,
@@ -437,6 +516,8 @@ gdl_record! {
         pub features: Vec<String>,
         /// Opaque per-gear configuration, carried through to the generator.
         pub config: Vec<(String, serde_json::Value)>,
+        /// `profile_config = {"<profile>": {...}}`: merged over `config` in that profile.
+        pub profile_config: Vec<(String, Vec<(String, serde_json::Value)>)>,
         /// Implementations chosen for this gear's plugin extension points.
         pub plugins: Vec<PluginRecord>,
         /// Where this `use_gear(...)` call was written.
@@ -455,6 +536,9 @@ gdl_record! {
         /// From `transport.*`, when the operator pinned one.
         pub transport: Option<String>,
         pub endpoint: Option<String>,
+        /// Whether readiness waits for the provider; overrides the gear's
+        /// `consume(critical = ...)`.
+        pub critical: Option<bool>,
         pub profiles: Vec<String>,
         /// Where this `bind(...)` call was written.
         #[allocative(skip)]
@@ -504,6 +588,7 @@ gdl_record! {
     ApplicationRecord as "gdl_application" {
         pub name: String,
         pub anchor: String,
+        pub include: Vec<String>,
         /// Which of the anchor's declared roles this application runs as.
         ///
         /// The product's half of the join: the gear says which roles exist, the

@@ -195,3 +195,25 @@ proxy for "not projected yet". `pending` remains the only signal for that.
   §9 (Catalogue widget).
 * Depends on: ADR `cpt-gearbox-adr-macro-projected-catalogue` — the projected `GearId` is what makes
   S1 unable to key a tree.
+
+
+## Amendment 2026-10-18: bounded parallel source reads
+
+Issue Artifizer/gearbox#5 identifies Windows on-access antivirus latency when
+thousands of source files are opened serially. S2/S3 now read sorted source paths
+in batches of at most 32 scoped workers. Only text and I/O errors cross threads;
+`syn` ASTs and projection stay on the calling thread. At most 32 source texts
+are prefetched, bounded by the existing per-file size limit.
+
+The public loader remains synchronous. S0/S1 finish before projection, callbacks
+stay on the calling thread, and no event is emitted from a read worker. Files,
+parse failures and I/O failures are consumed in sorted order, including when a
+later read fails before an earlier parse does. The crate cache and scan counters
+are unchanged; cancellation is still observed at the existing event boundaries.
+No persistent cache, warm-start protocol or initialize invalidation change is
+part of this amendment. Defender exclusions are not required or configured.
+
+Confirmation: `scan::read_tests` covers ordering across multiple batches and
+mixed parse/read failures. Existing staged/cancellation/cache tests remain the
+behavioral contract. Cold/warm timings with Defender enabled are machine-specific
+measurements, not a portable latency guarantee.

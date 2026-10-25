@@ -6,21 +6,26 @@
 // sides of that one file. Putting every file on the plan would drag
 // `Cargo.lock` (~100k) across for a preview nobody asked to read.
 
-import { codicon, ReactWidget } from "@theia/core/lib/browser";
+import { codicon, ConfirmDialog, ReactWidget } from "@theia/core/lib/browser";
+import URI from "@theia/core/lib/common/uri";
 import { CommandService } from "@theia/core/lib/common/command";
 import { inject, injectable, postConstruct } from "@theia/core/shared/inversify";
 import React from "@theia/core/shared/react";
 import { FileDialogService } from "@theia/filesystem/lib/browser";
+import { FileService } from "@theia/filesystem/lib/browser/file-service";
 import * as monaco from "@theia/monaco-editor-core";
 
 import type { FileAction } from "../../common/generated/FileAction";
 import type { FileKind } from "../../common/generated/FileKind";
 import type { FilePlan } from "../../common/generated/FilePlan";
 import type { GenerateFileResult } from "../../common/generated/GenerateFileResult";
+import type { ProductTemplate } from "../../common/generated/ProductTemplate";
+import type { TemplateStatus } from "../../common/generated/TemplateStatus";
 import { CatalogueStore } from "../catalogue-store";
 import { DiagnosticsList, selectionOf } from "../diagnostics/diagnostics-list";
 import { SelectionService } from "../shell/selection-service";
 import { ProductStore } from "../product-store";
+import { RevealService } from "../reveal-service";
 import { SHOW_PRODUCT } from "../shell/session-command-ids";
 import { GenerateService } from "./generate-service";
 
@@ -40,7 +45,32 @@ const KIND_LANGUAGE: Record<FileKind, string> = {
   dockerfile: "dockerfile",
   shell: "shell",
   text: "plaintext",
+  binary: "plaintext", // Binary plans have preview_available = false.
 };
+
+/** How each state of a product template reads, and why. */
+const TEMPLATE_STATUS: Record<TemplateStatus, { label: string; title: string }> = {
+  default: { label: "default", title: "The builtin: a new Gearbox build replaces it with its own" },
+  edited: {
+    label: "edited",
+    title: "Edited in the product: a new builtin is merged into it, and the edit stays",
+  },
+  behind: {
+    label: "behind",
+    title:
+      "Edited where the builtin changed too, or with no record of its builtin: it renders as it is " +
+      "and does not get the builtin's change (GBX0712). Merge by hand, or reset it",
+  },
+  unknown: { label: "unused", title: "No key renders this file; it is kept and unused" },
+};
+
+/** The directory a product's templates are in, from where its copies are. */
+function templatesDir(templates: readonly ProductTemplate[]): string | undefined {
+  const first = templates.find((t) => t.status !== "unknown") ?? templates[0];
+  if (first === undefined) return undefined;
+  const suffix = `${first.key}.jinja`;
+  return first.path.endsWith(suffix) ? first.path.slice(0, first.path.length - suffix.length) : undefined;
+}
 
 /** Pixels per tree level. */
 const INDENT = 12;
@@ -102,6 +132,8 @@ export class GenerateWidget extends ReactWidget {
   // For the trip from a blocked generation to the object that blocked it.
   @inject(SelectionService) protected readonly selection!: SelectionService;
   @inject(FileDialogService) protected readonly fileDialog!: FileDialogService;
+  @inject(FileService) protected readonly files!: FileService;
+  @inject(RevealService) protected readonly reveals!: RevealService;
 
   protected selected: string | undefined;
   protected preview: GenerateFileResult | undefined;
@@ -109,6 +141,9 @@ export class GenerateWidget extends ReactWidget {
   protected previewing = false;
   /** The folder field while it is being typed in; `undefined` shows the choice. */
   protected outDraft: string | undefined;
+  /** Template copies an Apply is writing, whose change events are its own. */
+  protected applyingTemplates = new Set<string>();
+  protected replanTimer: ReturnType<typeof setTimeout> | undefined;
 
   @postConstruct()
   protected init(): void {
@@ -126,7 +161,51 @@ export class GenerateWidget extends ReactWidget {
     );
     this.toDispose.push(this.generate.onChanged(() => this.update()));
     this.toDispose.push(this.catalogue.onChanged(() => this.update()));
+    // **A template edited in the editor changes the plan, not the resolution.**
+    // The store re-resolves on a description save; nothing re-plans on a
+    // template save, so the list would say `default` over a file someone just
+    // changed. Plan again once the writes stop -- except for the copies an
+    // Apply is writing itself, which would otherwise wipe the count it reports.
+    this.toDispose.push(
+      this.files.onDidFilesChange((event) => {
+        const templates = this.generate.current.plan?.templates ?? [];
+        if (templates.length === 0) return;
+        const copies = new Set(templates.map((t) => t.path));
+        const dir = templatesDir(templates);
+        const touched = event.changes
+          .map((change) => change.resource.path.fsPath())
+          .filter((path) => (copies.has(path) || (dir !== undefined && path.startsWith(dir))))
+          .filter((path) => !/[\\/]\.base[\\/]/.test(path) && !this.applyingTemplates.has(path));
+        if (touched.length === 0) return;
+        if (this.replanTimer !== undefined) clearTimeout(this.replanTimer);
+        this.replanTimer = setTimeout(() => {
+          this.replanTimer = undefined;
+          void this.generate.replan();
+        }, 300);
+      }),
+    );
+    this.toDispose.push({
+      dispose: () => {
+        if (this.replanTimer !== undefined) clearTimeout(this.replanTimer);
+      },
+    });
     this.update();
+  }
+
+  /** Apply, remembering which template copies it writes. */
+  protected async apply(): Promise<void> {
+    const writes = (this.generate.current.plan?.templates ?? []).filter(
+      (t) => t.action === "create" || t.action === "update",
+    );
+    for (const t of writes) this.applyingTemplates.add(t.path);
+    try {
+      await this.generate.apply();
+    } finally {
+      // The file watcher reports a write some time after it lands.
+      setTimeout(() => {
+        for (const t of writes) this.applyingTemplates.delete(t.path);
+      }, 2000);
+    }
   }
 
   /**
@@ -426,7 +505,7 @@ export class GenerateWidget extends ReactWidget {
             type="button"
             disabled={!this.generate.canApply}
             data-apply="true"
-            onClick={() => void this.generate.apply()}
+            onClick={() => void this.apply()}
           >
             Apply
           </button>
@@ -456,6 +535,7 @@ export class GenerateWidget extends ReactWidget {
             />
           </div>
         )}
+        {this.renderTemplates(gen.plan.templates ?? [])}
         <div className="gbx-generate-body">
           <div className="gbx-generate-tree" role="tree">
             {treeOf(plans).map((node) => this.renderNode(node, 0))}
@@ -466,6 +546,88 @@ export class GenerateWidget extends ReactWidget {
         </div>
       </div>
     );
+  }
+
+  /**
+   * The product's own templates, which generation writes and renders from.
+   *
+   * Open, not edited here: a template is a file, and the editor is where files
+   * are edited. Reset deletes the copy, and the next plan takes the builtin
+   * back -- which is the whole of what "default" means for a template.
+   */
+  protected renderTemplates(templates: readonly ProductTemplate[]): React.ReactNode {
+    if (templates.length === 0) return undefined;
+    const changed = templates.filter((t) => t.status !== "default");
+    const dir = templatesDir(templates);
+    const counts = (["edited", "behind", "unknown"] as const)
+      .map((status) => [status, templates.filter((t) => t.status === status).length] as const)
+      .filter(([, n]) => n > 0)
+      .map(([status, n]) => `${n} ${TEMPLATE_STATUS[status].label}`);
+    return (
+      <details className="gbx-generate-templates" data-generate-templates open={changed.length > 0}>
+        <summary title={dir}>
+          Templates: {templates.length}
+          {counts.length > 0 ? `, ${counts.join(", ")}` : ", all default"}
+          {templates.some((t) => t.action === "create") && " (written on Apply)"}
+        </summary>
+        <ul>
+          {templates.map((template) => (
+            <li
+              key={template.key}
+              data-template={template.key}
+              data-template-status={template.status}
+              data-template-action={template.action}
+              data-template-path={template.path}
+            >
+              <span className="gbx-row-name" title={template.path}>
+                {template.key}
+              </span>
+              <span className="gbx-badge" title={TEMPLATE_STATUS[template.status].title}>
+                {TEMPLATE_STATUS[template.status].label}
+              </span>
+              {template.action === "update" && (
+                <span className="gbx-badge" title="Apply updates this copy to the builtin it follows">
+                  updates on Apply
+                </span>
+              )}
+              <button
+                type="button"
+                className="theia-button secondary"
+                data-template-open={template.key}
+                disabled={template.action === "create"}
+                title={template.action === "create" ? "Written on Apply" : template.path}
+                onClick={() => void this.reveals.revealPath(template.path)}
+              >
+                Open
+              </button>
+              {template.status !== "default" && (
+                <button
+                  type="button"
+                  className="theia-button secondary"
+                  data-template-reset={template.key}
+                  title="Delete this copy; the next Apply writes the builtin"
+                  onClick={() => void this.resetTemplate(template)}
+                >
+                  Reset
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </details>
+    );
+  }
+
+  /** Delete a product's copy of a template, after asking, and plan again. */
+  protected async resetTemplate(template: ProductTemplate): Promise<void> {
+    const confirmed = await new ConfirmDialog({
+      title: `Reset ${template.key}`,
+      msg: `Delete ${template.path}? Its edits are lost; the next Apply writes Gearbox's builtin.`,
+      ok: "Reset",
+    }).open();
+    if (confirmed !== true) return;
+    await this.files.delete(URI.fromFilePath(template.path));
+    await this.generate.replan();
   }
 
   protected renderNode(node: TreeNode, depth: number): React.ReactNode {

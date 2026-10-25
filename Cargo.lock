@@ -832,7 +832,9 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "anyhow",
+ "either",
  "gearbox-ir",
+ "minijinja",
  "serde",
  "serde_json",
  "starlark",
@@ -891,6 +893,7 @@ dependencies = [
  "gearbox-lock",
  "gearbox-rpc",
  "lsp-server",
+ "minijinja",
  "serde",
  "serde_json",
  "thiserror",

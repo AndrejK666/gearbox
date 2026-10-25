@@ -46,4 +46,11 @@ doc?: string | null,
  * express such a field as a reference to an externally managed secret, and
  * a generator cannot do that for a field it cannot tell from a hostname.
  */
-secret?: boolean, };
+secret?: boolean, 
+/**
+ * One level of a struct-typed field: the fields of the struct its type
+ * names, when the scanned crate declares it. The control is still
+ * [`ConfigFieldType::Complex`]; a check reads these to name a required
+ * key missing from a set value (`jwt.claim_mapping`).
+ */
+fields?: Array<ConfigFieldDecl>, };

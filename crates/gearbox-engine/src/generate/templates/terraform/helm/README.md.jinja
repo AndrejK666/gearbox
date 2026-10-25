@@ -1,0 +1,27 @@
+# {{ product }} — Terraform Helm deployment
+
+Generated from the resolved Kubernetes product using Gearbox templates. This
+configuration manages its generated application Helm chart in an existing cluster.
+It does not create a cluster, namespace, external database, persistent storage,
+runtime credentials or node image store. Establish the selected product adapter's
+prerequisites and verify the target identity before using an independent workflow.
+
+Studio export supplies local chart/private values paths by reference in
+`local.auto.tfvars.json`; credentials and portraits are not copied into the export.
+Keep this directory, local variable files and Terraform state private.
+
+Use one deployment owner at a time. An existing Helm release requires state
+reconciliation before Terraform can manage it. Review variables first:
+
+```sh
+terraform init -backend=false
+terraform validate
+# Only in a separately authorized Terraform workflow, after checking ownership:
+terraform import helm_release.product <namespace>/<release-name>
+terraform plan
+```
+
+Gearbox export runs none of these commands. No apply/destroy command is offered
+in Studio. The release has `prevent_destroy`; storage retention and logical
+backups are separate protections. Host loopback forwarding remains a Studio
+capability. Product templates can override this backend via `terraform/helm/*`.

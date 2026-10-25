@@ -144,14 +144,7 @@ pub fn project(
                 );
                 return None;
             };
-            Some(ConfigFieldDecl {
-                name: field.name.clone(),
-                ty: field.ty.clone(),
-                required: field.required,
-                default: field.default.clone(),
-                doc: field.doc.clone(),
-                secret: field.secret,
-            })
+            Some(decl_of(field))
         })
         .collect();
 
@@ -170,17 +163,20 @@ pub fn project(
 pub(crate) fn schema_of(rust: String, projected: &[gearbox_project::ConfigField]) -> ConfigSchema {
     ConfigSchema {
         rust,
-        fields: projected
-            .iter()
-            .map(|field| ConfigFieldDecl {
-                name: field.name.clone(),
-                ty: field.ty.clone(),
-                required: field.required,
-                default: field.default.clone(),
-                doc: field.doc.clone(),
-                secret: field.secret,
-            })
-            .collect(),
+        fields: projected.iter().map(decl_of).collect(),
+    }
+}
+
+/// A projected field as the catalogue carries it, its nested level included.
+fn decl_of(field: &gearbox_project::ConfigField) -> ConfigFieldDecl {
+    ConfigFieldDecl {
+        name: field.name.clone(),
+        ty: field.ty.clone(),
+        required: field.required,
+        default: field.default.clone(),
+        doc: field.doc.clone(),
+        secret: field.secret,
+        fields: field.fields.iter().map(decl_of).collect(),
     }
 }
 

@@ -115,10 +115,10 @@ fn an_absolute_path_is_refused() {
     let absolute = fx.dir.join("outside.gdl");
     let src = format!(
         r#"
-load("{}", "SECRET")
+load({}, "SECRET")
 gear(maturity = "stable", package = cargo(crate_name = "c", lib = "c"))
 "#,
-        absolute.display()
+        serde_json::to_string(&absolute.to_string_lossy()).unwrap()
     );
     assert_eq!(fx.eval(&src), [DiagnosticCode::GdlLoadEscape]);
 }

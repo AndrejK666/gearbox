@@ -10,8 +10,8 @@
 //! types carry no such attribute for the same reason.
 
 use gearbox_ir::{
-    ConfigValue, Diagnostic, ExplanationGraph, FileAction, FilePlan, GearDescriptor, Ownership,
-    DesignGear, PendingGear, ProductIntent, ResolvedProduct,
+    ConfigValue, DesignGear, Diagnostic, ExplanationGraph, FileAction, FilePlan, GearDescriptor,
+    Ownership, PendingGear, ProductIntent, ProductTemplate, ResolvedProduct,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -1034,6 +1034,9 @@ pub struct GeneratePlanResult {
     /// Studio showed a plan with no way to tell a house template from a builtin.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overridden_templates: Vec<String>,
+    /// The product's copy of every template, as applying would leave it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub templates: Vec<ProductTemplate>,
 }
 
 /// What an apply did.
@@ -1046,6 +1049,9 @@ pub struct GenerateApplyResult {
     /// Template keys whose builtin this product replaced.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overridden_templates: Vec<String>,
+    /// The product's copy of every template, as the apply left it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub templates: Vec<ProductTemplate>,
 }
 
 /// `gearbox/generate/file` -- the two sides of one planned file.

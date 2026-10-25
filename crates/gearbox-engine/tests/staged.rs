@@ -11,21 +11,17 @@
     reason = "clippy.toml's allow-unwrap-in-tests covers #[test] fns but not the helpers here"
 )]
 
-use std::path::Path;
-
 use gearbox_engine::{Continue, LoadEvent, SourceRoot, load_catalogue, load_catalogue_staged};
 use gearbox_ir::{LoadStage, SourceId};
 
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn root() -> Option<SourceRoot> {
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let root = loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            break candidate.canonicalize().ok()?;
-        }
-        dir = dir.parent()?;
-    };
-    SourceRoot::open(SourceId::new("gears-rust").unwrap(), root).ok()
+    corpus_support::root().map(|root| {
+        SourceRoot::open(SourceId::new("gears-rust").unwrap(), root)
+            .unwrap_or_else(|error| panic!("gears-rust corpus: {error}"))
+    })
 }
 
 macro_rules! require {
@@ -340,14 +336,14 @@ fn stopping_midway_through_projection_keeps_what_is_done() {
         "the gears not reached are still pending, not lost"
     );
     // The invariant, not the number: nothing discovered is lost on a stop. The
-    // total is the corpus's description count -- fifty-nine: forty-nine gears
+    // total is the corpus's description count -- sixty-six: fifty-six gears
     // with code and ten designs -- and it is
     // written out rather than read from the scan so that a gear vanishing
     // between discovery and projection cannot satisfy both sides of the
     // equation at once. Designs complete in the first pass, before the stop.
     assert_eq!(
         scan.catalogue.gears.len() + scan.pending.len() + scan.catalogue.designs.len(),
-        59,
+        66,
         "every discovered description is projected, pending or a design"
     );
 }

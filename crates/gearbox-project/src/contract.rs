@@ -210,7 +210,7 @@ pub struct ProjectedConsume {
 }
 
 /// Whether an attribute path is `consumes` or `toolkit::consumes`.
-fn is_consumes_attribute(attr: &syn::Attribute) -> bool {
+pub(crate) fn is_consumes_attribute(attr: &syn::Attribute) -> bool {
     crate::attribute::is_toolkit_attribute(attr, "consumes")
 }
 

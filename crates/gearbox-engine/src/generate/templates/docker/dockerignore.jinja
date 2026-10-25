@@ -1,5 +1,13 @@
 {{ header }}
+# Only the declared source roots and this generated product belong in the context.
+**
+{% for dir in source_dirs %}!{{ dir }}
+{% endfor %}**/.gearbox/**
+!{{ output_dir }}
 **/target/
 **/.git/
+**/node_modules/
+**/.env
+**/.env.*
 {% for dir in secret_dirs %}{{ dir }}
 {% endfor %}

@@ -7,7 +7,7 @@
 //! most likely way for a generated manifest to fail, and it fails at parse time
 //! with a message about workspace inheritance rather than about editions.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use gearbox_ir::{FileEntry, FileKind, GearId, Ownership, ResolvedApplication, ResolvedGear};
@@ -156,6 +156,30 @@ pub fn application_manifest(
     ))
 }
 
+/// The Cargo feature that compiles in Kubernetes `TokenReview` platform auth, in
+/// the toolkit and in the gears that validate inbound platform tokens.
+const K8S_AUTH_FEATURE: &str = "k8s-auth";
+
+/// Gears that validate inbound platform tokens themselves: the gRPC hub (its
+/// services are platform-plane) and the REST host.
+const K8S_AUTH_VALIDATORS: [&str; 2] = ["grpc-hub", "api-gateway"];
+
+/// Whether the product's platform auth is `kube`: `api-gateway`'s
+/// `internal_auth`, which the generator carries to every unit
+/// (`generate::config`) and resolution fills from the profile's
+/// `platform_auth`.
+fn kube_platform_auth(input: &GenerateInput<'_>) -> bool {
+    input
+        .lock
+        .gears
+        .iter()
+        .find(|(id, _)| id.as_str() == "api-gateway")
+        .and_then(|(_, gear)| gear.config.get("internal_auth"))
+        .and_then(|auth| auth.get("provider"))
+        .and_then(serde_json::Value::as_str)
+        == Some("kube")
+}
+
 /// Every dependency the process crate declares, keyed by the identifier the
 /// generated Rust will name it with.
 ///
@@ -183,6 +207,14 @@ fn dependencies(
         crate_dir,
         &anchor_root.join(TOOLKIT_SUBDIR),
     );
+    // `kube` platform auth is a compiled-in path: without `k8s-auth` the runtime
+    // refuses `internal_auth.provider = kube` at startup, and the hub and the
+    // REST host cannot validate inbound tokens through TokenReview.
+    let kube = kube_platform_auth(input);
+    let mut toolkit_features = vec!["bootstrap".to_owned()];
+    if kube {
+        toolkit_features.push(K8S_AUTH_FEATURE.to_owned());
+    }
     dependencies.insert(
         TOOLKIT_ALIAS.to_owned(),
         Dependency {
@@ -190,10 +222,49 @@ fn dependencies(
             version,
             registry,
             path,
-            features: vec!["bootstrap".to_owned()],
+            features: toolkit_features,
             default_features: None,
         },
     );
+
+    // Enable only the database drivers actually selected for this application.
+    let database_features: BTreeSet<_> = application
+        .gears
+        .iter()
+        .filter(|id| {
+            input
+                .lock
+                .gears
+                .get(*id)
+                .is_some_and(|gear| gear.runtime_caps.contains(&gearbox_ir::RuntimeCap::Db))
+        })
+        .map(|id| {
+            if input.lock.sqlite_databases.contains_key(id) {
+                "sqlite".to_owned()
+            } else {
+                "pg".to_owned()
+            }
+        })
+        .collect();
+    if !database_features.is_empty() {
+        let (version, registry, path) = located(
+            input,
+            "cf-gears-toolkit-db",
+            crate_dir,
+            &anchor_root.join("libs/toolkit-db"),
+        );
+        dependencies.insert(
+            "toolkit_db".to_owned(),
+            Dependency {
+                package: Some("cf-gears-toolkit-db".to_owned()),
+                version,
+                registry,
+                path,
+                features: database_features.into_iter().collect(),
+                default_features: None,
+            },
+        );
+    }
 
     for (name, dependency) in runtime_deps() {
         dependencies.insert(name.to_owned(), dependency);
@@ -220,7 +291,17 @@ fn dependencies(
             // The union of what the gear declares and what the product asked
             // for. Kept separate in the lock and joined here, which is the one
             // place the distinction stops mattering: cargo takes a set.
-            features: union_features(gear),
+            features: {
+                let mut features = union_features(gear);
+                if kube
+                    && K8S_AUTH_VALIDATORS.contains(&id.as_str())
+                    && !features.iter().any(|f| f == K8S_AUTH_FEATURE)
+                {
+                    features.push(K8S_AUTH_FEATURE.to_owned());
+                    features.sort();
+                }
+                features
+            },
             // Written only when false. `true` is Cargo's default, and a manifest
             // restating every default is a manifest nobody reads.
             default_features: (!gear.package.default_features).then_some(false),
@@ -240,7 +321,60 @@ fn dependencies(
         }
     }
 
+    // The clients this process's remote bindings need beyond what its gears'
+    // crates link: the cluster SDK with its gRPC half. Cargo unifies the
+    // features, so the consumer gear's own dependency on the SDK gets them too.
+    for (sdk, provider) in client_sdks(input, application) {
+        let root = source_root(input, provider)?;
+        let (version, registry, path) = located(
+            input,
+            &sdk.crate_name,
+            crate_dir,
+            &root.join(sdk.path.as_str()),
+        );
+        let mut features: BTreeSet<String> = sdk.features.iter().cloned().collect();
+        if let Some(existing) = dependencies.get(&sdk.lib_ident) {
+            if existing.package.as_deref() != Some(sdk.crate_name.as_str()) {
+                return Err(GenerateError::LibIdentCollision {
+                    ident: sdk.lib_ident.clone(),
+                    first: existing.package.clone().unwrap_or_default(),
+                    second: sdk.crate_name.clone(),
+                });
+            }
+            features.extend(existing.features.iter().cloned());
+        }
+        dependencies.insert(
+            sdk.lib_ident.clone(),
+            Dependency {
+                package: Some(sdk.crate_name.clone()),
+                version,
+                registry,
+                path,
+                features: features.into_iter().collect(),
+                default_features: (!sdk.default_features).then_some(false),
+            },
+        );
+    }
+
     Ok(dependencies)
+}
+
+/// The client SDKs this process's remote bindings need linked
+/// ([`gearbox_ir::ResolvedBinding::client_sdk`]), one per package, each with the
+/// provider gear whose source it comes from.
+pub(super) fn client_sdks<'a>(
+    input: &'a GenerateInput<'_>,
+    application: &ResolvedApplication,
+) -> Vec<(&'a gearbox_ir::CargoRef, &'a ResolvedGear)> {
+    let mut seen = BTreeSet::new();
+    input
+        .lock
+        .bindings
+        .iter()
+        .filter(|b| b.consumer_application == application.name && b.is_remote())
+        .filter_map(|b| Some((b.client_sdk.as_ref()?, input.lock.gears.get(&b.provider)?)))
+        .filter(|(sdk, _)| seen.insert(sdk.crate_name.clone()))
+        .collect()
 }
 
 /// How a crate is named: the exact registry version when the product takes it

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use gearbox_ir::{FileEntry, FileKind, Ownership, ResolvedApplication, ResolvedProduct};
 use serde::Serialize;
 
+use super::templates::TemplateSet;
 use super::{GenerateError, GenerateInput, header, paths};
 
 /// The toolchain the generated crates build with.
@@ -115,25 +116,62 @@ pub fn workspace_manifest(
     ))
 }
 
-/// The toolchain pin.
-///
-/// Written by hand rather than through serde: the file has three lines, and a
-/// `#[derive(Serialize)]` for them would be longer than the file.
+/// The toolchain pin, from the `rust-toolchain.toml` template.
 ///
 /// # Errors
-/// Returns [`GenerateError`] only if the fixed path fails validation, which it
-/// cannot.
-pub fn toolchain() -> Result<FileEntry, GenerateError> {
-    let body = format!(
-        "{}\n[toolchain]\nchannel = \"{CHANNEL}\"\ncomponents = [\"rustfmt\", \"clippy\"]\n",
-        header("#")
-    );
+/// Returns [`GenerateError`] when the template is unknown or fails to render.
+pub fn toolchain(templates: &TemplateSet) -> Result<FileEntry, GenerateError> {
+    let body = super::templates::render(
+        "rust-toolchain.toml",
+        templates.get("rust-toolchain.toml")?,
+        minijinja::context! { header => header("#").trim_end(), channel => CHANNEL },
+    )?;
     Ok(FileEntry::text(
         paths::rel(&["rust-toolchain.toml"])?,
         body,
         FileKind::Toml,
         Ownership::Generated,
     ))
+}
+
+/// The source's `Cargo.lock`, so the generated workspace builds the versions
+/// the source was tested with.
+///
+/// **A generated tree had no lock.** Its crates path-depend on the source's,
+/// and every `cargo build` of it -- the Dockerfile's included -- resolved the
+/// registry afresh: the same description built different dependency versions
+/// on different days. A product's gateway picked up `pingora-core` 0.8.1, a
+/// release `gears-rust` had never run, and OAGW's proxy panicked on every call.
+/// Cargo keeps every version a lock pins and only adds the generated
+/// packages, so the source's lock is the right seed.
+///
+/// Copied only when exactly one source root has a lock: two would pin one crate
+/// twice, and choosing between them is a decision this cannot make.
+///
+/// # Errors
+/// Returns [`GenerateError`] if the lock cannot be read.
+pub fn cargo_lock(
+    source_roots: &BTreeMap<gearbox_ir::SourceId, std::path::PathBuf>,
+) -> Result<Option<FileEntry>, GenerateError> {
+    let locks: Vec<std::path::PathBuf> = source_roots
+        .values()
+        .map(|root| root.join("Cargo.lock"))
+        .filter(|lock| lock.is_file())
+        .collect();
+    let [lock] = locks.as_slice() else {
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(lock).map_err(|source| GenerateError::Io {
+        what: "the source's Cargo.lock",
+        path: lock.clone(),
+        source,
+    })?;
+    Ok(Some(FileEntry::text(
+        paths::rel(&["Cargo.lock"])?,
+        text,
+        FileKind::Toml,
+        Ownership::Generated,
+    )))
 }
 
 /// The resolved product, beside the tree it produced.

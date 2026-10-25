@@ -18,11 +18,19 @@ export const GEAR_FUNCTIONS: readonly string[] = [
   "fail",
   "feature",
   "gear",
+  "git",
+  "go",
   "grpc",
+  "helm_chart",
   "lifecycle",
+  "npm",
+  "nuget",
+  "path",
   "provide",
   "rest",
   "role",
+  "scenario",
+  "ui_module",
 ];
 
 /** The callable vocabulary of a `product.gdl`. */
@@ -35,11 +43,13 @@ export const PRODUCT_FUNCTIONS: readonly string[] = [
   "kubernetes",
   "path",
   "plugin",
+  "postgres",
   "product",
   "provider",
   "registry",
   "self_hosted",
   "source",
+  "ui_product",
   "use_gear",
 ];
 

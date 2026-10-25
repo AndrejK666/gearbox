@@ -114,6 +114,10 @@ pub fn check(
             diagnostics.push(diagnostic);
         }
 
+        // A plugin's config is its own schema's business, not its host's: a host
+        // that declares no schema of its own still has its plugins checked.
+        check_plugin_config(catalogue, selection, uri, diagnostics);
+
         let Some(schema) = gear.config_schema.as_ref() else {
             continue;
         };
@@ -141,6 +145,13 @@ pub fn check(
                 diagnostics.push(literal_secret(&selection.gear, key, selection, uri));
                 continue;
             }
+            check_nested(
+                &format!("`{}`", selection.gear),
+                field,
+                value,
+                &location(selection, uri),
+                diagnostics,
+            );
             let Some(expected) = mismatch(&field.ty, value) else {
                 continue;
             };
@@ -160,8 +171,6 @@ pub fn check(
         }
 
         report_unset_required(gear, schema, selection, uri, diagnostics);
-
-        check_plugin_secrets(catalogue, selection, uri, diagnostics);
     }
 }
 
@@ -246,19 +255,19 @@ fn report_unset_required(
     }
 }
 
-/// A plugin's configuration, checked for credentials and for nothing else.
+/// A plugin's configuration: credentials, and keys its schema does not declare.
 ///
-/// **Deliberately narrower than the check above.** A plugin is where a
-/// `client_secret` would go, so the credential rule has to reach it. The
-/// unknown-key rule cannot follow yet: `oidc-authn-plugin` exposes only `vendor`
-/// and `priority`, while the demo product sets `issuer` on it, so extending
-/// `GBX0115` here would turn the shipped product red until the corpus declares
-/// that field. That is a change to `gears-rust`, not to this check.
+/// The unknown-key rule matters more here than anywhere: the generator writes a
+/// plugin's configuration through the same schema filter as a gear's
+/// (`generate::config::drop_unknown_keys`), so an undeclared key -- a CA path, a
+/// field a schema does not expose yet -- would vanish from the generated file
+/// without a word. It used to stop at credentials while the demo product set an
+/// undeclared `issuer`; the corpus declares the plugin's real surface now.
 ///
-/// A plugin's configuration also never reaches the lock -- `resolve::product`
-/// reads `selected_gears` and does not descend -- so this rule serves the
-/// description, which is the file a credential would be committed in.
-fn check_plugin_secrets(
+/// A plugin's configuration never reaches the lock as its own entry --
+/// `resolve::product` merges it into the implementing gear's -- so the rule
+/// serves the description, which is where the key was typed.
+fn check_plugin_config(
     catalogue: &Catalogue,
     selection: &GearSelection,
     uri: &str,
@@ -273,13 +282,121 @@ fn check_plugin_secrets(
             continue;
         };
         for (key, value) in &plugin.config {
-            let secret = schema
-                .fields
-                .iter()
-                .any(|field| &field.name == key && field.secret);
-            if secret && !literal_secret_is_allowed(value) {
+            let Some(field) = schema.fields.iter().find(|field| &field.name == key) else {
+                diagnostics.push(
+                    Diagnostic::error(
+                        DiagnosticCode::GdlUnknownConfigKey,
+                        format!(
+                            "plugin `{}` config key `{key}` is not declared by `{}`",
+                            plugin.gear, schema.rust
+                        ),
+                        format!(
+                            "remove `{key}`, or add it to the plugin's configuration schema \
+                             (`config_schema = config(exposes = [...])` in its gear.gdl); the \
+                             generator writes only declared keys, so this one would be dropped"
+                        ),
+                    )
+                    .at(Location::or_file(plugin.declared_at.as_ref(), uri))
+                    .about_config(key.clone()),
+                );
+                continue;
+            };
+            if field.secret && !literal_secret_is_allowed(value) {
                 diagnostics.push(literal_secret(&plugin.gear, key, selection, uri));
+                continue;
             }
+            check_nested(
+                &format!("plugin `{}`", plugin.gear),
+                field,
+                value,
+                &Location::or_file(plugin.declared_at.as_ref(), uri),
+                diagnostics,
+            );
+        }
+        // A required field the plugin's loader refuses without: the generated
+        // file carries only what the description sets.
+        for field in &schema.fields {
+            if !field.required || field.default.is_some() || plugin.config.contains_key(&field.name)
+            {
+                continue;
+            }
+            diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::GdlRequiredConfigUnset,
+                    format!(
+                        "plugin `{}` requires `{}` and `{}` declares no default for it, and this \
+                         description sets no value",
+                        plugin.gear, field.name, schema.rust
+                    ),
+                )
+                .with_help(format!(
+                    "set `{}` in the plugin's `config = {{...}}`, or the generated file will be \
+                     missing a field the plugin's loader refuses at startup",
+                    field.name
+                ))
+                .at(Location::or_file(plugin.declared_at.as_ref(), uri))
+                .about_config(field.name.clone()),
+            );
+        }
+    }
+}
+
+/// One level into a set struct value: a nested key of the wrong type, and a
+/// required nested key with no default that the value does not set.
+///
+/// `jwt.claim_mapping` is the case that asked for it: `JwtConfigInput`
+/// requires it, and a description setting `jwt = {...}` without it resolved,
+/// generated and failed at startup. A key the nested struct does not declare is
+/// left to the gear's loader: the projection is one level deep and reads no
+/// `flatten`, so its silence is not proof of an unknown key.
+fn check_nested(
+    owner: &str,
+    field: &gearbox_ir::ConfigFieldDecl,
+    value: &serde_json::Value,
+    at: &Location,
+    diagnostics: &mut Diagnostics,
+) {
+    let Some(set) = value.as_object() else {
+        return;
+    };
+    for nested in &field.fields {
+        let path = format!("{}.{}", field.name, nested.name);
+        match set.get(&nested.name) {
+            Some(value) => {
+                if let Some(expected) = mismatch(&nested.ty, value) {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            DiagnosticCode::GdlConfigTypeMismatch,
+                            format!(
+                                "{owner} config key `{path}` is {}, but it is declared as \
+                                 {expected}",
+                                actual(value)
+                            ),
+                            format!("write `{path}` as {expected}"),
+                        )
+                        .at(at.clone())
+                        .about_config(field.name.clone()),
+                    );
+                }
+            }
+            None if nested.required && nested.default.is_none() => diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::GdlRequiredConfigUnset,
+                    format!(
+                        "{owner} requires `{path}`, which has no default, and this description's \
+                         `{}` does not set it",
+                        field.name
+                    ),
+                )
+                .with_help(format!(
+                    "add `{}` to `{}`, or the generated file will be missing a field the \
+                     loader refuses at startup",
+                    nested.name, field.name
+                ))
+                .at(at.clone())
+                .about_config(field.name.clone()),
+            ),
+            None => {}
         }
     }
 }
@@ -327,4 +444,4 @@ fn location(selection: &gearbox_ir::GearSelection, uri: &str) -> Location {
 
 #[cfg(test)]
 #[path = "config_check_tests.rs"]
-mod config_check_tests;
+pub(crate) mod config_check_tests;

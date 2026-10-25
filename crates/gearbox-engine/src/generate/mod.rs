@@ -45,8 +45,12 @@ mod json;
 mod manifest;
 mod merge3;
 mod paths;
+pub mod product_templates;
 mod rust;
 mod templates;
+mod terraform;
+mod ui;
+mod unit_chart;
 mod workspace;
 
 use std::collections::BTreeMap;
@@ -61,7 +65,7 @@ pub use apply::{
     ApplyOutcome, OUTPUT_DIR, apply_generate, base_root_for, default_out_root, plan,
     standalone_base_root, summarize,
 };
-pub use templates::TemplateSet;
+pub use templates::{KEYS as TEMPLATE_KEYS, SCAFFOLD_KEYS, TemplateSet, render as render_template};
 // Re-exported for the one caller outside generation that needs the same
 // arithmetic: a cloned description re-bases its relative paths, and a second
 // implementation of "relative, or absolute when there is none" would be a
@@ -91,6 +95,10 @@ pub(crate) const K8S_HOME_DIR: &str = "/var/lib/gearbox";
 /// says immediately.
 #[derive(Debug, thiserror::Error)]
 pub enum GenerateError {
+    #[error("GBX0720: invalid UI composition: {0}")]
+    Ui(String),
+    #[error("invalid database configuration: {0}")]
+    Database(String),
     #[error("gear `{gear}` is in application `{application}` but not in the lock's gear table")]
     UnknownGear { application: String, gear: String },
 
@@ -175,6 +183,8 @@ pub enum GenerateError {
     #[error("config key `{key}` cannot nest under an existing non-object value")]
     ConfigShape { key: String },
 
+    #[error("unit chart `{chart}`: {reason}")]
+    UnitChart { chart: String, reason: String },
     #[error("{what} `{}`", .path.display())]
     Io {
         what: &'static str,
@@ -274,6 +284,10 @@ pub struct Generated {
 /// cannot turn into a compilable tree -- see that type; every variant means the
 /// output would be wrong rather than merely incomplete.
 pub fn generate(input: &GenerateInput<'_>) -> Result<Generated, GenerateError> {
+    input
+        .lock
+        .validate_database()
+        .map_err(GenerateError::Database)?;
     let mut files = FileSet::new();
     let mut diagnostics = Diagnostics::default();
 
@@ -301,17 +315,27 @@ pub fn generate(input: &GenerateInput<'_>) -> Result<Generated, GenerateError> {
         registry: input.registry,
     };
 
-    // Every process is a workspace member, host or worker. A generated crate
-    // sitting inside the workspace root without being a member is the failure
-    // Cargo reports as "believes it's in a workspace when it's not".
-    let applications: Vec<_> = input.lock.applications.iter().collect();
+    // Every generated process is a workspace member, host or worker. A
+    // generated crate sitting inside the workspace root without being a member
+    // is the failure Cargo reports as "believes it's in a workspace when it's
+    // not". A process shipped as a hand-written unit chart has no crate here:
+    // its own image runs it (`ResolvedApplication::unit_chart`).
+    let applications: Vec<_> = input
+        .lock
+        .applications
+        .iter()
+        .filter(|application| application.unit_chart.is_none())
+        .collect();
 
     insert(
         &mut files,
         workspace::workspace_manifest(&applications, input.layout(), input)?,
     )?;
-    insert(&mut files, workspace::toolchain()?)?;
+    insert(&mut files, workspace::toolchain(&input.templates)?)?;
     insert(&mut files, workspace::lock_file(input.lock)?)?;
+    if let Some(cargo_lock) = workspace::cargo_lock(input.source_roots)? {
+        insert(&mut files, cargo_lock)?;
+    }
     if let Some(cargo_config) = workspace::cargo_config(input)? {
         insert(&mut files, cargo_config)?;
     }
@@ -330,13 +354,24 @@ pub fn generate(input: &GenerateInput<'_>) -> Result<Generated, GenerateError> {
         };
         insert(&mut files, entry)?;
         insert(&mut files, rust::registered_gears(input, application)?)?;
+    }
+    // The configuration of every process, shipped as a unit chart or not: for
+    // a unit chart it is what the description decided, and the chart's
+    // `configOverlay` carries the gears' part of it.
+    for application in &input.lock.applications {
         insert(&mut files, config::app_config(input, application)?)?;
     }
 
+    for entry in ui::files(input)? {
+        insert(&mut files, entry)?;
+    }
     for entry in docker::files(input)? {
         insert(&mut files, entry)?;
     }
     for entry in helm::files(input, &files)? {
+        insert(&mut files, entry)?;
+    }
+    for entry in terraform::files(input)? {
         insert(&mut files, entry)?;
     }
 

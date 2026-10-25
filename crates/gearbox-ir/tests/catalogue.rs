@@ -46,6 +46,7 @@ fn source_id() -> SourceId {
 fn gear(id: &str, deps: &[&str], caps: &[RuntimeCap]) -> GearDescriptor {
     let ident = id.replace('-', "_");
     GearDescriptor {
+        ui: None,
         maturity: gearbox_ir::Maturity::Stable,
         one_per_installation: false,
         id: gid(id),
@@ -55,6 +56,11 @@ fn gear(id: &str, deps: &[&str], caps: &[RuntimeCap]) -> GearDescriptor {
         visibility: Visibility::Internal,
         source: source_id(),
         gdl_path: RelPath::new(format!("gears/{id}/gear.gdl")).unwrap(),
+        sdks: Vec::new(),
+        implementation: None,
+        scenarios: Vec::new(),
+        origin: None,
+        tests: Vec::new(),
         package: CargoRef::new(format!("cf-gears-{id}"), ident, RelPath::here()),
         runtime_caps: caps.iter().copied().collect(),
         colocated_deps: deps.iter().map(|d| gid(d)).collect(),
@@ -64,6 +70,8 @@ fn gear(id: &str, deps: &[&str], caps: &[RuntimeCap]) -> GearDescriptor {
         requires: Vec::new(),
         serves: Vec::new(),
         client_trait: None,
+        rest_planes: None,
+        unit_chart: None,
         cluster_providers: Vec::new(),
         extension_points: Vec::new(),
         implements: None,
@@ -75,6 +83,8 @@ fn gear(id: &str, deps: &[&str], caps: &[RuntimeCap]) -> GearDescriptor {
         docs: None,
         gts_types: Vec::new(),
         declared_at: None,
+        permissions: std::collections::BTreeSet::new(),
+        unreadable_permissions: Vec::new(),
     }
 }
 
@@ -467,4 +477,59 @@ fn catalogue_round_trips_and_omits_empty_collections() {
         "empty colocated_deps should be omitted"
     );
     assert!(keys.contains("runtime_caps"), "cluster has stateful");
+}
+
+fn origin(url: &str, path: &str, reference: Option<&str>) -> gearbox_ir::GitOrigin {
+    gearbox_ir::GitOrigin {
+        url: url.to_owned(),
+        path: RelPath::new(path).unwrap(),
+        reference: reference.map(str::to_owned),
+    }
+}
+
+#[test]
+fn a_git_origin_links_a_path_beside_the_gear_on_each_host() {
+    let github = origin(
+        "git@github.com:cf/gears-rust.git",
+        "gears/bss/pricing",
+        None,
+    );
+    assert_eq!(
+        github.web_url("docs/PRD.md").as_deref(),
+        Some("https://github.com/cf/gears-rust/blob/HEAD/gears/bss/pricing/docs/PRD.md")
+    );
+    // Relative to the gear's directory, so a family `docs/` one level up works.
+    assert_eq!(
+        github.web_url("../docs/DESIGN.md").as_deref(),
+        Some("https://github.com/cf/gears-rust/blob/HEAD/gears/bss/docs/DESIGN.md")
+    );
+    let gitlab = origin("https://gitlab.example.com/cf/x.git", ".", Some("v1.2.0"));
+    assert_eq!(
+        gitlab.web_url("tests").as_deref(),
+        Some("https://gitlab.example.com/cf/x/-/blob/v1.2.0/tests")
+    );
+    let bitbucket = origin("https://user@bitbucket.org/cf/x.git", "g", Some("main"));
+    assert_eq!(
+        bitbucket.web_url("README.md").as_deref(),
+        Some("https://bitbucket.org/cf/x/src/main/g/README.md")
+    );
+    // A path that climbs out of the repository has no link.
+    assert_eq!(github.web_url("../../../../x"), None);
+}
+
+#[test]
+fn the_same_repository_compares_equal_whatever_the_spelling() {
+    let spellings = [
+        "git@github.com:CF/gears-rust.git",
+        "https://github.com/cf/gears-rust",
+        "https://github.com/cf/gears-rust.git/",
+        "ssh://git@github.com/cf/gears-rust.git",
+    ];
+    for spelling in spellings {
+        assert_eq!(
+            gearbox_ir::GitOrigin::normalized_url(spelling),
+            "github.com/cf/gears-rust",
+            "{spelling}"
+        );
+    }
 }

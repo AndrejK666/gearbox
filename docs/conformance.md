@@ -8,7 +8,7 @@ the feature is not there yet. A ⚪ row is a claim this run could not put
 itself in a position to observe, which is reported rather than counted as a
 pass.
 
-Claims: **207** — 206 built, 0 not built, 0 broken, 1 not observed.
+Claims: **211** — 211 built, 0 not built, 0 broken, 0 not observed.
 
 Only browser-observable claims appear here. Engine-side claims are tested in
 Rust, and the ADRs' own Confirmation sections say which.
@@ -112,6 +112,8 @@ Rust, and the ADRs' own Confirmation sections say which.
 |---|---|---|---|
 | Product has an Add Gear button that opens the configurator | `—` | ✅ built |  |
 | catalogue + opens the Add Gear configurator, not an immediate write dialog | `—` | ✅ built |  |
+| a design gear is listed as a design and is not offered by Add Gear | `ADR-0002 Amendment 2026-10-02` | ✅ built |  |
+| a gear below stable says so where it is chosen | `ADR-0002 Amendment 2026-10-02: maturity is required` | ✅ built |  |
 | the closure a gear joins is visible before anything is written | `—` | ✅ built |  |
 | choosing a plugin changes what the closure would pull in | `—` | ✅ built |  |
 | a gear that declares no extension point is offered no plugin | `plan §9.1: the surface offers only what is applicable` | ✅ built |  |
@@ -130,6 +132,7 @@ Rust, and the ADRs' own Confirmation sections say which.
 | a staged scope survives the preview being recomputed | `ADR-0023 §2.4: a connection is addressed by where it is written` | ✅ built |  |
 | Cancel and Escape leave the description alone, staged scopes and all | `ADR-0013 §the write is one act` | ✅ built |  |
 | attaching a plugin to it makes it an explicitly selected gear | `ADR-0023 §2.4: a connection is addressed by where it is written` | ✅ built |  |
+| an addition that touches neither copy reports no binding change | `ADR-0013 §the preview is the consequence` | ✅ built |  |
 
 ## `conformance/adr-0013-create-product.spec.ts`
 
@@ -191,6 +194,7 @@ Rust, and the ADRs' own Confirmation sections say which.
 | the Lock view is in the main area | `plan §9: Lock` | ✅ built |  |
 | a Generate view exists | `plan §9: Generate` | ✅ built |  |
 | Apply is refused when the plan writes nothing | `plan §9: Generate, Apply disabled` | ✅ built |  |
+| Generate writes into a chosen folder and makes it a repository | `ADR-0010 amendment 2026-09-29` | ✅ built |  |
 | the layout is the same after a reload | `plan §9: deterministic layout` | ✅ built |  |
 | the closure reaches past the direct dependencies | `plan §9: co-location closure` | ✅ built |  |
 | clicking a gear paints its transitive closure | `plan §9: co-location closure` | ✅ built |  |
@@ -244,7 +248,7 @@ Rust, and the ADRs' own Confirmation sections say which.
 | the plugin linked for a profile is the one that profile selected | `PRD cpt-gearbox-fr-plugin-selection` | ✅ built |  |
 | a gear pulled in by co-location names the gear that pulled it | `PRD cpt-gearbox-fr-never-cut-colocation` | ✅ built |  |
 | every gear in the closure ends up in some application | `plan §9: no orphans` | ✅ built |  |
-| applications overlap rather than partition the gears | `plan §9: closure not partition` | ⚪ not observed | no anchor in this product shares a co-location closure with another, so no overlap exists to see |
+| applications overlap rather than partition the gears | `plan §9: closure not partition` | ✅ built |  |
 
 ## `conformance/prd-projection.spec.ts`
 
@@ -253,7 +257,7 @@ Rust, and the ADRs' own Confirmation sections say which.
 | a gear's id, capabilities and co-location come from its Rust attributes | `PRD cpt-gearbox-fr-catalogue-projection` | ✅ built |  |
 | a provider's transports are what it wires up, not what the contract allows | `PRD cpt-gearbox-fr-transport-projection` | ✅ built |  |
 | a host gear shows the extension point its SDK declares | `PRD cpt-gearbox-fr-plugin-extension-points` | ✅ built |  |
-| a plugin shows which point it fills and its compiled-in vendor | `PRD cpt-gearbox-fr-plugin-extension-points` | ✅ built |  |
+| a plugin shows which point it implements and its compiled-in vendor | `PRD cpt-gearbox-fr-plugin-extension-points` | ✅ built |  |
 | the host's selector and the plugin's default vendor can be compared | `PRD cpt-gearbox-fr-plugin-selection` | ✅ built |  |
 | a gear's GTS types are attributed to the gear whose SDK declares them | `PRD cpt-gearbox-fr-gts-types` | ✅ built |  |
 | a gear with documents shows PRD, DESIGN and ADR links | `PRD cpt-gearbox-fr-gear-documents` | ✅ built |  |

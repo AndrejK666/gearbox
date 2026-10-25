@@ -27,7 +27,7 @@ import { inject, injectable, postConstruct } from "@theia/core/shared/inversify"
 import { CommandRegistry } from "@theia/core";
 import React from "@theia/core/shared/react";
 
-import { GearBlurb, GearDocs, GearHeading } from "../gear/gear-facts";
+import { GearBlurb, GearDocs, GearHeading, GearLocations } from "../gear/gear-facts";
 import type { ExplanationGraph } from "../../common/generated/ExplanationGraph";
 import type { ExplanationNode } from "../../common/generated/ExplanationNode";
 import type { GearDescriptor } from "../../common/generated/GearDescriptor";
@@ -242,9 +242,10 @@ export class InspectorWidget extends ReactWidget {
             <span>{row.gear.category ?? "—"}</span>
           </div>
           <GearDocs descriptor={row.gear} reveals={this.reveals} />
+          <GearLocations descriptor={row.gear} reveals={this.reveals} />
           {this.renderPath(row.gear.source, row.gear.gdl_path)}
           <div className="gbx-empty">
-            Described at design maturity: there is no crate yet, so it cannot be added to a
+            Described as a design: there is no crate yet, so it cannot be added to a
             product. Its documents say what is planned.
           </div>
         </div>
@@ -413,6 +414,7 @@ export class InspectorWidget extends ReactWidget {
         )}
 
         <GearDocs descriptor={gear} reveals={this.reveals} />
+        <GearLocations descriptor={gear} reveals={this.reveals} />
 
         {this.renderPath(gear.source, gear.gdl_path)}
 

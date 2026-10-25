@@ -7,6 +7,8 @@
 
 pub mod catalogue;
 pub mod contract;
+pub mod database;
+pub use database::{PostgresDatabase, SqliteDatabase};
 pub mod diagnostics;
 pub mod explain;
 pub mod fileset;
@@ -14,16 +16,19 @@ pub mod ids;
 pub mod intent;
 pub mod requirement;
 pub mod resolved;
+pub mod ui;
 
 pub use catalogue::{
     CargoFeature, Catalogue, ConfigFieldDecl, ConfigFieldType, ConfigSchema, DeclaredRole,
-    DesignGear, EndpointDecl, ExtensionPointDecl, GearDescriptor, GearDocs, GtsTypeDecl, LifecycleDecl,
-    LoadStage, Maturity, PendingGear, PluginImpl, ResolvedSource, RuntimeCap, SourceKind, Visibility,
+    DesignGear, DocUrls, EndpointDecl, ExtensionPointDecl, GearDescriptor, GearDocs, GitOrigin,
+    GtsTypeDecl, Implementation, LifecycleDecl, LoadStage, Located, Maturity, PendingGear,
+    PluginImpl, ResolvedSource, RestPlane, RuntimeCap, Scenario, SourceKind, UnitChart, Visibility,
+    is_valid_permission_name,
 };
 pub use contract::{
-    CargoRef, ContractDescriptor, ContractKind, ContractVersion, GrpcProjection,
-    ProviderDescriptor, RestProjection, RestVisibility, Transport, strip_version_suffix,
-    version_marker,
+    CargoRef, ContractDescriptor, ContractKind, ContractVersion, Ecosystem, GrpcProjection,
+    PackageRef, ProviderDescriptor, RestProjection, RestVisibility, Transport,
+    strip_version_suffix, version_marker,
 };
 pub use diagnostics::{
     CanonicalErrorId, Diagnostic, DiagnosticCode, DiagnosticDomain, Diagnostics, Location,
@@ -33,15 +38,17 @@ pub use diagnostics::{
 pub use explain::{
     ExplanationGraph, ExplanationNode, NodeKind, ProvenanceEdge, ProvenanceKind, binding_key,
 };
-pub use fileset::{FileAction, FileEntry, FileKind, FilePlan, FileSet, Ownership};
+pub use fileset::{
+    FileAction, FileEntry, FileKind, FilePlan, FileSet, Ownership, ProductTemplate, TemplateStatus,
+};
 pub use ids::{
     ApplicationId, CapabilityId, ContractId, GearId, IdError, NodeId, ProductId, ProfileId,
     ProviderId, RelPath, RequirementId, SourceId,
 };
 pub use intent::{
     ApplicationPin, BindingIntent, BindingMode, ClusterScopeIntent, ConfigValue,
-    DeploymentProfileDecl, Discovery, GearSelection, PluginSelection, Preference, ProductIntent,
-    ProviderBinding, SourceDecl,
+    DeploymentProfileDecl, Discovery, GearSelection, PlatformAuth, PluginSelection, Preference,
+    ProductIntent, ProviderBinding, SourceDecl,
 };
 pub use requirement::{
     Capability, ClusterPrimitive, ClusterProviderDecl, FeatureGate, Requirement, RequirementKind,
@@ -52,5 +59,6 @@ pub use resolved::{
     CutBlocker, CutCandidate, CutSavings, DEFAULT_LAYOUT, Entrypoint, ImageRef, InclusionReason,
     KubernetesSettings, LOCK_SCHEMA_VERSION, ResolvedApplication, ResolvedBinding,
     ResolvedBindingMode, ResolvedClusterBinding, ResolvedEndpoint, ResolvedGear, ResolvedProduct,
-    ResolvedProductHeader, Selected, SelfHostedSettings, SpawnSpec, WorkerServe, is_valid_layout,
+    ResolvedProductHeader, ResolvedUnitChart, Selected, SelfHostedSettings, SpawnSpec, WorkerServe,
+    is_valid_layout,
 };

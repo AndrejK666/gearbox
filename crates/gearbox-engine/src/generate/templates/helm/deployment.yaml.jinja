@@ -88,6 +88,8 @@ spec:
           {{- end }}
           image: "{{ with $registry }}{{ . }}/{{ end }}{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - "<< bin_name >>"
           args:
             - --config
             - /etc/gearbox/<< config_filename >>
@@ -110,6 +112,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+<% if directory_endpoint %>
+            - name: TOOLKIT_DIRECTORY_ENDPOINT
+              value: "<< directory_endpoint >>"
+<% endif %>
             {{- if and .Values.existingSecret .Values.secretKeys }}
             {{- range .Values.secretKeys }}
             - name: {{ . | quote }}
@@ -118,6 +124,13 @@ spec:
                   name: {{ $.Values.existingSecret | quote }}
                   key: {{ . | quote }}
             {{- end }}
+            {{- end }}
+            {{- with .Values.database }}
+            - name: {{ .passwordEnv | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .existingSecret | quote }}
+                  key: {{ .passwordEnv | quote }}
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}

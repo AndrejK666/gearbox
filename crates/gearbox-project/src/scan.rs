@@ -78,6 +78,10 @@ pub struct RustFile {
 /// # Errors
 /// Returns [`ScanError`] when `src/` is absent or a symlink, a directory under
 /// it cannot be walked, a file cannot be read, or a file is not valid Rust.
+#[expect(
+    clippy::needless_collect,
+    reason = "all readers must start before any join; a lazy iterator would serialize reads"
+)]
 pub fn scan_crate(crate_dir: &Path) -> Result<Vec<RustFile>, ScanError> {
     let src = crate_dir.join("src");
     // `symlink_metadata` rather than `is_dir`, which follows the link: a
@@ -144,37 +148,57 @@ pub fn scan_crate(crate_dir: &Path) -> Result<Vec<RustFile>, ScanError> {
     paths.sort();
 
     let mut files = Vec::with_capacity(paths.len());
-    for path in paths {
-        let meta =
-            std::fs::symlink_metadata(&path).map_err(|e| ScanError::Read(path.clone(), e))?;
-        if meta.file_type().is_symlink() {
-            return Err(ScanError::Walk(
-                path,
-                "source file is a symlink; a crate may only be read through real files inside \
-                 its source root"
-                    .to_owned(),
-            ));
-        }
-        // Checked before the read, off the metadata already fetched: the whole
-        // file goes into memory and then into `syn`, so the size has to be
-        // refused rather than discovered.
-        if meta.len() > MAX_FILE_BYTES {
-            return Err(ScanError::TooLarge(format!(
-                "`{}` is {} bytes, over the {MAX_FILE_BYTES}-byte limit for a source file",
-                path.display(),
-                meta.len()
-            )));
-        }
-        let text = std::fs::read_to_string(&path).map_err(|e| ScanError::Read(path.clone(), e))?;
-        let ast = syn::parse_file(&text).map_err(|e| ScanError::Parse(path.clone(), e))?;
-        let relative = path.strip_prefix(&src).unwrap_or(&path).to_path_buf();
-        files.push(RustFile {
-            path,
-            relative,
-            ast,
+    for batch in paths.chunks(32) {
+        let texts = std::thread::scope(|scope| {
+            let readers: Vec<_> = batch
+                .iter()
+                .map(|path| scope.spawn(move || read_source(path)))
+                .collect();
+            readers
+                .into_iter()
+                .map(std::thread::ScopedJoinHandle::join)
+                .collect::<Vec<_>>()
         });
+        for (path, text) in batch.iter().zip(texts) {
+            let text = text.map_err(|_| {
+                ScanError::Walk(path.clone(), "source reader thread panicked".to_owned())
+            })??;
+            let ast = syn::parse_file(&text).map_err(|e| ScanError::Parse(path.clone(), e))?;
+            let relative = path.strip_prefix(&src).unwrap_or(path).to_path_buf();
+            files.push(RustFile {
+                path: path.clone(),
+                relative,
+                ast,
+            });
+        }
     }
     Ok(files)
+}
+
+/// Read on a worker, retaining the scanner's symlink and size checks.
+fn read_source(path: &Path) -> Result<String, ScanError> {
+    let meta =
+        std::fs::symlink_metadata(path).map_err(|e| ScanError::Read(path.to_path_buf(), e))?;
+    if meta.file_type().is_symlink() {
+        return Err(ScanError::Walk(
+            path.to_path_buf(),
+            "source file is a symlink; a crate may only be read through real files inside \
+                 its source root"
+                .to_owned(),
+        ));
+    }
+    // Checked before the read, off the metadata already fetched: the whole
+    // file goes into memory and then into `syn`, so the size has to be
+    // refused rather than discovered.
+    if meta.len() > MAX_FILE_BYTES {
+        return Err(ScanError::TooLarge(format!(
+            "`{}` is {} bytes, over the {MAX_FILE_BYTES}-byte limit for a source file",
+            path.display(),
+            meta.len()
+        )));
+    }
+    let text = std::fs::read_to_string(path).map_err(|e| ScanError::Read(path.to_path_buf(), e))?;
+    Ok(text)
 }
 
 /// Every item in a scanned file, descending into inline `mod` blocks.
@@ -445,5 +469,37 @@ mod tests {
         let files = scan_crate(&dir).unwrap_or_else(|e| panic!("an ordinary file: {e}"));
         drop(std::fs::remove_dir_all(&dir));
         assert_eq!(files.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod read_tests {
+    use super::*;
+    #[test]
+    fn parallel_reads_keep_sorted_results_and_errors_across_batches() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/scan-parallel")
+            .join(std::process::id().to_string());
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        for index in (0..70).rev() {
+            std::fs::write(
+                dir.join(format!("src/file{index:03}.rs")),
+                format!("pub struct Item{index};"),
+            )
+            .unwrap();
+        }
+        let files = scan_crate(&dir).unwrap();
+        assert_eq!(files.len(), 70);
+        assert!(
+            files
+                .windows(2)
+                .all(|pair| pair[0].relative < pair[1].relative)
+        );
+        std::fs::write(dir.join("src/file002.rs"), "invalid rust source").unwrap();
+        std::fs::write(dir.join("src/file003.rs"), [0xff]).unwrap();
+        assert!(
+            matches!(scan_crate(&dir), Err(ScanError::Parse(path, _)) if path.ends_with("file002.rs"))
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

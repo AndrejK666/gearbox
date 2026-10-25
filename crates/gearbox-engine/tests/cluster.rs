@@ -14,25 +14,22 @@
     reason = "clippy.toml's allow-unwrap-in-tests covers #[test] fns but not the helpers here"
 )]
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use gearbox_engine::{SourceRoot, load_catalogue};
 use gearbox_ir::{Catalogue, ClusterPrimitive, GearId, SourceId};
 
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn gears_rust() -> Option<PathBuf> {
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            return candidate.canonicalize().ok();
-        }
-        dir = dir.parent()?;
-    }
+    corpus_support::root()
 }
 
 fn catalogue() -> Option<Catalogue> {
     let root = gears_rust()?;
-    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root).ok()?;
+    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root)
+        .unwrap_or_else(|error| panic!("the discovered corpus must be readable: {error}"));
     Some(load_catalogue(&[source]).catalogue)
 }
 
@@ -188,13 +185,16 @@ fn the_slice_projects_cleanly() {
     // the other eleven of those have no code and are designs, kept apart. Then
     // four that arrived upstream: bss-approvals and graph-storage, the
     // clickhouse usage-collector plugin, and bss-products, which got its crate
-    // and so left the designs (ten now).
+    // and so left the designs (ten now). Then the six demo gears under
+    // `gears/demo`: lab-ui-backend, family-labs-bootstrap, family-labs-outbound,
+    // and the demo-authn, demo-authz and firebase-authn plugins. Then a seventh,
+    // family-labs-broker-events, once Event Broker left the gateway.
     //
     // The count is pinned on purpose. It is not what this test is about -- the
     // error list below is -- but a corpus that grows or shrinks under the suite
     // changes what every other corpus test means, and finding that out here is
     // cheaper than reading it as a failure somewhere else.
-    assert_eq!(catalogue.gears.len(), 49);
+    assert_eq!(catalogue.gears.len(), 56);
     assert_eq!(catalogue.designs.len(), 10);
     let errors: Vec<String> = catalogue
         .diagnostics

@@ -1027,9 +1027,11 @@ export async function openProductById(
   if ((await context()) !== "product") {
     // The Continue card only when it names the product wanted -- it opens the
     // most recent one, which after a switch is the other one.
+    // By its path, not its text: the card shows the display name, which is
+    // prose (`Payments Demo`), while `fragment` is an id or a path fragment.
     const card = page.locator('[data-start-action="continue"]');
     const recent = (await card.isVisible().catch(() => false))
-      ? ((await card.textContent()) ?? "")
+      ? ((await page.locator("[data-start-continue]").getAttribute("data-start-continue")) ?? "")
       : "";
     if (recent.includes(fragment)) {
       await card.click();

@@ -41,6 +41,12 @@ features?: Array<string>,
  */
 config?: Record<string, unknown>, 
 /**
+ * `profile_config = {"prod": {...}}`: per-profile configuration merged over
+ * `config` when that profile is resolved -- maps key by key, any other value
+ * replaced.
+ */
+profile_config?: Record<string, Record<string, unknown>>, 
+/**
  * Implementations chosen for this gear's plugin extension points.
  */
 plugins?: Array<PluginSelection>, 

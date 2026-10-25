@@ -20,6 +20,7 @@ fn field(name: &str, ty: ConfigFieldType) -> ConfigFieldDecl {
         default: None,
         doc: None,
         secret: false,
+        fields: Vec::new(),
     }
 }
 
@@ -52,8 +53,9 @@ fn catalogue() -> Catalogue {
     catalogue
 }
 
-fn demo_descriptor() -> GearDescriptor {
+pub fn demo_descriptor() -> GearDescriptor {
     GearDescriptor {
+        ui: None,
         maturity: gearbox_ir::Maturity::Stable,
         one_per_installation: false,
         id: GearId::new("demo").unwrap(),
@@ -63,6 +65,11 @@ fn demo_descriptor() -> GearDescriptor {
         visibility: gearbox_ir::Visibility::Internal,
         source: SourceId::new("s").unwrap(),
         gdl_path: gearbox_ir::RelPath::new("demo/gear.gdl").unwrap(),
+        sdks: Vec::new(),
+        implementation: None,
+        scenarios: Vec::new(),
+        origin: None,
+        tests: Vec::new(),
         package: gearbox_ir::CargoRef {
             crate_name: "demo".to_owned(),
             lib_ident: "demo".to_owned(),
@@ -79,6 +86,8 @@ fn demo_descriptor() -> GearDescriptor {
         requires: Vec::new(),
         serves: Vec::new(),
         client_trait: None,
+        rest_planes: None,
+        unit_chart: None,
         cluster_providers: Vec::new(),
         extension_points: Vec::new(),
         implements: None,
@@ -90,6 +99,8 @@ fn demo_descriptor() -> GearDescriptor {
         docs: None,
         gts_types: Vec::new(),
         declared_at: None,
+        permissions: std::collections::BTreeSet::new(),
+        unreadable_permissions: Vec::new(),
     }
 }
 
@@ -103,11 +114,13 @@ fn intent(key: &str, value: serde_json::Value) -> ProductIntent {
         package: None,
         features: Vec::new(),
         config: BTreeMap::default(),
+        profile_config: BTreeMap::default(),
         plugins: Vec::new(),
         declared_at: None,
     };
     selection.config.insert(key.to_owned(), value);
     ProductIntent {
+        ui: None,
         templates: None,
         layout: None,
         id: "fixture".to_owned(),
@@ -118,7 +131,10 @@ fn intent(key: &str, value: serde_json::Value) -> ProductIntent {
         profiles: [(
             dev.clone(),
             gearbox_ir::DeploymentProfileDecl::Embedded {
+                database: None,
+                sqlite_databases: BTreeMap::new(),
                 id: dev.clone(),
+                development: false,
                 declared_at: None,
             },
         )]
@@ -130,6 +146,7 @@ fn intent(key: &str, value: serde_json::Value) -> ProductIntent {
         cluster_scopes: Vec::new(),
         application_pins: Vec::new(),
         preferences: Vec::new(),
+        permissions: std::collections::BTreeMap::new(),
     }
 }
 
@@ -290,6 +307,7 @@ fn catalogue_with_a_secret() -> Catalogue {
         default: None,
         doc: None,
         secret: true,
+        fields: Vec::new(),
     });
     catalogue
 }
@@ -370,9 +388,7 @@ fn the_refusal_spells_the_environment_variable() {
 /// A plugin's configuration is checked for credentials too.
 ///
 /// It is the likeliest place for one -- an OIDC plugin's `client_secret` -- and
-/// until now nothing looked at plugin configuration at all. Only the credential
-/// rule reaches here; see `check_plugin_secrets` for why the unknown-key rule
-/// cannot follow yet.
+/// until now nothing looked at plugin configuration at all.
 #[test]
 fn a_credential_on_a_plugin_is_refused_as_well() {
     let mut catalogue = catalogue_with_a_secret();
@@ -397,6 +413,153 @@ fn a_credential_on_a_plugin_is_refused_as_well() {
     assert_eq!(
         codes_of(&catalogue, &intent),
         vec![DiagnosticCode::GdlLiteralSecret]
+    );
+}
+
+/// A plugin config key its schema does not declare is GBX0115, as for a gear:
+/// the generator writes only declared keys, so it would otherwise be dropped
+/// in silence (a private `IdP` CA path was, in the integration product).
+#[test]
+fn an_undeclared_plugin_config_key_is_refused() {
+    let mut catalogue = catalogue_with_a_secret();
+    let plugin_id = GearId::new("demo-plugin").unwrap();
+    let mut plugin = catalogue.gears[&GearId::new("demo").unwrap()].clone();
+    plugin.id = plugin_id.clone();
+    catalogue.gears.insert(plugin_id.clone(), plugin);
+
+    let mut intent = intent("bind_addr", serde_json::json!("0.0.0.0:1"));
+    intent.selected_gears[0]
+        .plugins
+        .push(gearbox_ir::PluginSelection {
+            gear: plugin_id,
+            config: [("issuer".to_owned(), serde_json::json!("https://idp"))]
+                .into_iter()
+                .collect(),
+            profiles: BTreeSet::new(),
+            entry_index: 0,
+            declared_at: None,
+        });
+
+    assert_eq!(
+        codes_of(&catalogue, &intent),
+        vec![DiagnosticCode::GdlUnknownConfigKey]
+    );
+}
+
+/// A host that declares no configuration schema of its own still has its
+/// plugins checked: a plugin's config belongs to the plugin's schema, and the
+/// host's missing one used to skip the plugin check with it.
+#[test]
+fn a_plugin_of_a_host_without_a_schema_is_still_checked() {
+    let mut catalogue = catalogue_with_a_secret();
+    let plugin_id = GearId::new("demo-plugin").unwrap();
+    let host_id = GearId::new("demo").unwrap();
+    let mut plugin = catalogue.gears[&host_id].clone();
+    plugin.id = plugin_id.clone();
+    catalogue.gears.insert(plugin_id.clone(), plugin);
+    catalogue.gears.get_mut(&host_id).unwrap().config_schema = None;
+
+    let mut intent = intent("bind_addr", serde_json::json!("0.0.0.0:1"));
+    intent.selected_gears[0].config.clear();
+    intent.selected_gears[0]
+        .plugins
+        .push(gearbox_ir::PluginSelection {
+            gear: plugin_id,
+            config: [("issuer".to_owned(), serde_json::json!("https://idp"))]
+                .into_iter()
+                .collect(),
+            profiles: BTreeSet::new(),
+            entry_index: 0,
+            declared_at: None,
+        });
+
+    assert_eq!(
+        codes_of(&catalogue, &intent),
+        vec![DiagnosticCode::GdlUnknownConfigKey]
+    );
+}
+
+/// One level into a set struct value: a required nested key the value does
+/// not set is GBX0120, and a nested key of the wrong type is GBX0113.
+/// `oidc-authn-plugin`'s `jwt` without `claim_mapping` resolved, generated and
+/// failed at startup.
+#[test]
+fn a_nested_required_key_and_a_nested_type_are_checked() {
+    let mut catalogue = catalogue();
+    let demo = GearId::new("demo").unwrap();
+    let schema = catalogue
+        .gears
+        .get_mut(&demo)
+        .unwrap()
+        .config_schema
+        .as_mut()
+        .unwrap();
+    let mut jwt = field("jwt", ConfigFieldType::Complex);
+    let mut claim_mapping = field("claim_mapping", ConfigFieldType::Complex);
+    claim_mapping.required = true;
+    jwt.fields = vec![
+        field("require_audience", ConfigFieldType::Bool),
+        claim_mapping,
+    ];
+    schema.fields.push(jwt);
+
+    let check = |value: serde_json::Value| {
+        let intent = intent("jwt", value);
+        let mut diagnostics = Diagnostics::default();
+        check(&catalogue, &intent, "product.gdl", &mut diagnostics);
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message.clone()))
+            .collect::<Vec<_>>()
+    };
+
+    let missing = check(serde_json::json!({ "require_audience": true }));
+    assert_eq!(
+        missing.iter().map(|(c, _)| *c).collect::<Vec<_>>(),
+        [DiagnosticCode::GdlRequiredConfigUnset],
+        "{missing:?}"
+    );
+    assert!(missing[0].1.contains("`jwt.claim_mapping`"), "{missing:?}");
+
+    let wrong = check(serde_json::json!({ "require_audience": "yes", "claim_mapping": {} }));
+    assert_eq!(
+        wrong.iter().map(|(c, _)| *c).collect::<Vec<_>>(),
+        [DiagnosticCode::GdlConfigTypeMismatch],
+        "{wrong:?}"
+    );
+
+    assert!(check(serde_json::json!({ "claim_mapping": {} })).is_empty());
+}
+
+/// A plugin's required field with no default and no value is said out loud
+/// too: `oidc-authn-plugin` without `s2s_oauth` resolved, generated and failed
+/// at startup.
+#[test]
+fn an_unset_required_plugin_field_is_reported() {
+    let mut catalogue = catalogue_with_a_secret();
+    let plugin_id = GearId::new("demo-plugin").unwrap();
+    let mut plugin = catalogue.gears[&GearId::new("demo").unwrap()].clone();
+    plugin.id = plugin_id.clone();
+    let schema = plugin.config_schema.as_mut().unwrap();
+    let mut s2s = field("s2s_oauth", ConfigFieldType::Complex);
+    s2s.required = true;
+    schema.fields.push(s2s);
+    catalogue.gears.insert(plugin_id.clone(), plugin);
+
+    let mut intent = intent("bind_addr", serde_json::json!("0.0.0.0:1"));
+    intent.selected_gears[0]
+        .plugins
+        .push(gearbox_ir::PluginSelection {
+            gear: plugin_id,
+            config: BTreeMap::new(),
+            profiles: BTreeSet::new(),
+            entry_index: 0,
+            declared_at: None,
+        });
+
+    assert_eq!(
+        codes_of(&catalogue, &intent),
+        vec![DiagnosticCode::GdlRequiredConfigUnset]
     );
 }
 

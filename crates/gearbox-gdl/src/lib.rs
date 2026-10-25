@@ -48,8 +48,9 @@ pub(crate) mod product_intent;
 pub mod records;
 pub(crate) mod sink;
 pub(crate) mod values;
+pub mod version;
 pub mod vocabulary;
 
 pub use engine::{EvalOutcome, FileIdentity, GdlEngine};
-pub use sink::{GearDecl, Maturity, ProductDecl};
+pub use sink::{GearDecl, ProductDecl};
 pub use values::{GdlEnum, GdlNamespace};

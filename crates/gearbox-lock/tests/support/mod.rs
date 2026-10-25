@@ -210,6 +210,7 @@ fn gateway_process() -> ResolvedApplication {
         serve: None,
         image: None,
         subchart: None,
+        unit_chart: None,
         service_port: None,
     }
 }
@@ -235,6 +236,7 @@ fn worker_process(name: &str, gears: &[&str]) -> ResolvedApplication {
         serve: None,
         image: None,
         subchart: None,
+        unit_chart: None,
         service_port: None,
     }
 }
@@ -254,9 +256,13 @@ fn bindings() -> Vec<ResolvedBinding> {
         endpoint_source: Some("directory:service-discovery/api-contracts".to_owned()),
         endpoint: None,
         critical: false,
+        // Decided once every binding is known; see `resolve::resolve_at`.
+        gates_readiness: false,
+        client_sdk: None,
         selected: Selected::honoured(BindingRequest {
             mode: BindingMode::Remote,
             transport: Some(Transport::Rest),
+            critical: None,
         }),
     };
 
@@ -391,6 +397,9 @@ fn diagnostics() -> Diagnostics {
 #[must_use]
 pub fn fixture() -> ResolvedProduct {
     ResolvedProduct {
+        ui: None,
+        database: None,
+        sqlite_databases: BTreeMap::new(),
         // The fixture models a `self_hosted` product -- it has a spawn -- so it
         // carries the settings block too. `None` here would leave the golden
         // lock silent about a section every such product now writes.
@@ -405,6 +414,7 @@ pub fn fixture() -> ResolvedProduct {
             version: "0.1.0".to_owned(),
             profile: ProfileId::new("local").unwrap(),
             profile_kind: "self-hosted".to_owned(),
+            development: false,
             layout: gearbox_ir::DEFAULT_LAYOUT.to_owned(),
             gearbox_version: "0.1.0".to_owned(),
             lock_hash: String::new(),
@@ -430,6 +440,7 @@ pub fn fixture() -> ResolvedProduct {
         cuttable_if_declared: cuttable_candidates(),
         provenance: provenance(),
         diagnostics: diagnostics(),
+        permissions: std::collections::BTreeMap::new(),
     }
 }
 

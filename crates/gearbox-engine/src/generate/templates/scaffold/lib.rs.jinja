@@ -1,0 +1,54 @@
+{% if toolkit %}//! {{ id }}, scaffolded by Gearbox Studio.
+
+use toolkit::{Gear, GearCtx};
+
+#[toolkit::gear(name = "{{ id }}")]
+#[derive(Default)]
+pub struct {{ type_name }};
+
+#[toolkit::async_trait]
+impl Gear for {{ type_name }} {
+    async fn init(&self, _ctx: &GearCtx) -> toolkit::Result<()> {
+        Ok(())
+    }
+}
+{% if kind == "service" %}
+// Next: runtime capabilities and co-located deps go on the attribute above
+// (`capabilities = [...]`, `deps = [...]`). Keep deps in gear.gdl equal;
+// a mismatch is GBX0214. A single `ctx.config*()` call in `init` links this gear
+// to its configuration struct; uncomment `config_schema` in gear.gdl then.
+{% elif kind == "plugin" and plugin %}
+// Next: implement `{{ plugin.lib }}::{{ plugin.trait_ident }}` for {{ type_name }} -- the host looks
+// for it, and the catalogue warns (GBX0526) while no impl exists. Then
+// register the `vendor` and `priority` the host's selector matches.
+//
+// impl {{ plugin.lib }}::{{ plugin.trait_ident }} for {{ type_name }} { ... }
+{% elif kind == "plugin" %}
+// Next: choose the point this plugin implements -- set `implements` in gear.gdl, add the
+// crate that declares the point's trait to Cargo.toml, and implement it.
+{% endif %}{% elif kind == "minimal" %}// Scaffolded lib.
+// Gear macros (#[toolkit::gear], provides/consumes) come next.
+{% elif kind == "service" %}// Scaffolded service gear.
+//
+// Next, in this order:
+//   1. add the toolkit dependency to Cargo.toml;
+//   2. #[toolkit::gear(name = "...")] on the gear struct -- the id,
+//      runtime capabilities and co-located deps are projected from it,
+//      and restating them in gear.gdl is refused (GBX0210);
+//   3. impl Gear, whose `init` is where a single ctx.config*() call
+//      links this gear to its configuration struct;
+//   4. uncomment `config_schema` in gear.gdl once that struct exists.
+{% else %}// Scaffolded plugin gear.
+//
+// Next, in this order:
+//   1. add the crate that declares the point's trait to Cargo.toml,
+//      and set `implements` in gear.gdl to the point's spec -- that is
+//      what makes this gear a plugin;
+//   2. impl that trait; the catalogue warns (GBX0526) while no
+//      impl of it exists here;
+//   3. register the vendor and priority this plugin answers under --
+//      they are the join key the host's `vendor` selector matches;
+//   4. list this gear under its host's `plugins = [...]` in the
+//      product. A plugin under a host that does not declare its point
+//      is refused (GBX0518).
+{% endif %}

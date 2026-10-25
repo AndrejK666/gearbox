@@ -11,26 +11,23 @@
     reason = "clippy.toml's allow-unwrap-in-tests covers #[test] fns but not the helpers here"
 )]
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use gearbox_engine::{SourceRoot, check_plugins, load_catalogue};
 use gearbox_gdl::{FileIdentity, GdlEngine};
 use gearbox_ir::{Catalogue, DiagnosticCode, Diagnostics, RelPath, SourceId};
 
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn gears_rust() -> Option<PathBuf> {
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            return candidate.canonicalize().ok();
-        }
-        dir = dir.parent()?;
-    }
+    corpus_support::root()
 }
 
 fn catalogue() -> Option<Catalogue> {
     let root = gears_rust()?;
-    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root).ok()?;
+    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root)
+        .unwrap_or_else(|error| panic!("the discovered corpus must be readable: {error}"));
     Some(load_catalogue(&[source]).catalogue)
 }
 
@@ -815,7 +812,9 @@ fn a_host_is_matched_by_the_vendor_field_its_point_names() {
     // GBX0512 against `static-idp-plugin` (vendor "cf") -- which the runtime
     // finds. Its point now says `selector = "idp.vendor"`.
     let cat = require!();
-    let am = cat.gear(&gearbox_ir::GearId::new("account-management").unwrap()).unwrap();
+    let am = cat
+        .gear(&gearbox_ir::GearId::new("account-management").unwrap())
+        .unwrap();
     assert_eq!(am.vendor_selector.as_deref(), Some("cf"));
 
     let (codes, messages) = check(
@@ -841,6 +840,58 @@ fn a_host_is_matched_by_the_vendor_field_its_point_names() {
     );
     assert!(
         codes.contains(&DiagnosticCode::PluginVendorMismatch) && messages.contains("keycloak"),
+        "{codes:?} {messages}"
+    );
+}
+
+/// Item 15 review: the join key may differ per profile. A host `vendor` set by
+/// one profile's `profile_config` is checked for that profile, and only there.
+#[test]
+fn a_profile_config_vendor_is_checked_for_its_profile() {
+    let cat = require!();
+    let (codes, messages) = check(
+        &cat,
+        &product(
+            r#"embedded(id = "dev"), kubernetes(id = "prod", discovery = "static")"#,
+            "dev",
+            &format!(
+                r#"{AUTHN}, profile_config = {{"prod": {{"vendor": "acme"}}}},
+                   plugins = [plugin("static-authn-plugin")])"#
+            ),
+        ),
+    );
+    assert!(
+        codes.contains(&DiagnosticCode::PluginVendorMismatch) && messages.contains("acme"),
+        "{codes:?} {messages}"
+    );
+    assert_eq!(
+        codes
+            .iter()
+            .filter(|c| **c == DiagnosticCode::PluginVendorMismatch)
+            .count(),
+        1,
+        "prod only, not dev: {messages}"
+    );
+}
+
+/// The inverse: a raw `vendor` that every profile overrides is no error.
+#[test]
+fn a_vendor_every_profile_overrides_is_not_an_error() {
+    let cat = require!();
+    let (codes, messages) = check(
+        &cat,
+        &product(
+            r#"embedded(id = "dev")"#,
+            "dev",
+            &format!(
+                r#"{AUTHN}, config = {{"vendor": "acme"}},
+                   profile_config = {{"dev": {{"vendor": "constructorfabric"}}}},
+                   plugins = [plugin("static-authn-plugin")])"#
+            ),
+        ),
+    );
+    assert!(
+        !codes.contains(&DiagnosticCode::PluginVendorMismatch),
         "{codes:?} {messages}"
     );
 }

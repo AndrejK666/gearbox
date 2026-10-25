@@ -1,0 +1,21 @@
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {ProductShell} from {{ shell }};
+import '{{ shell_name }}/theme.css';
+import {modules} from './module-registry';
+
+fetch('/runtime-config.json')
+  .then(r => {
+    if (!r.ok) throw Error('Runtime configuration unavailable');
+    return r.json();
+  })
+  .then(config =>
+    createRoot(document.getElementById('root')!).render(
+      <React.StrictMode>
+        <ProductShell config={config} modules={modules} />
+      </React.StrictMode>,
+    ),
+  )
+  .catch(() => {
+    document.getElementById('root')!.textContent = 'Product configuration could not be loaded.';
+  });

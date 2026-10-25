@@ -100,15 +100,11 @@ fn errors(diagnostics: &[Diagnostic]) -> Vec<String> {
         .collect()
 }
 
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn corpus() -> Option<PathBuf> {
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            return candidate.canonicalize().ok();
-        }
-        dir = dir.parent()?;
-    }
+    corpus_support::root()
 }
 
 #[test]
@@ -130,6 +126,27 @@ fn the_examples_are_where_the_test_expects_them() {
         found[1].contains("product("),
         "the second example is the product one"
     );
+}
+
+/// The full template evaluates as printed: its live lines are a gear, and the
+/// rest are comments a reader uncomments.
+#[test]
+fn the_full_template_evaluates() {
+    let text = std::fs::read_to_string(gdl_md()).unwrap();
+    let start = text
+        .find("\n### Full template\n")
+        .expect("`### Full template` is the heading the template lives under");
+    let rest = &text[start..];
+    let open = rest.find("```python\n").expect("the template's code block") + "```python\n".len();
+    let close = rest[open..].find("\n```").expect("the end of the block");
+    let source = &rest[open..open + close];
+    let outcome = GdlEngine::new().eval_gear(&identity("pricing/gear.gdl"), source);
+    assert_eq!(
+        errors(outcome.diagnostics.as_slice()),
+        Vec::<String>::new(),
+        "the full template in the GDL reference does not evaluate"
+    );
+    assert!(outcome.value.is_some(), "it produced no declaration");
 }
 
 #[test]

@@ -20,26 +20,17 @@ use gearbox_ir::{
     Catalogue, CutBlocker, DiagnosticCode, GearId, ProductIntent, ProfileId, SourceId,
 };
 
+#[path = "common/corpus.rs"]
+mod corpus_support;
+
 fn gears_rust() -> Option<PathBuf> {
-    // Walks up instead of counting `..`, and the difference is not cosmetic.
-    // `CARGO_MANIFEST_DIR/../../../gears-rust` is the sibling of the *repository*
-    // root, so from a git worktree -- `.claude/worktrees/<name>/crates/...` -- it
-    // resolved to nothing. Every real-tree test then skipped, printed a reason
-    // nobody reads, and the suite went green having touched none of the corpus.
-    // An agent working in a worktree got that silently.
-    let mut dir: &Path = Path::new(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let candidate = dir.join("gears-rust");
-        if candidate.join("gears").is_dir() {
-            return candidate.canonicalize().ok();
-        }
-        dir = dir.parent()?;
-    }
+    corpus_support::root()
 }
 
 fn catalogue() -> Option<Catalogue> {
     let root = gears_rust()?;
-    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root).ok()?;
+    let source = SourceRoot::open(SourceId::new("gears-rust").unwrap(), root)
+        .unwrap_or_else(|error| panic!("the discovered corpus must be readable: {error}"));
     Some(load_catalogue(&[source]).catalogue)
 }
 
@@ -119,8 +110,12 @@ fn nothing_in_the_slice_is_severable_if_declared_and_that_is_the_finding() {
     // anything -- `api-contracts` -- which nothing pulls in by co-location",
     // and that a platform gear growing a declared contract would end the
     // emptiness. `authz-resolver` grew one: it provides `AuthZResolverApi` over
-    // REST, and `account-management`, `resource-group` and `credstore` each
-    // reach it through `deps`.
+    // REST, and `account-management` reaches it through `deps`
+    // (`resource-group`, `credstore`, `oagw` and `event-broker` consume it as a
+    // contract). `cluster` now
+    // provides its four coordination contracts over gRPC and `settings-service`
+    // its read contract; `event-broker`'s `deps = [cluster]` is reported by
+    // GBX0607 rather than as a cut.
     //
     // The work list is still empty only because the demo product selects none
     // of those three. So the corpus can now *demonstrate* a severable-if-
@@ -146,7 +141,12 @@ fn nothing_in_the_slice_is_severable_if_declared_and_that_is_the_finding() {
         .collect();
     assert_eq!(
         providers,
-        vec![&gid("api-contracts"), &gid("authz-resolver")],
+        vec![
+            &gid("api-contracts"),
+            &gid("authz-resolver"),
+            &gid("cluster"),
+            &gid("settings-service"),
+        ],
         "the emptiness above depends on which gears provide anything at all"
     );
 }
