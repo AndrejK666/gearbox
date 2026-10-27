@@ -502,10 +502,10 @@ Only `git(...)` is a source. `source = path(...)` is an error: paths are already
 
 When the description is in a git checkout, Gearbox compares `source` with the checkout:
 
-- One remote of the checkout must be the repository of `url`, or a fork of it. A fork has the same host and repository name and a different owner: a checkout of `me/gears-rust` agrees with `url = "https://github.com/constructorfabric/gears-rust"`. Gearbox compares `https://host/org/repo`, `git@host:org/repo.git` and `ssh://...` as the same repository.
+- One remote of the checkout must be the repository of `url`, or a fork of it. A fork has the same host and repository name and a different owner: a checkout of `me/gears-rust` agrees with `url = "https://github.com/constructorfabric/gears-rust"`. Gearbox compares `https://host/org/repo`, `git@host:org/repo.git` and `ssh://...` as the same repository. An SSH remote through a host alias from `~/.ssh/config` (`git@github-me:me/gears-rust.git`, a host with no dot) is matched by repository name alone, since the alias does not say which host it dials.
 - The directory of the description must be `path`.
 
-A difference is **GBX0121**, a warning. The help text gives the correct `path`. A tree without `.git` is not checked.
+A difference is **GBX0121**, a warning. The help text gives the correct `path`. A wrong `url` is reported once per checkout, not once per description. A tree without `.git` is not checked.
 
 ### `tests = [...]` on a gear
 

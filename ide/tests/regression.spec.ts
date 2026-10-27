@@ -439,51 +439,11 @@ test.describe("the toolbar names only registered commands", () => {
   });
 
   test("the toolbar renders exactly the commands it declares", async ({ studio }) => {
-    // The declared list and the rendered one are two different things:
-    // `TOOLBAR_COMMAND_IDS` is string literals, while the buttons come from an
-    // `ACTIONS` map built out of imported `Command` constants. The test above
-    // guards the literals against the registry; without this one, a third action
-    // could be added to the map and the declared list would quietly stop
-    // describing the toolbar.
-    const declared = new Set(
-      [
-        ...(
-          readFileSync(join(STUDIO_SRC, "shell/toolbar-widget.tsx"), "utf8").match(
-            /TOOLBAR_COMMAND_IDS = \[([\s\S]*?)\]/,
-          )?.[1] ?? ""
-        ).matchAll(/"([^"]+)"/g),
-      ].map((m) => m[1]),
-    );
-
-    // A context is not switchable by a control -- it follows what is open -- so
-    // this reads whatever the shell reports, then opens a product and reads again.
-    //
-    // It does not assert that `home` is reachable, because on this corpus it is
-    // not: `ProductStore.discover()` opens the product when it is the only one, so
-    // the shell passes through `home` and lands in `product` before a test can
-    // look. That is the behaviour, not a defect, and the Start screen is where it
-    // changes.
-    const actions = () =>
-      studio.page
-        .locator(".gbx-toolbar-actions [data-command]")
-        .evaluateAll((nodes) => nodes.map((n) => n.getAttribute("data-command") ?? ""));
-
-    const rendered = new Set<string>();
-    for (const id of await actions()) rendered.add(id);
-
     await openProduct(studio.page, "dev");
     await expectContext(studio.page, "product");
-    const inProduct = await actions();
-    expect(inProduct.length, "the product context renders no action").toBeGreaterThan(0);
-    for (const id of inProduct) rendered.add(id);
-
-    // Declared may include gear-session commands that this corpus never opens.
-    // Every rendered id must be declared; undeclared buttons are the failure.
-    const undeclared = [...rendered].filter((id) => !declared.has(id));
-    expect(undeclared, `toolbar rendered undeclared commands: ${undeclared.join(", ")}`).toEqual(
-      [],
-    );
-    expect([...rendered].sort().length).toBeGreaterThan(0);
+    await expect(studio.page.locator(".gbx-toolbar-actions [data-command]")).toHaveCount(0);
+    await expect(studio.page.locator('.gbx-product-context [data-command="gearbox.product.switch"]')).toBeVisible();
+    await expect(studio.page.locator(".gbx-product-nav [role=tab]")).toHaveCount(4);
   });
 
   test.fixme("the toggle command reveals a view hidden behind another tab", async ({ studio }) => {
@@ -784,7 +744,7 @@ test.describe("the diagnostics count is a signpost, not a hijack", () => {
   test("the count is on the tab, and warnings do not move the stage", async ({ studio }) => {
     await openProduct(studio.page, "dev");
 
-    const tab = studio.page.locator('[data-product-section="validation"]');
+    const tab = studio.page.locator('[data-product-section="checks"]');
     const badge = tab.locator("[data-validation-count]");
     await expect(badge).toBeVisible({ timeout: 60_000 });
 
@@ -802,9 +762,9 @@ test.describe("the diagnostics count is a signpost, not a hijack", () => {
     // and the claim is that warnings leave *whatever* stage that is alone. The
     // arriving stage is claimed further down, where nothing establishes one.
     await expect(
-      studio.page.locator('[data-product-section="overview"]'),
-      "warnings must leave the arriving stage alone",
-    ).toHaveAttribute("aria-selected", "true");
+      studio.page.getByRole("heading", { name: "Product settings", exact: true }),
+      "warnings must leave the selected settings section alone",
+    ).toBeVisible();
 
     // And the count agrees with the list it points at.
     await productSection(studio.page, "validation");
@@ -906,7 +866,7 @@ test.describe("the diagnostics count is a signpost, not a hijack", () => {
       ).toBeVisible();
 
       // And the count is a way to the problem rather than an ornament.
-      await page.locator('[data-product-section="validation"]').click();
+      await page.locator('[data-product-section="checks"]').click();
       await expect(
         page.locator('[data-product-validation] [data-conflict-code="GBX0115"]'),
         "the stage the count points at shows the diagnostic",

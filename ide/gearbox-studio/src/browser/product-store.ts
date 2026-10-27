@@ -17,12 +17,14 @@
 
 import { Emitter, Event } from "@theia/core/lib/common/event";
 import { inject, injectable, postConstruct } from "@theia/core/shared/inversify";
+import { PreferenceService } from "@theia/core/lib/common/preferences/preference-service";
+import { configuredDefaults } from "../common/gearbox-preferences";
 
 import type { Diagnostic } from "../common/generated/Diagnostic";
 import type { LockResult } from "../common/generated/LockResult";
 import type { ProductIntent } from "../common/generated/ProductIntent";
 import type { ResolveResult } from "../common/generated/ResolveResult";
-import { GearboxService, ProductRef } from "../common/protocol";
+import { GearboxService, ProductRef, type StudioDefaults } from "../common/protocol";
 import {
   asFocus,
   type ProductSelection,
@@ -158,6 +160,14 @@ export class ProductStore {
    * client callback.
    */
   @inject(EngineConnectionService) protected readonly engine!: EngineConnectionService;
+
+  @inject(PreferenceService) protected readonly preferenceService!: PreferenceService;
+
+  /** This machine's configured roots and workspace, once settings are read. */
+  protected async defaults(): Promise<StudioDefaults | undefined> {
+    await this.preferenceService.ready;
+    return configuredDefaults(this.preferenceService);
+  }
   /**
    * Guards the lazy lock fetch against the render that triggers it.
    *
@@ -298,7 +308,7 @@ export class ProductStore {
     this.update({ status: "loading" });
     let products: ProductRef[];
     try {
-      products = await this.service.listProducts();
+      products = await this.service.listProducts(await this.defaults());
     } catch (error) {
       this.fail(epoch, error);
       return;

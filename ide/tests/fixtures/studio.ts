@@ -942,7 +942,8 @@ export async function revealLock(page: Page): Promise<void> {
  * lands -- so the test would read the previous profile's answer.
  */
 export async function openGenerate(page: Page): Promise<void> {
-  await revealView(page, "Gearbox Generate", ".gbx-generate");
+  await runCommand(page, "Gearbox: Show Generate");
+  await expect(page.locator(".gbx-embedded-generate")).toBeVisible();
 }
 
 /**
@@ -975,9 +976,15 @@ export async function expectContext(
  */
 export async function productSection(
   page: Page,
-  section: "overview" | "composition" | "topology" | "validation",
+  section: "overview" | "composition" | "topology" | "validation" | "checks" | "generate" | "settings",
 ): Promise<void> {
-  const tab = page.locator(`[data-product-section="${section}"]`);
+  if (section === "overview" || section === "settings") {
+    await page.locator('.gbx-product-menu > summary').click();
+    await page.getByRole("button", { name: "Product settings", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Product settings", exact: true })).toBeVisible();
+    return;
+  }
+  const tab = page.locator(`[data-product-section="${section === "validation" ? "checks" : section}"]`);
   await tab.waitFor({ state: "visible", timeout: 30_000 });
   await tab.click();
   await expect(tab).toHaveAttribute("aria-selected", "true");
@@ -1067,7 +1074,7 @@ export async function openProductById(
   // itself sits above the strip and works from any stage.
   await productSection(page, "overview");
   await page.locator("[data-resolved-profile]").waitFor({ state: "visible", timeout: 60_000 });
-  await page.locator(`[data-profile="${profile}"]`).click();
+  await page.locator("[data-product-profile]").selectOption(profile);
   await page
     .locator(`[data-resolved-profile="${profile}"]`)
     .waitFor({ state: "visible", timeout: 60_000 });

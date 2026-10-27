@@ -361,3 +361,51 @@ recorded here rather than guessed at.
   `a_resolution_reports_an_unfilled_point_for_its_own_profile`. `dev` with no linked implementation
   reports once; `prod`, which links one, reports nothing.
 * The whole engine suite, including the golden locks, is unchanged for both shipped products.
+
+
+## Amendment 2026-10-27: a searchable composition with details on demand
+
+Composition remains the landing section and continues to render declared intent when resolution
+fails. Its left column is a searchable list; the right column shows the selected gear or plugin's
+settings, or a product summary before a selection. A gear's selection button fills the row. Source
+identifiers and GDL links belong in details, and removal belongs in each row's accessible action
+menu. Add Gear is local to the list; Create Gear is a secondary add action.
+
+Plugin branches and Automatically included start collapsed with visible counts. Expanding a plugin
+branch shows active connections first; other-profile connections are in their own disclosure.
+Search includes plugin names and temporarily exposes matching branches. Plugin identity remains
+(host, entry_index, product path), preserving duplicate implementations with disjoint profile scopes.
+Settings name the current profile and the scope actually affected by an edit.
+
+The four primary sections are Composition, Topology, Checks and Generate. Overview's summary is
+shown before selecting a gear; profile editing moves to Product settings. Old overview/validation
+command arguments map to settings/checks. Topology initially shows applications and main links;
+binding mechanics and cluster options are disclosed on selection or expansion. The graph stays an
+optional existing view.
+
+Add Gear still previews consequences before the explicit write. Description and composition impact
+precede optional plugin setup; GDL changes are disclosed. A failed preview shows one error/recovery
+state rather than contradictory empty impact and diff messages. This changes error presentation,
+not the engine's reasons for refusing an edit.
+
+## Amendment 2026-10-28: Add Gear preserves declared source aliases
+
+A catalogue source ID names a local root and may come from its directory name. A product's
+`source(id = ...)` is a manifest alias, independent of that name. A Windows checkout opened from
+`gears-rust-mikefalcon77` can therefore satisfy a product declaring `gears-rust`; writing the
+catalogue ID into `use_gear` makes the edit fail with GBX0102.
+
+Add Gear maps each catalogue root to the product's declared alias before constructing the proposal.
+Matching uses normalized declared paths and existing gear selections, which retain their aliases
+when a checkout is relocated. An empty product's sole unmatched source can bind to the sole
+unmatched root. Multiple unresolved bindings are refused with an actionable message rather than
+paired by order. Source declarations and filesystem paths are not rewritten.
+
+The same proposal goes to impact resolution, the GDL preview and the explicit write, including an
+implicitly included host promoted when attaching a plugin. Engine source validation stays intact.
+Other preview refusals display the structured diagnostic code, message and help where available.
+
+Confirmation: isolated Playwright scenarios retain the original `gears-rust` alias while opening a
+differently named checkout, preview an ordinary gear and write a plugin's promoted host. Pure
+matching cases cover relative paths, Windows and UNC paths, relocation and ambiguous multi-root
+products. The existing add/configure/generate scenario runs with this same alias mismatch.

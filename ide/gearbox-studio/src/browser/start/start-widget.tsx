@@ -27,6 +27,7 @@ import { ProductStore } from "../product-store";
 import { EngineConnectionService } from "../shell/engine-connection-service";
 import { ProductSessionService, type RecentEntry } from "../shell/product-session-service";
 import { BROWSE_CATALOGUE, NEW_GEAR, NEW_PRODUCT, OPEN_GEAR, OPEN_PRODUCT } from "../shell/session-command-ids";
+import { CONFIGURE_SOURCES } from "../shell/first-run-contribution";
 
 @injectable()
 export class StartWidget extends ReactWidget {
@@ -60,6 +61,7 @@ export class StartWidget extends ReactWidget {
     this.addClass("gbx-widget-start");
     this.toDispose.push(this.products.onChanged(() => this.refresh()));
     this.toDispose.push(this.engine.onDidChange(() => this.update()));
+    this.toDispose.push(this.catalogue.onChanged(() => this.update()));
     this.refresh();
   }
 
@@ -110,6 +112,21 @@ export class StartWidget extends ReactWidget {
               onClick={() => void this.catalogue.resetToBootSession()}
             >
               Retry
+            </button>
+          </div>
+        )}
+
+        {/* A fresh install has no gears checkout yet; say so where the work
+            starts, with the way to fix it, rather than an empty catalogue. */}
+        {connected && this.catalogue.current.status === "ready" && this.catalogue.rootPaths().length === 0 && (
+          <div className="gbx-start-section" data-start-unconfigured>
+            <div>No gears source is configured, so the catalogue is empty.</div>
+            <button
+              type="button"
+              className="gbx-choice"
+              onClick={() => void this.commands.executeCommand(CONFIGURE_SOURCES.id)}
+            >
+              Configure Sources…
             </button>
           </div>
         )}

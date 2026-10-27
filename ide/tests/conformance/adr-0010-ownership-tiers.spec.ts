@@ -462,7 +462,7 @@ test.describe("typed config from schema (Phase 7)", () => {
     // holds the old key, and without a `removed` branch provenance fell through
     // to derived and lied about who set it.
     await expect(field).toHaveAttribute("data-config-provenance", "default");
-    await studio.page.locator(".gbx-toolbar [data-draft-discard]").click();
+    await studio.page.locator(".gbx-workspace-draft [data-draft-discard]").click();
   });
 
   test("a projected string field renders as a typed control [Phase 7]", async ({ studio }) => {

@@ -19,7 +19,8 @@ export default defineConfig({
   // one from `playwright.wedge.config.ts`. Collected here they would run against
   // this server, where nothing is ever withheld, and report a timeout mechanism
   // they never reached.
-  testIgnore: "wedge/**",
+  // UX acceptance owns a temporary workspace and its own server configuration.
+  testIgnore: ["wedge/**", "ux/**"],
 
   // One Theia backend, one engine process, and `catalogue/load` is stateful:
   // two workers would race over the same server. Serial also keeps the

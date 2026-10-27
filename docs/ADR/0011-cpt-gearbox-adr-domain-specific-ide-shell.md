@@ -1168,3 +1168,30 @@ session is the right design. The recovery removes the dead end; it explains noth
 * The cap itself is `productTimeoutMs` in `node/gearbox-service-impl.ts`: 60 seconds unless
   `GEARBOX_PRODUCT_TIMEOUT_MS` says otherwise, and a malformed value is refused rather than
   defaulted.
+
+
+## Amendment 2026-10-27: the product workspace owns its navigation
+
+The integrator's primary surface is one product workspace with **Composition, Topology, Checks,
+and Generate**. Product identity, profile selection and resolution status stay visible across these
+sections in the widget's own header, including Electron where the native menu hides Theia's top
+area. Product settings and source tools are explicit secondary actions. The editor, Explorer,
+Search and Source Control remain available on request.
+
+Generate's stateful UI is a React component backed by the existing GenerateService. The old widget
+is a compatibility adapter, never a source of borrowed render methods; Show Generate, its legacy
+toggle command and Open View all navigate to the workspace section. Layout migration 9 removes an
+old Generate tab once and preserves source editor tabs.
+
+The workspace owns one persistent draft bar. Preview / Apply uses the existing guarded edit
+confirmation; Discard retains its existing semantics. A pending draft blocks generation until it
+is applied or discarded. A disconnected engine or stale resolution cannot be presented as ready.
+
+Checks share one diagnostic renderer: errors and warnings are visible first; information and hints
+are initially collapsed. Remedies remain visible. Codes (including the existing chat drag handle),
+evidence and related locations are disclosed under Details. Metadata identifies Configure targets;
+otherwise Open GDL is the primary route. No message text is parsed to infer an edit destination.
+
+Validation: `npm run build`, `npm run test:ux` with GEARBOX_ROOT set when the source checkout has a
+non-default name. The UX suite uses a temporary workspace and copies of product descriptions, so
+its edits and generated files cannot change the developer's products or corpus.

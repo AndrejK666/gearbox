@@ -143,7 +143,7 @@ test.describe("a screen belongs to a subject", () => {
     const { page } = studio;
     await openProduct(page, "dev");
     await runCommand(page, "Gearbox: Show Generate");
-    await expect(page.locator(".gbx-widget-generate")).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator(".gbx-embedded-generate")).toBeVisible({ timeout: 60_000 });
 
     await page.locator('[data-command="gearbox.product.close"]').click();
     await expectContext(page, "home");
@@ -249,7 +249,7 @@ test.describe("the product has stages", () => {
     const tabs = await strip
       .locator("[data-product-section]")
       .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-product-section")));
-    expect(tabs).toEqual(["overview", "composition", "topology", "validation"]);
+    expect(tabs).toEqual(["composition", "topology", "checks", "generate"]);
     // Which stage a product *opens* on is not asserted here: `openProduct`
     // establishes Overview on purpose, because the resolved header lives there.
     // The arriving stage is claimed in `regression.spec.ts`, which opens without
@@ -260,8 +260,8 @@ test.describe("the product has stages", () => {
     // flight, and one line saying the resolution complained belongs on every
     // stage rather than only on the one about complaints.
     await productSection(studio.page, "topology");
-    await expect(studio.page.locator('[data-profile="dev"]')).toBeVisible();
-    await expect(studio.page.locator(".gbx-diagnostics")).toBeVisible();
+    await expect(studio.page.locator("[data-product-profile]")).toBeVisible();
+    await expect(studio.page.locator(".gbx-product-status")).toBeVisible();
     await expect(studio.page.locator("[data-resolved-profile]")).toHaveCount(0);
 
     await expect(strip.locator("[data-product-section-generate]")).toBeVisible();
@@ -307,7 +307,7 @@ test.describe("validation is a stage, not a doorway", () => {
     // duplicating the link below it.
     await expect(page.locator("[data-show-conflicts]")).toHaveCount(0);
     await productSection(page, "topology");
-    await expect(page.locator("[data-show-conflicts]")).toHaveCount(1);
+    await expect(page.locator(".gbx-product-status")).toBeVisible();
     await productSection(page, "validation");
 
     // **The demoted link still does what it says.** It survives because the
@@ -917,7 +917,7 @@ test.describe("opening a product is one act", () => {
     await expect(validationStage).toBeVisible({ timeout: 60_000 });
 
     const resolving = rpc.stallNext("resolve");
-    await page.locator('[data-profile="prod"]').click();
+    await page.locator("[data-product-profile]").selectOption("prod");
     await resolving.held;
 
     const validation = validationStage;
@@ -964,7 +964,7 @@ test.describe("opening a product is one act", () => {
     await expect(validation).toBeVisible({ timeout: 60_000 });
 
     const refused = rpc.failNext("resolve", "the engine refused this profile");
-    await page.locator('[data-profile="prod"]').click();
+    await page.locator("[data-product-profile]").selectOption("prod");
     await refused.held;
 
     await expect(

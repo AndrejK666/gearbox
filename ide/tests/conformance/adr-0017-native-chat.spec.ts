@@ -157,9 +157,10 @@ test.describe("the chat is a Studio surface", () => {
     await resetCatalogueView(page);
     const row = page.locator(".gbx-row:not(.gbx-pending)").first();
     await row.waitFor({ state: "visible", timeout: 30_000 });
-    // A projected row carries a `GearId` and is draggable; a pending one has
-    // none yet (ADR-0009), so there is nothing to drag it as.
-    await expect(row).toHaveAttribute("draggable", "true");
+    // A projected row carries a `GearId` and is draggable by its id chip -- not
+    // the whole row, whose text has to stay selectable; a pending one has none
+    // yet (ADR-0009), so there is nothing to drag it as.
+    await expect(row.locator(".gbx-drag-handle")).toHaveAttribute("draggable", "true");
 
     // **The drop is performed, not inferred from the attribute.** A row that
     // says `draggable` and a drop handler that recognises it are two separate
@@ -174,7 +175,7 @@ test.describe("the chat is a Studio surface", () => {
     const before = (await chipTitles(page).first().textContent())?.trim() ?? "";
 
     const other = page.locator(".gbx-row:not(.gbx-pending)").nth(1);
-    await dropOnChat(page, other);
+    await dropOnChat(page, other.locator(".gbx-drag-handle"));
     // The drop selects what was dropped, so the chip must now name the other
     // row. Still one chip, because the selection chip is single by design.
     await expect(chipTitles(page).first()).not.toHaveText(before, { timeout: 30_000 });
@@ -190,9 +191,11 @@ test.describe("the chat is a Studio surface", () => {
     await openConflicts(page);
     const row = page.locator("li[data-conflict-code]").first();
     await row.waitFor({ state: "visible", timeout: 30_000 });
-    await expect(row).toHaveAttribute("draggable", "true");
+    // By the code chip, so the message and help stay selectable.
+    const handle = row.locator(".gbx-drag-handle");
+    await expect(handle).toHaveAttribute("draggable", "true");
 
-    await dropOnChat(page, row);
+    await dropOnChat(page, handle);
     // Named, not counted. A dropped diagnostic attaches the *diagnostics*
     // variable, whose chip the label provider titles "Gearbox Diagnostics" --
     // asserting a non-zero chip count would pass on the selection chip alone

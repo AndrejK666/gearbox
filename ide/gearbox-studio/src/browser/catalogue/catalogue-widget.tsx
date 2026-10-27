@@ -17,15 +17,13 @@ import { inject, injectable, postConstruct } from "@theia/core/shared/inversify"
 // esModuleInterop; a default import is the form that works.
 import React from "@theia/core/shared/react";
 
-import type { Diagnostic } from "../../common/generated/Diagnostic";
 import type { FailedRoot } from "../../common/generated/FailedRoot";
 import { Row, rowKey } from "../../common/protocol";
 import { CatalogueStore } from "../catalogue-store";
-import { DiagnosticsList } from "../diagnostics/diagnostics-list";
 import { ProductEditService } from "../product-edit-service";
 import { ProductStore } from "../product-store";
 import { RevealService } from "../reveal-service";
-import { ADD_GEAR, SHOW_PRODUCT } from "../shell/session-command-ids";
+import { ADD_GEAR, SHOW_CATALOGUE_DIAGNOSTICS, SHOW_PRODUCT } from "../shell/session-command-ids";
 import { GEARBOX_DRAG_MIME } from "../ai/gearbox-context";
 import { MaturityBadge } from "../gear/gear-facts";
 
@@ -110,6 +108,18 @@ export class CatalogueWidget extends ReactWidget {
               — {unprojected} did not project
             </span>
           )}
+          {/* The reasons live in the bottom area now, beside Conflicts; this is
+              the way there. */}
+          {state.diagnostics.length > 0 && (
+            <button
+              type="button"
+              className="gbx-catalogue-diagnostics-link"
+              data-catalogue-diagnostics={state.diagnostics.length}
+              onClick={() => void this.commands.executeCommand(SHOW_CATALOGUE_DIAGNOSTICS.id)}
+            >
+              {state.diagnostics.length} diagnostic(s) →
+            </button>
+          )}
         </div>
 
         {/* A plain substring filter over name, id and category. Not Theia's
@@ -146,7 +156,6 @@ export class CatalogueWidget extends ReactWidget {
 
         {groups.map(([category, rows]) => this.renderGroup(category, rows, state.status))}
 
-        {state.diagnostics.length > 0 && this.renderDiagnostics(state.diagnostics)}
       </div>
     );
   }
@@ -308,22 +317,6 @@ export class CatalogueWidget extends ReactWidget {
         role="option"
         aria-selected={selected}
         data-row-key={key}
-        // Draggable into the chat, which is the only consumer: a projected row
-        // carries its `GearId`, a pending one has none yet (ADR-0009) and so is
-        // not worth dragging anywhere. The payload is the id rather than the
-        // label, because the chat resolves ids and labels collide.
-        draggable={row.kind === "projected"}
-        onDragStart={(event) => {
-          if (row.kind !== "projected") return;
-          event.dataTransfer.setData(
-            GEARBOX_DRAG_MIME,
-            JSON.stringify({ kind: "gear", id: row.gear.id }),
-          );
-          // Plain text too, so dropping on anything else leaves something
-          // readable rather than nothing.
-          event.dataTransfer.setData("text/plain", row.gear.id);
-          event.dataTransfer.effectAllowed = "copy";
-        }}
         // One tab stop for the whole tree, not one per row. `tabIndex={0}`
         // everywhere put 62 stops between the filter box and the rest of the
         // shell today and will put hundreds there as the catalogue grows, which
@@ -350,7 +343,30 @@ export class CatalogueWidget extends ReactWidget {
           <span className="gbx-row-name">{label}</span>
           {row.kind === "projected" ? (
             <>
-              <span className="gbx-id">{row.gear.id}</span>
+              {/* Draggable into the chat, which is the only consumer, by the id
+                  chip rather than the whole row: a draggable row turns every
+                  press-and-move into a drag, so nothing in it could be selected
+                  and copied. Only a projected row carries its `GearId`; a
+                  pending one has none yet (ADR-0009). The payload is the id
+                  rather than the label, because the chat resolves ids and
+                  labels collide. */}
+              <span
+                className="gbx-id gbx-drag-handle"
+                title="Drag into the chat"
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData(
+                    GEARBOX_DRAG_MIME,
+                    JSON.stringify({ kind: "gear", id: row.gear.id }),
+                  );
+                  // Plain text too, so dropping on anything else leaves
+                  // something readable rather than nothing.
+                  event.dataTransfer.setData("text/plain", row.gear.id);
+                  event.dataTransfer.effectAllowed = "copy";
+                }}
+              >
+                {row.gear.id}
+              </span>
               <MaturityBadge maturity={row.gear.maturity} />
               {(row.gear.runtime_caps ?? []).map((cap) => (
                 <span className="gbx-badge" key={cap}>
@@ -476,40 +492,6 @@ export class CatalogueWidget extends ReactWidget {
     );
   }
 
-  /**
-   * What the engine had to say about the tree.
-   *
-   * These used to be stored and never rendered, which is how a gear that fails
-   * to project became a row that says `parsing…` under a finished progress bar
-   * with no explanation anywhere.
-   */
-  /**
-   * What the load could not do, in the same rows every other panel uses.
-   *
-   * The wrapper and its title have classes of their own -- not `gbx-group-label`,
-   * which means "a category of gears" and is read as exactly that by the suite,
-   * and not `gbx-diagnostics` / `gbx-diagnostics-label`, which are the Product
-   * view's one-line summary. Wearing those meant an unscoped read picked
-   * whichever panel rendered first, and with both on screen a strict locator
-   * matched two elements.
-   *
-   * `compact`, because this is an aside inside a tree rather than a screen. It is
-   * spacing only: a catalogue diagnostic keeps its location link, which points at
-   * the `gear.gdl` that failed to project -- the most actionable thing about it,
-   * and previously not shown at all.
-   */
-  protected renderDiagnostics(diagnostics: readonly Diagnostic[]): React.ReactNode {
-    return (
-      <div className="gbx-catalogue-diagnostics" data-catalogue-diagnostics={diagnostics.length}>
-        <div className="gbx-diagnostics-title">diagnostics ({diagnostics.length})</div>
-        <DiagnosticsList
-          diagnostics={diagnostics}
-          density="compact"
-          onReveal={(location) => void this.reveals.revealLocation(location)}
-        />
-      </div>
-    );
-  }
 }
 
 /**

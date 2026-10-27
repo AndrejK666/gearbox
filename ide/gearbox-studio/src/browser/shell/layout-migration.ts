@@ -33,6 +33,8 @@ import { inject, injectable } from "@theia/core/shared/inversify";
  * assuming they agreed is how the camelCase mistake in that list happened.
  */
 export const CLOSED_ON_MIGRATION: readonly string[] = [
+  // Generate now lives inside the product workspace; source editor tabs are preserved.
+  "gearbox.generate",
   // **Three of these had a `theia-` prefix nobody had read**, which is the fourth
   // time in this repository that a family was suppressed everywhere except where
   // it actually lives. `TypeHierarchyTreeWidget.WIDGET_ID` is `theia-typehierarchy`,
@@ -109,7 +111,7 @@ export const CLOSED_ON_MIGRATION: readonly string[] = [
 const MIGRATION_KEY = "gearbox.layoutMigration";
 
 /** Bump when `CLOSED_ON_MIGRATION` changes, so the sweep runs again -- once. */
-const MIGRATION_VERSION = 8;
+const MIGRATION_VERSION = 9;
 
 /**
  * Prefixes detached on **every** perspective switch, not once.

@@ -191,7 +191,7 @@ export const DIAGNOSTIC_CATALOGUE: {
     title: "a gear's declared git source disagrees with its checkout",
     severity: "warning",
     domain: "gdl",
-    docs: "A gear's `source = git(...)` disagrees with the checkout its\ndescription was read from: no remote has that url, or the gear is not\nat that `path` in it.\n\nA warning: what is on disk is used either way. But a reader holding\nthe description alone follows `source`, and would land in the wrong\nrepository or directory.",
+    docs: "A gear's `source = git(...)` disagrees with the checkout its\ndescription was read from: no remote is that repository or a fork of\nit, or the gear is not at that `path` in it.\n\nA warning: what is on disk is used either way. But a reader holding\nthe description alone follows `source`, and would land in the wrong\nrepository or directory. A wrong url is reported once per checkout,\nwith the other descriptions that declare it as related places.",
     requiresEvidence: false,
   },
   GBX0122: {

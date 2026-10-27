@@ -203,3 +203,53 @@ fn a_checkout_of_a_fork_matches_the_canonical_source() {
     ));
     assert!(codes(&catalogue).is_empty(), "{:?}", catalogue.diagnostics);
 }
+
+#[test]
+fn a_fork_cloned_through_an_ssh_host_alias_matches_the_canonical_source() {
+    // `github-me` is an `~/.ssh/config` alias for github.com; nothing here can
+    // see that, so the repository's name decides.
+    let checkout = Checkout::new("alias", "git@github-me:someone/gears-rust.git");
+    let catalogue = checkout.describe(&format!(
+        r#"source = git(url = "{REPO}", path = "gears/demo")"#
+    ));
+    assert!(codes(&catalogue).is_empty(), "{:?}", catalogue.diagnostics);
+}
+
+#[test]
+fn an_ssh_host_alias_of_another_repository_is_still_reported() {
+    let checkout = Checkout::new("alias-other", "git@github-me:someone/else.git");
+    let catalogue = checkout.describe(&format!(
+        r#"source = git(url = "{REPO}", path = "gears/demo")"#
+    ));
+    assert_eq!(codes(&catalogue), [DiagnosticCode::GdlSourceMismatch]);
+}
+
+#[test]
+fn a_checkout_that_disagrees_is_reported_once_for_all_its_descriptions() {
+    let checkout = Checkout::new("once", "https://github.com/someone/else.git");
+    let other = checkout.0.join("gears/other");
+    std::fs::create_dir_all(other.join("src")).unwrap();
+    std::fs::write(
+        other.join("Cargo.toml"),
+        "[package]\nname = \"other\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        other.join("src/lib.rs"),
+        "#[toolkit::gear(name = \"other\")]\n#[derive(Default)]\npub struct Other;\n",
+    )
+    .unwrap();
+    std::fs::write(
+        other.join("gear.gdl"),
+        format!(
+            "gear(maturity = \"stable\", package = cargo(crate_name = \"other\", lib = \"other\"),\n\
+             source = git(url = \"{REPO}\", path = \"gears/other\"))\n"
+        ),
+    )
+    .unwrap();
+    let catalogue = checkout.describe(&format!(
+        r#"source = git(url = "{REPO}", path = "gears/demo")"#
+    ));
+    assert_eq!(codes(&catalogue), [DiagnosticCode::GdlSourceMismatch]);
+    assert_eq!(catalogue.diagnostics.as_slice()[0].related.len(), 1);
+}

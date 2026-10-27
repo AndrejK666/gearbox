@@ -295,8 +295,8 @@ test.describe("Add Gear shows consequences before the write", () => {
       // Selecting a variant queues a draft, so it has to be dropped: the suite
       // refuses to start when `products/` differs from HEAD, and teardown
       // restores it -- a test that applied here would fail the next run.
-      await page.locator(".gbx-toolbar [data-draft-discard]").click();
-      await expect(page.locator(".gbx-toolbar [data-draft-apply]")).toHaveCount(0);
+      await page.locator(".gbx-workspace-draft [data-draft-discard]").click();
+      await expect(page.locator(".gbx-workspace-draft [data-draft-apply]")).toHaveCount(0);
     },
   );
 
@@ -445,8 +445,8 @@ test.describe("Add Gear shows consequences before the write", () => {
       await page.waitForTimeout(1_200);
       expect(await errors()).toBeGreaterThan(0);
 
-      await page.locator(".gbx-toolbar [data-draft-discard]").click();
-      await expect(page.locator(".gbx-toolbar [data-draft-apply]")).toHaveCount(0);
+      await page.locator(".gbx-workspace-draft [data-draft-discard]").click();
+      await expect(page.locator(".gbx-workspace-draft [data-draft-apply]")).toHaveCount(0);
     },
   );
 
@@ -475,7 +475,7 @@ test.describe("Add Gear shows consequences before the write", () => {
     await expect(add).toBeEnabled();
     // Nothing was queued -- the key was never added -- so there is no draft to
     // discard, and `global-teardown` finds `products/` as it left it.
-    await expect(page.locator(".gbx-toolbar [data-draft-apply]")).toHaveCount(0);
+    await expect(page.locator(".gbx-workspace-draft [data-draft-apply]")).toHaveCount(0);
   });
 
   test("features are curated, and one that is not for this deployment says so [plan §9.1: features are projected]", async ({
@@ -542,7 +542,7 @@ test.describe("Add Gear shows consequences before the write", () => {
     const onKubernetes = await configureGear(page, "grpc-hub");
     await expect(onKubernetes.locator('[data-feature-option="k8s-auth"]')).toHaveCount(1);
     await expect(onKubernetes.locator('[data-feature-elsewhere="k8s-auth"]')).toHaveCount(0);
-    await expect(page.locator(".gbx-toolbar [data-draft-apply]")).toHaveCount(0);
+    await expect(page.locator(".gbx-workspace-draft [data-draft-apply]")).toHaveCount(0);
   });
 
   test("errors warn beside the button and never disable it", async ({ studio }) => {

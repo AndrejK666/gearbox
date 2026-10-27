@@ -18,6 +18,7 @@ import { inject, injectable } from "@theia/core/shared/inversify";
 import { CatalogueStore } from "./catalogue-store";
 import { CatalogueWidget } from "./catalogue/catalogue-widget";
 import { ConflictsWidget } from "./conflicts/conflicts-widget";
+import { CatalogueDiagnosticsWidget } from "./diagnostics/catalogue-diagnostics-widget";
 import { CreateProductWidget, type CreateProductState } from "./create/create-product-widget";
 import { CreateGearWidget, type CreateGearState } from "./create/create-gear-widget";
 import { AddGearDialog, type AddGearChoice } from "./add-gear/add-gear-dialog";
@@ -36,6 +37,7 @@ import {
   ADD_GEAR,
   BROWSE_CATALOGUE,
   SHOW_CONFLICTS,
+  SHOW_CATALOGUE_DIAGNOSTICS,
   SHOW_GENERATE,
   SHOW_PRODUCT,
 } from "./shell/session-command-ids";
@@ -840,7 +842,7 @@ export class ProductViewContribution
     // this contribution -- and `mayTakeTheFront` deliberately refuses to steal
     // the front from a Gearbox surface, so a wizard has to *ask*.
     commands.registerCommand(SHOW_PRODUCT, {
-      execute: async (section?: import("./product/product-widget").ProductSection) => { const widget = await this.openView({ activate: true, reveal: true }); if (section) widget.showSection(section); },
+      execute: async (section?: import("./product/product-widget").ProductSectionInput) => { const widget = await this.openView({ activate: true, reveal: true }); if (section) widget.showSection(section); },
       isEnabled: () => this.store.current.open !== undefined,
     });
     commands.registerCommand(RESOLVE_PRODUCT, {
@@ -924,6 +926,33 @@ export class ConflictsViewContribution extends ScopedViewContribution<ConflictsW
   }
 }
 
+/**
+ * The catalogue load's diagnostics, in the bottom area beside Conflicts.
+ *
+ * Opened from the Catalogue header's count, never by `initializeLayout`: Home
+ * keeps an empty bottom panel, and a panel that appears to say "nothing to
+ * report" says nothing.
+ */
+@injectable()
+export class CatalogueDiagnosticsViewContribution extends ScopedViewContribution<CatalogueDiagnosticsWidget> {
+  constructor() {
+    super({
+      widgetId: CatalogueDiagnosticsWidget.ID,
+      widgetName: CatalogueDiagnosticsWidget.LABEL,
+      defaultWidgetOptions: { area: "bottom", rank: 150 },
+      toggleCommandId: "gearbox.catalogue.diagnostics.toggle",
+    });
+  }
+
+  override registerCommands(commands: CommandRegistry): void {
+    super.registerCommands(commands);
+    commands.registerCommand(SHOW_CATALOGUE_DIAGNOSTICS, {
+      execute: () => this.openView({ activate: true, reveal: true }),
+      isEnabled: () => this.availableHere(),
+    });
+  }
+}
+
 @injectable()
 export class LockViewContribution extends ScopedViewContribution<LockWidget> {
   constructor() {
@@ -980,12 +1009,20 @@ export class GenerateViewContribution extends ScopedViewContribution<GenerateWid
     // The bespoke `quickView.registerItem` that used to sit here is gone:
     // `registerScopedToggle` registers it *with* a `when`, which is the only
     // gate `Open View...` reads.
-    this.registerScopedToggle(commands, { shortTitle: "Generate" });
+    commands.registerCommand({ id: "gearbox.generate.toggle", label: "Generate", category: "Gearbox", shortTitle: "Generate" }, {
+      execute: () => commands.executeCommand(SHOW_PRODUCT.id, "generate"),
+      isEnabled: () => this.availableHere(),
+      isVisible: () => this.availableHere(),
+    });
     // Opens rather than toggles -- see `SHOW_GENERATE`. Gated on the product as
     // well as the engine: a plan is a product's plan.
+    this.quickView?.registerItem({
+      label: this.viewLabel, when: this.whenClause(),
+      open: () => void commands.executeCommand(SHOW_PRODUCT.id, "generate"),
+    });
     commands.registerCommand(SHOW_GENERATE, {
-      execute: () => this.openView({ activate: true, reveal: true }),
-      isEnabled: () => this.availableHere() && this.engine.isConnected,
+      execute: () => commands.executeCommand(SHOW_PRODUCT.id, "generate"),
+      isEnabled: () => this.availableHere(),
     });
   }
 

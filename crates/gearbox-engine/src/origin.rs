@@ -14,7 +14,9 @@ use std::path::{Path, PathBuf};
 
 use gearbox_gdl::GearDecl;
 use gearbox_gdl::engine::FileIdentity;
-use gearbox_ir::{Diagnostic, DiagnosticCode, Diagnostics, GitOrigin, Location, RelPath};
+use gearbox_ir::{
+    Diagnostic, DiagnosticCode, Diagnostics, GitOrigin, Location, RelPath, RelatedLocation,
+};
 
 /// The gear's declared origin, checked against the checkout under `root`.
 pub fn project(
@@ -68,22 +70,33 @@ fn check(gdl_dir: &Path, origin: &GitOrigin, at: &Location, diagnostics: &mut Di
             .iter()
             .any(|remote| origin.same_or_fork(remote))
     {
-        diagnostics.push(
-            Diagnostic::new(
-                DiagnosticCode::GdlSourceMismatch,
-                format!(
-                    "`source = git(url = \"{}\")` is not a remote of the checkout this \
-                     description is in (its remotes: {})",
-                    origin.url,
-                    checkout.remotes.join(", ")
-                ),
-            )
-            .at(at.clone())
-            .with_help(
-                "correct the url; a checkout of a fork matches, one of another repository \
-                 does not. A reader holding only the description follows `source` to the code",
-            ),
+        let message = format!(
+            "`source = git(url = \"{}\")` is not a remote of the checkout this description is \
+             in (its remotes: {})",
+            origin.url,
+            checkout.remotes.join(", ")
         );
+        // One checkout, one url, one answer: every description in it would
+        // otherwise repeat this word for word. The first one reported carries
+        // the others as related places.
+        if let Some(first) = diagnostics
+            .iter_mut()
+            .find(|d| d.code == DiagnosticCode::GdlSourceMismatch && d.message == message)
+        {
+            first
+                .related
+                .push(RelatedLocation::new(at.clone(), "declares the same source"));
+        } else {
+            diagnostics.push(
+                Diagnostic::new(DiagnosticCode::GdlSourceMismatch, message)
+                    .at(at.clone())
+                    .with_help(
+                        "correct the url; a checkout of a fork matches, also one cloned \
+                         through an SSH host alias, and one of another repository does not. \
+                         A reader holding only the description follows `source` to the code",
+                    ),
+            );
+        }
     }
 
     let actual = gdl_dir

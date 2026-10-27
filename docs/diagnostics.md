@@ -304,12 +304,13 @@ either. What it can say is that nothing in the description supplies it.
 **a gear's declared git source disagrees with its checkout**
 
 A gear's `source = git(...)` disagrees with the checkout its
-description was read from: no remote has that url, or the gear is not
-at that `path` in it.
+description was read from: no remote is that repository or a fork of
+it, or the gear is not at that `path` in it.
 
 A warning: what is on disk is used either way. But a reader holding
 the description alone follows `source`, and would land in the wrong
-repository or directory.
+repository or directory. A wrong url is reported once per checkout,
+with the other descriptions that declare it as related places.
 
 ### GBX0122
 

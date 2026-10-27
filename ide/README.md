@@ -7,10 +7,27 @@ The local application is `../dist/desktop/mac-arm64/Gearbox.app`. It contains
 production Theia/Electron, the optimized release Gearbox CLI, and the official
 standalone Darwin ARM64 Node build matching the packaging Node version. Packaging
 checks the Node archive against the vendor's published SHA256 list. Native npm
-modules are rebuilt for Electron. The application uses this checkout as its
-workspace; generated product bundles are not packaged. The local app is
-unsigned and is intended for this Mac; distribution signing/notarization is a
-separate release step.
+modules are rebuilt for Electron. The local app is unsigned; distribution
+signing/notarization is a separate release step.
+
+## Native Windows x64 application
+
+From an *x64 Native Tools Command Prompt* (node-gyp finds a standalone Windows
+SDK only through `vcvars64.bat`'s `WindowsSDKVersion`), with Node 24 and the
+MSVC Spectre-mitigated libraries installed: `npm ci`, `npm run plugins`, then
+`npm run package:win`. The installer is `../dist/desktop/Gearbox Setup 0.1.0.exe`
+(NSIS, per-user, unsigned) and `../dist/desktop/win-unpacked/Gearbox.exe` runs
+without installing. It carries the same parts as the macOS app, with Windows'
+native title bar.
+
+## No machine paths in a packaged app
+
+Neither desktop build carries a path from the machine that built it. On first
+start Studio asks for a gears checkout -- or clones
+`gearbox.defaultSourceRepository` -- and a workspace, and keeps them in the
+`gearbox.sourceRoots` and `gearbox.workspace` settings; **Gearbox: Configure
+Sources** asks again. Run from a checkout, Studio still uses the repository it
+runs in and `../gears-rust` (or `GEARBOX_ROOT`) unless those settings are set.
 
 The editor front end for the Gearbox engine. Domain views today: **Start**, **Catalogue**,
 **Product**, **Inspector**, **Graph**, **Conflicts**, **Lock**, **Generate** and the **AI
@@ -271,3 +288,17 @@ the mistake to avoid is generalising from those to the whole list.
 
 npm 11 warns that these scripts are "not yet covered by allowScripts" and then runs them anyway --
 the warning is advice to codify the approvals, not a statement that nothing executed.
+
+
+### Integrator UX acceptance
+
+The product workspace now keeps Composition, Topology, Checks and Generate under one header.
+Product/profile management and source tools live in the Product menu. Existing generation commands
+open the embedded section. Pending edits are reviewed and applied from one fixed draft bar.
+
+`npm run test:ux` starts an isolated browser server on 127.0.0.1:3014 and creates temporary products
+and generation output. It uses `GEARBOX_ENGINE` (or a local debug/release binary) and `GEARBOX_ROOT`
+(default: the sibling `gears-rust` checkout). It does not rewrite the real products or source corpus.
+The standard conformance suite still has its documented corpus and generated-output prerequisites.
+
+If the Playwright Chromium download is absent, set `GEARBOX_UX_BROWSER=chrome` to use installed Chrome.

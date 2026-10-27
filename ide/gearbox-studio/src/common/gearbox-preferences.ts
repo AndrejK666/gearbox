@@ -28,9 +28,21 @@ import { PreferenceContribution } from "@theia/core/lib/common/preferences/prefe
 import type { PreferenceSchema } from "@theia/core/lib/common/preferences/preference-schema";
 import type { PreferenceProxy } from "@theia/core/lib/common/preferences/preference-proxy";
 import { PreferenceScope } from "@theia/core/lib/common/preferences/preference-scope";
+import type { PreferenceService } from "@theia/core/lib/common/preferences/preference-service";
+
+import type { StudioDefaults } from "./protocol";
 
 /** The Anthropic key the chat agent's model is selected with. */
 export const GEARBOX_API_KEY = "gearbox.ai.apiKey";
+
+/** Local gears checkouts the catalogue is read from. */
+export const GEARBOX_SOURCE_ROOTS = "gearbox.sourceRoots";
+
+/** The folder products live in and are created, generated and cloned into. */
+export const GEARBOX_WORKSPACE = "gearbox.workspace";
+
+/** The gears repository first-run setup offers to clone when there is no checkout. */
+export const GEARBOX_SOURCE_REPOSITORY = "gearbox.defaultSourceRepository";
 
 /**
  * Marks a property whose value is a secret.
@@ -62,12 +74,60 @@ export const gearboxPreferenceSchema: PreferenceSchema = {
         "file; a key set here takes precedence over that variable, and clearing this field " +
         "falls back to it.",
     },
+    // **Where this machine's checkouts are, which only this machine knows.** The
+    // desktop app is installed with no paths in it; first-run setup fills these
+    // in, and the settings editor is where they change afterwards. Empty means
+    // "not configured": a development checkout then falls back to the backend's
+    // own defaults (`GEARBOX_ROOT`, `../gears-rust`), as it always did.
+    [GEARBOX_SOURCE_ROOTS]: {
+      type: "array",
+      items: { type: "string" },
+      default: [],
+      scope: PreferenceScope.User,
+      markdownDescription:
+        "Local gears checkouts the catalogue is read from, as absolute paths -- usually one " +
+        "checkout of `gears-rust`. Run **Gearbox: Configure Sources** to choose or clone one.",
+    },
+    [GEARBOX_WORKSPACE]: {
+      type: "string",
+      default: "",
+      scope: PreferenceScope.User,
+      markdownDescription:
+        "The folder Gearbox works in: products are listed from its `products/`, and new " +
+        "products, generated output and clones are written under it.",
+    },
+    [GEARBOX_SOURCE_REPOSITORY]: {
+      type: "string",
+      default: "https://github.com/constructorfabric/gears-rust",
+      scope: PreferenceScope.User,
+      markdownDescription:
+        "The gears repository **Gearbox: Configure Sources** offers to clone when there is no " +
+        "local checkout yet.",
+    },
   },
 };
 
 /** The typed view of the schema above. One line per property. */
 export interface GearboxConfiguration {
   [GEARBOX_API_KEY]: string;
+  [GEARBOX_SOURCE_ROOTS]: string[];
+  [GEARBOX_WORKSPACE]: string;
+  [GEARBOX_SOURCE_REPOSITORY]: string;
+}
+
+/**
+ * The configured roots and workspace, or `undefined` when none are set.
+ *
+ * Read in the browser and handed to the backend with each call, because
+ * preferences are a frontend service and the backend cannot see them.
+ */
+export function configuredDefaults(preferences: PreferenceService): StudioDefaults | undefined {
+  const roots = preferences
+    .get<string[]>(GEARBOX_SOURCE_ROOTS, [])
+    .filter((root) => typeof root === "string" && root.trim() !== "");
+  const workspace = preferences.get<string>(GEARBOX_WORKSPACE, "").trim();
+  if (roots.length === 0 && workspace === "") return undefined;
+  return workspace === "" ? { roots } : { roots, workspace };
 }
 
 /** The typed accessor, for code that reads settings rather than watching them. */

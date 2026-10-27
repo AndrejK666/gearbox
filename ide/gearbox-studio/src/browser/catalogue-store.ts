@@ -15,6 +15,8 @@
 
 import { Emitter, Event } from "@theia/core/lib/common/event";
 import { inject, injectable, postConstruct } from "@theia/core/shared/inversify";
+import { PreferenceService } from "@theia/core/lib/common/preferences/preference-service";
+import { configuredDefaults } from "../common/gearbox-preferences";
 
 import { EngineConnectionService } from "./shell/engine-connection-service";
 import { gearIdOf, SelectionService } from "./shell/selection-service";
@@ -28,6 +30,7 @@ import {
   GearboxClient,
   GearboxService,
   Row,
+  type StudioDefaults,
   type StudioSession,
   keyFor,
 } from "../common/protocol";
@@ -63,6 +66,14 @@ const EMPTY: CatalogueState = {
 export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostics"> {
   @inject(GearboxService) protected readonly service!: GearboxService;
   @inject(EngineConnectionService) protected readonly engine!: EngineConnectionService;
+
+  @inject(PreferenceService) protected readonly preferenceService!: PreferenceService;
+
+  /** This machine's configured roots and workspace, once settings are read. */
+  protected async defaults(): Promise<StudioDefaults | undefined> {
+    await this.preferenceService.ready;
+    return configuredDefaults(this.preferenceService);
+  }
 
   protected readonly onChangedEmitter = new Emitter<void>();
   readonly onChanged: Event<void> = this.onChangedEmitter.event;
@@ -207,6 +218,11 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
    */
   rootPaths(): string[] {
     return [...this.rootsById.values()];
+  }
+
+  /** Source identities and paths as reported by this engine session. */
+  resolvedRoots(): InitializeResult["roots"] {
+    return [...this.rootsById].map(([id, path]) => ({ id, path }));
   }
 
   /**
@@ -428,7 +444,7 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
       // The session, when a product session drives the load. `initialize`
       // disposes and respawns the engine, so this is also what makes the roots
       // and the write boundary change wholesale rather than drift.
-      const init = await this.service.initialize(session);
+      const init = await this.service.initialize(session, await this.defaults());
       if (epoch !== this.epoch) {
         return;
       }

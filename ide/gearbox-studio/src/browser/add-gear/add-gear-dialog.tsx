@@ -176,8 +176,10 @@ export class AddGearDialog extends ReactDialog<boolean> {
     const gear = this.chosen();
     if (!gear) return [];
     if (!gear.implements) {
+      const source = this.edits.sourceForGear(gear.id);
+      if (!source.ok) { this.error = source.reason; return []; }
       return [
-        { kind: "add_gear", gear: gear.id, source: gear.source },
+        { kind: "add_gear", gear: gear.id, source: source.source },
         // Each staged plugin, attached to the gear the same batch adds, **at the
         // scope it was staged at**. Order matters: `add_plugin_selection`
         // refuses a host that is not selected.
@@ -192,8 +194,14 @@ export class AddGearDialog extends ReactDialog<boolean> {
     const host = this.hosts(gear).find(h => h.id === this.host);
     if (!host) return [];
     if (this.alreadyAttached(host.id, gear.id, this.profiles)) return [];
+    const promoted: ProductEdit[] = [];
+    if (!this.products.current.intent?.selected_gears.some(g => g.gear === host.id)) {
+      const source = this.edits.sourceForGear(host.id);
+      if (!source.ok) { this.error = source.reason; return []; }
+      promoted.push({ kind: "add_gear", gear: host.id, source: source.source });
+    }
     return [
-      ...(this.products.current.intent?.selected_gears.some(g => g.gear === host.id) ? [] : [{ kind: "add_gear" as const, gear: host.id, source: host.source }]),
+      ...promoted,
       { kind: "add_plugin_selection", gear: host.id, plugin: gear.id, profiles: this.profiles },
     ];
   }
@@ -237,9 +245,10 @@ export class AddGearDialog extends ReactDialog<boolean> {
     this.update();
   }
   protected override async accept(): Promise<void> {
-    if (!this.preview?.changed || this.writing || this.resolving) return;
+    if (!this.preview?.changed || this.writing || this.resolving || this.error !== undefined) return;
     const gear = this.chosen(); if (!gear) return;
     const proposal = this.proposal(), expected = this.preview;
+    if (!proposal.length) { this.update(); return; }
     this.writing = true; this.update();
     const again = await this.edits.previewStagedAdd(proposal, productIdentity(this.path));
     const fresh = again.ok ? again.preview : undefined;
@@ -286,7 +295,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
    * between is a waypoint. That is what the warning beside the button is for.
    */
   protected override isValid(): boolean | string {
-    if (this.writing || this.resolving) return false;
+    if (this.writing || this.resolving || this.error !== undefined) return false;
     return this.preview?.changed === true;
   }
 
@@ -329,6 +338,65 @@ export class AddGearDialog extends ReactDialog<boolean> {
                 addition is two edits rather than one. */}
             {this.host && !this.edits.inProduct(this.host) && <p data-add-gear-host-joins={this.host}>The host {this.host} will become an explicitly selected gear.</p>}
           </>}
+          {this.edits.hasDraft() && <p role="note">Impact uses the saved product. Pending configuration changes stay in your draft and are not applied by Add.</p>}
+          {this.resolving && <p role="status">Calculating changes…</p>}
+          {/* **Two different failures, two different offers.** `Refresh preview`
+              re-asks the engine, which is the right thing when the engine
+              answered and the answer was a refusal. When the session is what
+              went -- a missed deadline, a child that died -- re-asking is asking
+              nothing, and the panel's own Reconnect button is underneath this
+              dialog. So recovery is offered here, and the proposal on screen
+              (the candidate, the host, the staged plugins and each one's profile
+              scope) is untouched by it: they are fields of this dialog, and a
+              re-read of the product does not go near them. */}
+          {this.error && <p role="alert" data-add-gear-impact-error>{this.error}
+            {isSessionLost(this.error)
+              ? <button type="button" data-add-gear-reconnect onClick={() => void this.recover()}>Reconnect engine</button>
+              : <button type="button" data-add-gear-refresh onClick={() => void this.refreshPreview()}>Refresh preview</button>}
+          </p>}
+          {/* **Said beside the button, and the button stays live.** Building a
+              product is add-a-gear-then-configure-it, so a resolution that
+              complains in between is a waypoint: refusing the write would make
+              the ordinary order impossible. What must not happen is writing it
+              silently, so the count of what this addition *introduces* -- the
+              subtraction `impactOf` performs, not the diagnostics the product
+              already had -- is stated here. */}
+          {introduced > 0 && (
+            <p role="alert" className="gbx-add-gear-note" data-add-gear-error-warning={introduced}>
+              This addition introduces {introduced} new{" "}
+              {introduced === 1 ? "diagnostic" : "diagnostics"}. You can still add it and fix
+              them in the product.
+            </p>
+          )}
+          {!this.error && !this.resolving && <><section data-add-gear-impact data-add-gear-section="changes"><h4>What changes</h4>
+            {!this.impact && <p>{this.pending()}</p>}
+            {this.impact?.arriving.map(g => <p key={g.id} data-add-gear-impact-closure={g.id} data-impact-gear={g.id}>+ {g.id} · {g.why}</p>)}
+            {this.impact?.applicationsAdded.map(a => <p key={`+${a}`} data-add-gear-impact-applications={a}>+ Application {a}</p>)}
+            {this.impact?.applicationsRemoved.map(a => <p key={`-${a}`}>− Application {a}</p>)}
+            {this.impact?.moved.map(m => <p key={m.gear}>{m.gear}: {m.from} → {m.to}</p>)}
+            {this.impact && [...this.impact.bindingsAdded, ...this.impact.bindingsChanged].map(b => <p key={`${b.consumer}@${b.application}:${b.contract}`} data-add-gear-impact-bindings={`${b.consumer}@${b.application}:${b.contract}`}>{b.consumer} in {b.application} / {b.contract}: {b.before} → {b.after}</p>)}
+            {this.impact && <span data-add-gear-impact-diagnostics={this.impact.newDiagnostics.length}><DiagnosticsList diagnostics={this.impact.newDiagnostics} density="compact" /></span>}
+          </section>
+          {/* `gbx-edit-preview` is the class the old panel's preview carried:
+              the specs ask what *would be written*, and this is still that. */}
+          {/* `closure` is the section that answers "what would be written", which
+              is the serialization itself rather than a description of it. */}
+          <details data-add-gear-section="closure"><summary>GDL changes</summary>
+            {/* **The lines that change, not the file that contains them.** This
+                rendered `preview.after`, which is the whole `product.gdl` --
+                comments and all -- open by default, so the one line being added
+                was somewhere in a hundred. The full text stays, one click away,
+                because "what exactly will my description look like" is a fair
+                question; it is just not the first one. */}
+            {this.preview?.changed
+              ? <>
+                  <pre className="gbx-edit-preview" data-add-gear-diff>{diffText(this.preview)}</pre>
+                  <details><summary>The whole description, as it would be written</summary>
+                    <pre className="gbx-edit-preview" data-add-gear-after>{this.preview.after}</pre>
+                  </details>
+                </>
+              : <p>{this.pending()}</p>}
+          </details></>}
           {!chosen.implements && (() => {
             const points = pointsOf(chosen), offer = this.compatible(chosen).filter(p => !this.staged.some(entry => entry.plugin === p.id));
             return <section className="gbx-features-list" data-add-gear-plugins data-add-gear-section="plugins">
@@ -381,65 +449,6 @@ export class AddGearDialog extends ReactDialog<boolean> {
               </>}
             </section>;
           })()}
-          {this.edits.hasDraft() && <p role="note">Impact uses the saved product. Pending configuration changes stay in your draft and are not applied by Add.</p>}
-          {this.resolving && <p role="status">Calculating changes…</p>}
-          {/* **Two different failures, two different offers.** `Refresh preview`
-              re-asks the engine, which is the right thing when the engine
-              answered and the answer was a refusal. When the session is what
-              went -- a missed deadline, a child that died -- re-asking is asking
-              nothing, and the panel's own Reconnect button is underneath this
-              dialog. So recovery is offered here, and the proposal on screen
-              (the candidate, the host, the staged plugins and each one's profile
-              scope) is untouched by it: they are fields of this dialog, and a
-              re-read of the product does not go near them. */}
-          {this.error && <p role="alert" data-add-gear-impact-error>{this.error}
-            {isSessionLost(this.error)
-              ? <button type="button" data-add-gear-reconnect onClick={() => void this.recover()}>Reconnect engine</button>
-              : <button type="button" data-add-gear-refresh onClick={() => void this.refreshPreview()}>Refresh preview</button>}
-          </p>}
-          {/* **Said beside the button, and the button stays live.** Building a
-              product is add-a-gear-then-configure-it, so a resolution that
-              complains in between is a waypoint: refusing the write would make
-              the ordinary order impossible. What must not happen is writing it
-              silently, so the count of what this addition *introduces* -- the
-              subtraction `impactOf` performs, not the diagnostics the product
-              already had -- is stated here. */}
-          {introduced > 0 && (
-            <p role="alert" className="gbx-add-gear-note" data-add-gear-error-warning={introduced}>
-              This addition introduces {introduced} new{" "}
-              {introduced === 1 ? "diagnostic" : "diagnostics"}. You can still add it and fix
-              them in the product.
-            </p>
-          )}
-          <section data-add-gear-impact data-add-gear-section="changes"><h4>What changes</h4>
-            {!this.impact && <p>{this.pending()}</p>}
-            {this.impact?.arriving.map(g => <p key={g.id} data-add-gear-impact-closure={g.id} data-impact-gear={g.id}>+ {g.id} · {g.why}</p>)}
-            {this.impact?.applicationsAdded.map(a => <p key={`+${a}`} data-add-gear-impact-applications={a}>+ Application {a}</p>)}
-            {this.impact?.applicationsRemoved.map(a => <p key={`-${a}`}>− Application {a}</p>)}
-            {this.impact?.moved.map(m => <p key={m.gear}>{m.gear}: {m.from} → {m.to}</p>)}
-            {this.impact && [...this.impact.bindingsAdded, ...this.impact.bindingsChanged].map(b => <p key={`${b.consumer}@${b.application}:${b.contract}`} data-add-gear-impact-bindings={`${b.consumer}@${b.application}:${b.contract}`}>{b.consumer} in {b.application} / {b.contract}: {b.before} → {b.after}</p>)}
-            {this.impact && <span data-add-gear-impact-diagnostics={this.impact.newDiagnostics.length}><DiagnosticsList diagnostics={this.impact.newDiagnostics} density="compact" /></span>}
-          </section>
-          {/* `gbx-edit-preview` is the class the old panel's preview carried:
-              the specs ask what *would be written*, and this is still that. */}
-          {/* `closure` is the section that answers "what would be written", which
-              is the serialization itself rather than a description of it. */}
-          <section data-add-gear-section="closure">
-            {/* **The lines that change, not the file that contains them.** This
-                rendered `preview.after`, which is the whole `product.gdl` --
-                comments and all -- open by default, so the one line being added
-                was somewhere in a hundred. The full text stays, one click away,
-                because "what exactly will my description look like" is a fair
-                question; it is just not the first one. */}
-            {this.preview?.changed
-              ? <>
-                  <pre className="gbx-edit-preview" data-add-gear-diff>{diffText(this.preview)}</pre>
-                  <details><summary>The whole description, as it would be written</summary>
-                    <pre className="gbx-edit-preview" data-add-gear-after>{this.preview.after}</pre>
-                  </details>
-                </>
-              : <p>{this.pending()}</p>}
-          </section>
           <p>Configuration continues in the product after adding.</p>
         </>}
       </section></div>

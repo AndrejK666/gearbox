@@ -101,7 +101,7 @@ test.describe("an engine that misses its deadline", () => {
     // engine does the work and is never allowed to report it, which is the state
     // a timeout is actually about. An operation the engine never *received*
     // would be a different bug with the same screen.
-    await page.locator('[data-profile="prod"]').click();
+    await page.locator("[data-product-profile]").selectOption("prod");
     await expect(page.locator("[data-product-resolving]")).toBeVisible({ timeout: 30_000 });
     // Polled, not read: the record is written when the request reaches the
     // proxy, which is after the screen says it is working.
@@ -138,7 +138,7 @@ test.describe("an engine that misses its deadline", () => {
     // returns early when the value has not changed, so clicking `prod` a second
     // time asks the backend nothing at all -- correct behaviour, and it left this
     // step reading the previous error for thirty seconds.
-    await page.locator('[data-profile="dev"]').click();
+    await page.locator("[data-product-profile]").selectOption("dev");
     // The engine's disposal is sticky, so this is refused by the backend without
     // an engine to refuse it -- which is why the count below does not move. The
     // header, meanwhile, still says the product resolved; that staleness is the
@@ -173,7 +173,7 @@ test.describe("an engine that misses its deadline", () => {
 
     // And the session works, which is what makes the refusals above a state
     // rather than the end of the session.
-    await page.locator('[data-profile="prod"]').click();
+    await page.locator("[data-product-profile]").selectOption("prod");
     await expect(page.locator('[data-resolved-profile="prod"]')).toBeVisible({ timeout: 60_000 });
     await expect(page.locator("[data-product-error]")).toHaveCount(0);
     expect(

@@ -523,12 +523,13 @@ diagnostic_codes! {
     GdlRequiredConfigUnset = "GBX0120", Gdl, Warning, false, "a required config field has no value and no default";
 
     /// A gear's `source = git(...)` disagrees with the checkout its
-    /// description was read from: no remote has that url, or the gear is not
-    /// at that `path` in it.
+    /// description was read from: no remote is that repository or a fork of
+    /// it, or the gear is not at that `path` in it.
     ///
     /// A warning: what is on disk is used either way. But a reader holding
     /// the description alone follows `source`, and would land in the wrong
-    /// repository or directory.
+    /// repository or directory. A wrong url is reported once per checkout,
+    /// with the other descriptions that declare it as related places.
     GdlSourceMismatch = "GBX0121", Gdl, Warning, false, "a gear's declared git source disagrees with its checkout";
 
     /// A gear says `implementation = "done"` while a scenario it declares is
@@ -1978,6 +1979,10 @@ impl Diagnostics {
         self.0.iter()
     }
 
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, Diagnostic> {
+        self.0.iter_mut()
+    }
+
     /// Highest severity present, if any.
     #[must_use]
     pub fn max_severity(&self) -> Option<Severity> {
@@ -2004,5 +2009,13 @@ impl<'a> IntoIterator for &'a Diagnostics {
     type IntoIter = std::slice::Iter<'a, Diagnostic>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut Diagnostics {
+    type Item = &'a mut Diagnostic;
+    type IntoIter = std::slice::IterMut<'a, Diagnostic>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter_mut()
     }
 }

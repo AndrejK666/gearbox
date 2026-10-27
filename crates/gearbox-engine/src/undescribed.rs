@@ -74,12 +74,8 @@ pub fn find(roots: &[SourceRoot], wanted: &GearId) -> Option<UndescribedGear> {
 fn undescribed_crates(root: &Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = walkdir::WalkDir::new(root)
         .into_iter()
-        .filter_entry(|entry| {
-            // `target/` dwarfs the tree and contains no gears; a dotted
-            // directory is never a crate we own.
-            let name = entry.file_name().to_string_lossy();
-            !(entry.file_type().is_dir() && (name == "target" || name.starts_with('.')))
-        })
+        // The catalogue's own pruning, so the two walks agree on what the tree is.
+        .filter_entry(|entry| !crate::catalogue::is_pruned(entry))
         .filter_map(Result::ok)
         .filter(|entry| entry.file_name() == "Cargo.toml")
         .filter_map(|entry| entry.path().parent().map(Path::to_path_buf))
