@@ -598,6 +598,16 @@ export class AddGearViewContribution extends ScopedViewContribution<Widget> {
    * `data-*`. The choice that opened the dialog says which control that is.
    */
   protected returnFocus(state?: AddGearChoice): void {
+    if (state?.origin) {
+      requestAnimationFrame(() => {
+        const occurrence = Array.from(document.querySelectorAll<HTMLElement>("[data-occurrence-key]"))
+          .find(node => node.dataset.occurrenceKey === state.origin);
+        const fallback = Array.from(document.querySelectorAll<HTMLElement>("[data-toggle-gear]"))
+          .find(node => node.dataset.toggleGear === state.gearId);
+        (occurrence?.querySelector<HTMLElement>("[data-toggle-gear]") ?? fallback ?? document.querySelector<HTMLElement>("[data-add-gear]"))?.focus();
+      });
+      return;
+    }
     const selector =
       state?.host !== undefined && state.point !== undefined
         ? `[data-add-plugin-for="${state.host}:${state.point}"]`

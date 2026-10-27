@@ -74,42 +74,29 @@ test.describe("the panel is operable without a mouse", () => {
     // reaches the list, the arrows move inside it.
     const tabbable = await studio.page.evaluate(
       () =>
-        Array.from(document.querySelectorAll(".gbx-widget-catalogue .gbx-row")).filter(
+        Array.from(document.querySelectorAll('.gbx-widget-catalogue [role="treeitem"]')).filter(
           (row) => row.getAttribute("tabindex") === "0",
         ).length,
     );
     expect(tabbable).toBe(1);
   });
 
-  test("the arrow keys move between rows", async ({ studio }) => {
-    // Real key events, for the reason at the top of this block. And read off
-    // `activeElement` rather than off the store: the point of the change is that
-    // focus follows the selection, which is what a screen reader announces.
-    const names = () =>
-      studio.page.evaluate(() =>
-        (document.activeElement?.querySelector(".gbx-row-name")?.textContent ?? "").trim(),
-      );
-
-    await studio.page.locator(".gbx-widget-catalogue .gbx-row").first().focus();
-    const first = await names();
+  test("the arrow keys move through catalogue branches and rows", async ({ studio }) => {
+    const tree = studio.page.locator('.gbx-widget-catalogue [role="tree"]');
+    const items = tree.locator('[role="treeitem"]');
+    await items.first().focus();
+    const current = () => studio.page.evaluate(() => document.activeElement?.getAttribute("data-occurrence-key"));
+    const first = await current();
     await studio.page.keyboard.press("ArrowDown");
-    const second = await names();
-    expect(second, "ArrowDown did not move focus to another row").not.toBe(first);
-    expect(second.length).toBeGreaterThan(0);
-
+    expect(await current()).not.toBe(first);
     await studio.page.keyboard.press("ArrowUp");
-    expect(await names(), "ArrowUp did not come back").toBe(first);
-
-    // Clamped, not wrapped: a list that jumps from the first gear to the last
-    // reads as a bug the first time it happens.
+    expect(await current()).toBe(first);
     await studio.page.keyboard.press("ArrowUp");
-    expect(await names(), "ArrowUp past the first row wrapped instead of holding").toBe(first);
-
+    expect(await current()).toBe(first);
     await studio.page.keyboard.press("End");
-    const last = await names();
-    expect(last, "End did not reach a different row").not.toBe(first);
+    expect(await current()).not.toBe(first);
     await studio.page.keyboard.press("Home");
-    expect(await names(), "Home did not return to the first row").toBe(first);
+    expect(await current()).toBe(first);
   });
 
   test("the command palette opens", async ({ studio }) => {

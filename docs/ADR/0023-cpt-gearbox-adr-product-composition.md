@@ -409,3 +409,26 @@ Confirmation: isolated Playwright scenarios retain the original `gears-rust` ali
 differently named checkout, preview an ordinary gear and write a plugin's promoted host. Pure
 matching cases cover relative paths, Windows and UNC paths, relocation and ambiguous multi-root
 products. The existing add/configure/generate scenario runs with this same alias mismatch.
+
+## Amendment 2026-10-28: a plugin choice can add its missing host
+
+Choosing a plugin beneath an extension point in Add Gear preselects that host. Flat plugin choices
+offer all compatible catalogue hosts, marking those already in the product. A context-specific
+Add plugin command continues to pin its host/point and states that restriction beside the search.
+
+If the host is not an explicit selection, the reviewed proposal contains `add_gear` for that host
+followed by `add_plugin_selection`; this also promotes a closure-only host. An already explicit
+host needs only the connection edit. Profile scope, product source alias matching, dirty-buffer
+protection and stale-document confirmation remain the existing write boundaries. Impact resolution,
+GDL preview and explicit confirmation use the same proposal; browsing and Cancel never write.
+
+The change adds a frontend preference and presentation model, with no RPC or GDL schema change.
+Regression coverage includes shared sockets, dual-role components, orphan and late-projected hosts,
+search/counting, preference persistence, keyboard navigation and a host/plugin pair in an isolated
+empty product. Existing preview refusal and source-alias regressions continue to apply.
+
+The empty-product pair scenario also exposed an insertion bug in the existing GDL editor:
+when an empty `gears = []` shared a line with other arguments, the first entry could be inserted
+before that line and outside the brackets. Empty inline lists now receive the entry inside their
+brackets without changing surrounding text. GDL tests cover the exact edit and the subsequent
+host/plugin batch evaluation.

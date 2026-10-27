@@ -1,3 +1,6 @@
+import { CatalogueTree } from "../catalogue/catalogue-tree";
+import { CatalogueGrouping } from "../catalogue/catalogue-grouping";
+import { rowKey } from "../../common/protocol";
 import React from "@theia/core/shared/react";
 import { ReactDialog } from "@theia/core/lib/browser/dialogs/react-dialog";
 import type { CommandRegistry } from "@theia/core/lib/common";
@@ -17,9 +20,8 @@ import { diffText } from "../product-edit-service";
 import { ProfileScope } from "../product/profile-scope";
 import { ProductSessionService } from "../shell/product-session-service";
 import { isSessionLost } from "../engine-failure";
-import { MaturityBadge } from "../gear/gear-facts";
 
-export interface AddGearChoice { gearId?: string; host?: string; point?: string }
+export interface AddGearChoice { gearId?: string; host?: string; point?: string; origin?: string }
 
 /**
  * One plugin staged onto the gear being added, with the scope it is staged at.
@@ -63,6 +65,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
   private preview?: EditGearResult;
   private impact?: Impact;
   private error?: string;
+  private notice?: string;
   private resolving = false;
   private writing = false;
   private token = 0;
@@ -106,9 +109,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
   private descriptors(): GearDescriptor[] { return this.catalogue.current.rows.flatMap(row => row.kind === "projected" ? [row.gear] : []); }
   private chosen(): GearDescriptor | undefined { return this.descriptors().find(d => `${d.source}:${d.id}` === this.candidate || d.id === this.candidate); }
   private hosts(plugin: GearDescriptor): GearDescriptor[] {
-    const state = this.products.current;
-    return this.descriptors().filter(host => implementsPointOf(plugin, host) &&
-      (state.intent?.selected_gears.some(g => g.gear === host.id) || !!state.resolution?.product?.gears[host.id]));
+    return this.descriptors().filter(host => implementsPointOf(plugin, host));
   }
   /**
    * Whether this host already has this plugin for a profile the proposal claims.
@@ -155,7 +156,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
     if (gear.implements) {
       const hosts = this.hosts(gear);
       if (!hosts.length) {
-        return `Nothing in this product declares ${implementsLabel(gear.implements)}, ` +
+        return `Nothing in the loaded catalogue declares ${implementsLabel(gear.implements)}, ` +
           "so there is no gear for this plugin to fill a point on.";
       }
       if (!this.host) return "Choose the gear that will host this plugin.";
@@ -225,7 +226,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
 
   private async refreshPreview(): Promise<void> {
     const token = ++this.token;
-    this.preview = undefined; this.impact = undefined; this.error = undefined;
+    this.preview = undefined; this.impact = undefined; this.error = undefined; this.notice = undefined;
     const proposal = this.proposal();
     if (!proposal.length) { this.resolving = false; this.update(); return; }
     this.resolving = true; this.update();
@@ -254,7 +255,7 @@ export class AddGearDialog extends ReactDialog<boolean> {
     const fresh = again.ok ? again.preview : undefined;
     if (!fresh || fresh.before !== expected.before || fresh.after !== expected.after) {
       this.writing = false; await this.refreshPreview();
-      this.error = "The document changed. Review the updated preview and confirm again.";
+      if (!this.error) this.notice = "The document changed. Review the updated preview and confirm again.";
       this.update(); return;
     }
     const ok = await this.edits.commitAddGear(gear.id, proposal, productIdentity(this.path), expected.before);
@@ -301,14 +302,8 @@ export class AddGearDialog extends ReactDialog<boolean> {
 
   protected render(): React.ReactNode {
     const chosen = this.chosen(), all = this.descriptors();
-    // With a host and no point -- a host that is in the product only through a
-    // closure, or one with several points -- the offer is every plugin that
-    // implements *some* point of that host. `!!d.implements` alone offered the whole
-    // catalogue's plugins beside authn-resolver.
-    const hostDescriptor = this.initial.host !== undefined ? all.find(d => d.id === this.initial.host) : undefined;
-    const filtered = all.filter(d => (!this.initial.point || (d.implements && d.implements.spec === this.initial.point)) &&
-      (!this.initial.host || (!!d.implements && (hostDescriptor === undefined || implementsPointOf(d, hostDescriptor)))) && (!this.category || d.category === this.category) &&
-      `${d.id} ${d.display_name} ${d.description}`.toLowerCase().includes(this.search.toLowerCase()));
+    const contextHost = all.find(gear => gear.id === this.initial.host);
+    const contextPoint = contextHost?.extension_points?.find(point => point.spec === this.initial.point)?.trait_ident ?? this.initial.point;
     const introduced = this.impact?.newDiagnostics.length ?? 0;
     // `data-add-gear-flow` is the marker the old Add Gear *panel* carried, kept
     // because this dialog is that flow now: the specs ask "is the add-gear flow
@@ -316,27 +311,35 @@ export class AddGearDialog extends ReactDialog<boolean> {
     return <div className="gbx-add-dialog-content" data-add-gear-flow>
       <div className="gbx-add-dialog-search"><label>Find a gear<input autoFocus aria-label="Search gear catalogue" value={this.search} onChange={e => { this.search = e.target.value; this.update(); }} /></label>
         <label>Category<select value={this.category} onChange={e => { this.category = e.target.value; this.update(); }}><option value="">All categories</option>{[...new Set(all.map(d => d.category).filter((c): c is string => !!c))].sort().map(c => <option key={c} value={c}>{c}</option>)}</select></label></div>
-      <div className="gbx-add-dialog-columns"><nav aria-label="Available gears" data-add-gear-picker>
-        {filtered.map(d => <button type="button" key={`${d.source}:${d.id}`} data-add-gear-select={d.id} aria-pressed={chosen === d} className="gbx-catalogue-choice" onClick={() => { this.candidate = `${d.source}:${d.id}`; this.host = this.initial.host; this.profiles = []; this.staged = []; this.pluginPick = ""; void this.refreshPreview(); }}>
-          <strong>{d.display_name || d.id} <MaturityBadge maturity={d.maturity} /></strong><small>{d.id} · {d.source}{this.edits.inProduct(d.id) ? " · In product" : ""}</small>
-        </button>)}
-        {!filtered.length && <p>No matching gears. Entries still being projected become available when ready.</p>}
+      <CatalogueGrouping value={this.catalogue.groupPlugins} onChange={value=>this.catalogue.setGroupPlugins(value)}/>
+      {(this.initial.host || this.initial.point) && <p className="gbx-add-context" data-add-gear-context>Plugins for {contextHost?.display_name ?? this.initial.host}{contextPoint ? ` · ${contextPoint}` : ""}</p>}
+      <div className="gbx-add-dialog-columns"><nav aria-label="Component catalogue" data-add-gear-picker>
+        <CatalogueTree surface="add" rows={this.catalogue.current.rows.filter(r=>r.kind==="projected")} grouped={this.catalogue.groupPlugins}
+          search={this.search} category={this.category} host={this.initial.host} point={this.initial.point} loading={this.catalogue.current.status==="loading"}
+          selectedKey={chosen ? rowKey({kind:"projected",gear:chosen}) : undefined} selectedHost={this.host}
+          inProduct={id=>this.edits.inProduct(id)} onSelect={node=>{
+            if(node.row?.kind!=="projected") return;
+            const next=node.row.gear;
+            const nextHost=this.initial.host ?? node.host?.id;
+            if(this.candidate===`${next.source}:${next.id}` && this.host===nextHost) return;
+            this.candidate=`${next.source}:${next.id}`; this.host=nextHost;
+            this.profiles=[];this.staged=[];this.pluginPick="";void this.refreshPreview();
+          }}/>
       </nav><section aria-label="Addition preview">
         {!chosen ? <p>Choose a gear to see what it adds to your product.</p> : <>
           {/* Each fact on its own line. `<small>` and the `Host` label below it
               are both inline-level with nothing between them, so they rendered
               as `Source: gears-rustHost` -- two facts read as one word. */}
+          {this.notice && <p role="status" data-add-gear-notice>{this.notice}</p>}
           <h3>{chosen.display_name || chosen.id}</h3><p>{chosen.description}</p>
-          <div className="gbx-kv"><span>source</span><span>{chosen.source}</span></div>
-          {chosen.implements && <><label data-add-gear-host data-add-gear-plugin={chosen.id}>Host<select data-add-gear-host-pick aria-label="Plugin host" value={this.host ?? ""} disabled={!!this.initial.host} onChange={e => { this.host = e.target.value; void this.refreshPreview(); }}><option value="">Choose a host</option>{this.hosts(chosen).map(h => <option key={h.id} value={h.id}>{h.id}</option>)}</select></label>
+          <div className="gbx-kv"><span>ID</span><code>{chosen.id}</code><span>source</span><span>{chosen.source}</span></div>
+          {chosen.implements && <><label data-add-gear-host data-add-gear-plugin={chosen.id}>Host<select data-add-gear-host-pick aria-label="Plugin host" value={this.host ?? ""} disabled={!!this.initial.host} onChange={e => { this.host = e.target.value; void this.refreshPreview(); }}><option value="">Choose a host</option>{this.hosts(chosen).map(h => <option key={h.id} value={h.id}>{h.display_name} {this.edits.inProduct(h.id) ? "· In product" : this.products.current.resolution?.product?.gears[h.id] ? "· Automatically included" : "· Will be added"}</option>)}</select></label>
+            {this.host && !this.products.current.intent?.selected_gears.some(g=>g.gear===this.host) && <p data-add-gear-promotes-host data-add-gear-host-joins={this.host}>The preview {this.products.current.resolution?.product?.gears[this.host] ? "explicitly selects" : "adds"} {this.host} and connects {chosen.display_name}. Nothing is written until you confirm.</p>}
             {!this.hosts(chosen).length && <p data-add-gear-host-none>{this.pending()}</p>}
             <ProfileScope legend="Profiles for this connection" profiles={this.profiles}
               available={Object.keys(this.products.current.intent?.profiles ?? {})}
               viewing={this.products.current.profile ?? undefined}
               onChange={(next: string[]) => { this.profiles = next; void this.refreshPreview(); }} />
-            {/* Addressable, because it is the one statement that says this
-                addition is two edits rather than one. */}
-            {this.host && !this.edits.inProduct(this.host) && <p data-add-gear-host-joins={this.host}>The host {this.host} will become an explicitly selected gear.</p>}
           </>}
           {this.edits.hasDraft() && <p role="note">Impact uses the saved product. Pending configuration changes stay in your draft and are not applied by Add.</p>}
           {this.resolving && <p role="status">Calculating changes…</p>}

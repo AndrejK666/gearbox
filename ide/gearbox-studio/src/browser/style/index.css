@@ -1522,3 +1522,36 @@
   .gbx-product-context { gap: 10px; }
   .gbx-product-status { flex-basis: 100%; order: 2; }
 }
+
+/* Shared catalogue: category / host / extension point / plugin occurrences. */
+.gbx-catalogue-grouping { padding: 6px 0 10px; }
+.gbx-catalogue-grouping label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.gbx-catalogue-grouping input { accent-color: var(--theia-focusBorder); }
+.gbx-catalogue-results { color: var(--theia-descriptionForeground); font-size: 12px; padding: 4px 6px 8px; }
+.gbx-catalogue-browser { min-width: 0; }
+.gbx-catalogue-browser [role="treeitem"] { box-sizing: border-box; width: 100%; outline-offset: -2px; }
+.gbx-catalogue-browser [role="treeitem"]:focus { outline: 1px solid var(--theia-focusBorder); }
+.gbx-catalogue-browser .gbx-row, .gbx-catalogue-browser .gbx-tree-branch {
+  display: grid; grid-template-columns: 18px minmax(0,1fr) auto; align-items: start;
+  gap: 4px; padding: 8px 6px; border-bottom: 1px solid var(--theia-widget-border); cursor: pointer;
+}
+.gbx-catalogue-browser .gbx-tree-branch { padding-top: 6px; padding-bottom: 6px; font-size: 12px; }
+.gbx-catalogue-browser [aria-level="1"] { font-weight: 600; margin-top: 8px; }
+.gbx-tree-disclosure { width: 18px; min-height: 16px; }
+.gbx-tree-disclosure button { border: 0; background: transparent; color: inherit; padding: 0 2px; cursor: pointer; }
+.gbx-tree-label { overflow-wrap: anywhere; }
+.gbx-catalogue-browser .gbx-catalogue-facts { display: flex; flex-direction: column; flex-wrap: nowrap; align-items: stretch; min-width: 0; gap: 4px; }
+.gbx-catalogue-browser .gbx-row-name { font-weight: 600; overflow-wrap: anywhere; }
+.gbx-catalogue-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 10px; color: var(--theia-descriptionForeground); }
+.gbx-catalogue-description { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; line-height: 1.45; }
+.gbx-catalogue-technical { font-size: 11px; font-weight: normal; overflow-wrap: anywhere; }
+.gbx-catalogue-technical summary { color: var(--theia-descriptionForeground); cursor: pointer; }
+.gbx-catalogue-technical[open] { display: flex; flex-direction: column; gap: 4px; }
+.gbx-catalogue-technical > span, .gbx-catalogue-technical > code { display: block; white-space: normal; }
+.gbx-catalogue-technical button { margin-top: 4px; }
+.gbx-tree-hint { color: var(--theia-descriptionForeground); font-size: 12px; padding-inline: 24px 6px; }
+.gbx-add-context { font-size: 12px; overflow-wrap: anywhere; }
+.gbx-add-dialog-columns > nav { min-width: 0; }
+.gbx-catalogue-browser .gbx-row-action { margin-top: 0; }
+
+.gbx-widget-catalogue .gbx-catalogue-description { -webkit-line-clamp: 1; }

@@ -41,11 +41,13 @@
     "target": "electron",
     "frontend": {
       "config": {
-        "applicationName": "Gearbox",
+        "applicationName": "Gearbox Studio",
         "//defaultTheme": "Both keys name the same theme on purpose. `defaultTheme` governs the first paint, before preferences are ready (`ThemeServiceWithDB.loadUserTheme` reads `localStorage.theme ?? defaultTheme`); the `workbench.colorTheme` preference below is registered second, shadows the value derived from this one, and is what `validateActiveTheme` settles on. Moving only this key changes nothing observable; moving only the preference leaves a dark first frame that flips. The dark `gearbox-fabric` stays registered and selectable in the Color Theme picker.",
         "defaultTheme": "gearbox-fabric-light",
         "preferences": {
           "workbench.colorTheme": "gearbox-fabric-light",
+          "window.title": "${appName}${separator}${dirty}${activeEditorShort}",
+          "window.titleSeparator": " — ",
           "//window.titleBarStyle": "Native on Windows too, as macOS always is: Theia's custom Windows frame drags only by its own title area, which the Gearbox toolbar covers, so the window could not be moved.",
           "window.titleBarStyle": "native",
           "//ai-features": "Theia AI ships off unless something says otherwise. `@theia/ai-ide` is deliberately NOT installed -- it drags puppeteer-core and an AI terminal surface, which ADR-0011 withdrew -- and it is that package that would rebind AIActivationService to be preference-gated. Without it the service defaults to active, so this key is a statement rather than a switch: the shell offers the chat on purpose. The API key is never written here: Studio's own `gearbox.ai.apiKey` setting is the primary source and wins, and `ANTHROPIC_API_KEY` in the backend's environment is the fallback -- see ADR-0011's 2026-09-14 amendment and the root README.",

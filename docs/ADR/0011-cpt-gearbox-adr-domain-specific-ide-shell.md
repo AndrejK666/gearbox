@@ -1195,3 +1195,20 @@ otherwise Open GDL is the primary route. No message text is parsed to infer an e
 Validation: `npm run build`, `npm run test:ux` with GEARBOX_ROOT set when the source checkout has a
 non-default name. The UX suite uses a temporary workspace and copies of product descriptions, so
 its edits and generated files cannot change the developer's products or corpus.
+
+## Amendment 2026-10-28: a shared catalogue tree for browsing and adding
+
+The sidebar catalogue and Add Gear share one entity-search and tree projection. The user setting
+`gearbox.catalogue.groupPlugins` defaults to true and synchronizes both surfaces. Grouped browsing
+shows category, gear, extension point and compatible plugin; flat browsing keeps every component
+as an independent category entry. Existing categories remain unchanged.
+
+Compatibility is the existing GTS spec join, never a trait/name heuristic. A component which also
+hosts extension points has its own root and leaf appearances under compatible hosts. Tree occurrence
+keys include the host and point; selection and unique result counts retain the canonical source/path
+identity. Missing hosts, design entries, pending projections and failed sources remain observable.
+
+Search covers names, IDs, descriptions, scenarios, categories, paths and declared interfaces. It
+matches words without case, ranks exact names/IDs first, and exposes matching plugins with context
+ancestors even when branches were collapsed. Clearing search restores disclosures. Both trees have
+one primary Tab stop and arrow-key navigation; changing view keeps query, selection and focus.

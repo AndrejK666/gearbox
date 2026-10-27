@@ -65,6 +65,8 @@ import { HiddenDebugView } from "./theia/debug/hidden-debug-view";
 import { HiddenProblemsView } from "./theia/markers/hidden-problems-view";
 import { HiddenOutlineView } from "./theia/outline-view/hidden-outline-view";
 import { ShellPolicy } from "./theia/core/shell-policy";
+import { WindowTitleUpdater } from "@theia/core/lib/browser/window/window-title-updater";
+import { StudioWindowTitleUpdater } from "./theia/core/studio-window-title-updater";
 import { ReadOnlyLockEditorProvider } from "./theia/monaco/read-only-lock-editor-provider";
 import { DomainWorkspace } from "./theia/workspace/domain-workspace";
 import { FirstRunContribution } from "./shell/first-run-contribution";
@@ -156,6 +158,9 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   // can say so for one filename rather than for a whole URI scheme. The subclass
   // explains the two alternatives it rejected.
   rebind(MonacoEditorProvider).to(ReadOnlyLockEditorProvider).inSingletonScope();
+
+  // The title names Studio and its domain subject, rather than the active IDE panel/workspace.
+  rebind(WindowTitleUpdater).to(StudioWindowTitleUpdater).inSingletonScope();
 
   // Why: `@theia/debug` and `@theia/test` arrive with `@theia/plugin-ext`, which
   // needs them for the VS Code debug and testing APIs, and both open a panel in

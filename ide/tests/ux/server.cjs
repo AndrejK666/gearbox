@@ -25,6 +25,15 @@ product(id = "ux-implicit-host", name = "UX Implicit Host", version = "0.1.0",
   profiles = [embedded(id = "dev", development = True)], default_profile = "dev",
   gears = [use_gear("api-gateway", source = "gears-rust")])
 `);
+for (const [id, name] of [["ux-pair", "UX Pair"], ["ux-stale-pair", "UX Stale Pair"]]) {
+  const pairDir = path.join(workspace, "products", id);
+  fs.mkdirSync(pairDir, { recursive: true });
+  fs.writeFileSync(path.join(pairDir, "product.gdl"), `gdl_version = "1.4"
+product(id = "${id}", name = "${name}", version = "0.1.0",
+  sources = [source(id = "gears-rust", at = path(${JSON.stringify(corpus.replaceAll("\\", "/"))}))],
+  profiles = [embedded(id = "dev", development = True)], default_profile = "dev", gears = [])
+`);
+}
 const child = spawn(process.execPath, [path.join(ide, "browser-app/lib/backend/main.js"), "--hostname=127.0.0.1", "--port=3014"], {
   cwd: ide, stdio: "inherit", windowsHide: true,
   env: { ...process.env, GEARBOX_ENGINE: engine, GEARBOX_ROOT: corpus, GEARBOX_WORKSPACE: workspace, THEIA_CONFIG_DIR: path.join(workspace, "config") },

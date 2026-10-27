@@ -129,7 +129,7 @@ function installSampler(): void {
       pending: q(".gbx-row.gbx-pending").length,
       badges: q(".gbx-badge").length,
       rowIds: q(".gbx-row .gbx-id").length,
-      groups: q(".gbx-group-label").map(text),
+      groups: q('[role="treeitem"][data-category]').map(text),
       names: q(".gbx-row-name").map(text),
       waiting: q(".gbx-row .gbx-waiting").length,
     });
@@ -709,10 +709,11 @@ export async function resetCatalogueView(page: Page): Promise<void> {
   if ((await filter.count()) > 0 && (await filter.inputValue()) !== "") {
     await filter.fill("");
   }
-  const folded = page.locator('.gbx-widget-catalogue .gbx-group-label[data-collapsed="true"]');
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+  const folded = page.locator('.gbx-widget-catalogue [role="treeitem"][aria-expanded="false"]');
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     if ((await folded.count()) === 0) return;
-    await folded.first().click();
+    await folded.first().focus();
+    await page.keyboard.press("ArrowRight");
   }
 }
 

@@ -328,6 +328,16 @@ fn is_gdl_ident(name: &str) -> bool {
 /// Insert `entry` as the last element of `list`.
 pub(crate) fn insert_entry(source: &str, list: &NamedList, entry: &str) -> String {
     let close = offset(list.span.end(), source);
+    let inside = offset(list.span.begin(), source) + 1;
+    let bracket = close - 1;
+    // An empty inline list has no entry from which to infer layout. Inserting at
+    // the previous newline can escape the brackets when other arguments share
+    // this line; insert inside the list itself and leave surrounding text intact.
+    if list.entries.is_empty() && !source[inside..bracket].contains('\n') {
+        let mut out = source.to_owned();
+        out.insert_str(bracket, entry);
+        return out;
+    }
     // The insertion point is just before the closing bracket, and the text before
     // it decides the shape: a list whose entries are on their own lines gets a
     // new line, a one-line list gets a comma and a space.

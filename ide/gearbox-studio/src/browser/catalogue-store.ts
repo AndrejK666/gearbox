@@ -1,3 +1,5 @@
+import { GEARBOX_GROUP_PLUGINS } from "../common/gearbox-preferences";
+import { PreferenceScope } from "@theia/core/lib/common/preferences/preference-scope";
 // The frontend's copy of the catalogue as it arrives.
 //
 // The whole point of this file is the transition: a row starts pending and is
@@ -144,6 +146,16 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
   @postConstruct()
   protected init(): void {
     this.watchSelection();
+    this.preferenceService.onPreferenceChanged(event => {
+      if (event.preferenceName === GEARBOX_GROUP_PLUGINS) this.onChangedEmitter.fire();
+    });
+    void this.preferenceService.ready.then(() => this.onChangedEmitter.fire());
+  }
+
+  get groupPlugins(): boolean { return this.preferenceService.get<boolean>(GEARBOX_GROUP_PLUGINS, true); }
+
+  setGroupPlugins(value: boolean): Promise<void> {
+    return this.preferenceService.set(GEARBOX_GROUP_PLUGINS, value, PreferenceScope.User);
   }
 
   get current(): CatalogueState {

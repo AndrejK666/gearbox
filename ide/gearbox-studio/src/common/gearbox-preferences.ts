@@ -35,6 +35,9 @@ import type { StudioDefaults } from "./protocol";
 /** The Anthropic key the chat agent's model is selected with. */
 export const GEARBOX_API_KEY = "gearbox.ai.apiKey";
 
+/** Present plugins beneath their compatible extension points in both catalogue surfaces. */
+export const GEARBOX_GROUP_PLUGINS = "gearbox.catalogue.groupPlugins";
+
 /** Local gears checkouts the catalogue is read from. */
 export const GEARBOX_SOURCE_ROOTS = "gearbox.sourceRoots";
 
@@ -58,6 +61,10 @@ export interface GearboxSecretDetail {
 
 export const gearboxPreferenceSchema: PreferenceSchema = {
   properties: {
+    [GEARBOX_GROUP_PLUGINS]: {
+      type: "boolean", default: true, scope: PreferenceScope.User,
+      description: "Group catalogue plugins under compatible gears and extension points.",
+    },
     [GEARBOX_API_KEY]: {
       type: "string",
       default: "",
@@ -109,6 +116,7 @@ export const gearboxPreferenceSchema: PreferenceSchema = {
 
 /** The typed view of the schema above. One line per property. */
 export interface GearboxConfiguration {
+  [GEARBOX_GROUP_PLUGINS]: boolean;
   [GEARBOX_API_KEY]: string;
   [GEARBOX_SOURCE_ROOTS]: string[];
   [GEARBOX_WORKSPACE]: string;
