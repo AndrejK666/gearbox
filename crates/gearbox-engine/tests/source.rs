@@ -3,7 +3,9 @@
 //! A path in a description is looked for on disk first. When it is not there
 //! and the gear names its git source, it becomes a link into that repository
 //! instead of GBX0109. A URL is kept as written. And when the description is
-//! read from a checkout, `source` is checked against it (GBX0121).
+//! read from a checkout, `source` is checked against it (GBX0121). A unit
+//! chart (`deploy = helm_chart(...)`) must be on disk, or it is not used
+//! (GBX0126).
 
 #![allow(
     clippy::unwrap_used,
@@ -252,4 +254,33 @@ fn a_checkout_that_disagrees_is_reported_once_for_all_its_descriptions() {
     ));
     assert_eq!(codes(&catalogue), [DiagnosticCode::GdlSourceMismatch]);
     assert_eq!(catalogue.diagnostics.as_slice()[0].related.len(), 1);
+}
+
+const UNIT_CHART: &str =
+    r#"deploy = helm_chart(path = path("deploy/helm/demo"), image = "demo", gears = ["demo"])"#;
+
+#[test]
+fn a_unit_chart_that_is_not_on_disk_is_reported_and_not_used() {
+    let checkout = Checkout::new("no-chart", "git@github.com:cf/gears-rust.git");
+    let catalogue = checkout.describe(UNIT_CHART);
+    assert_eq!(codes(&catalogue), [DiagnosticCode::GdlUnitChartMissing]);
+    assert!(demo(&catalogue).unit_chart.is_none());
+}
+
+#[test]
+fn a_unit_chart_on_disk_is_kept() {
+    let checkout = Checkout::new("chart", "git@github.com:cf/gears-rust.git");
+    let chart = checkout.0.join("gears/demo/deploy/helm/demo");
+    std::fs::create_dir_all(&chart).unwrap();
+    std::fs::write(
+        chart.join("Chart.yaml"),
+        "apiVersion: v2\nname: demo\nversion: 0.1.0\n",
+    )
+    .unwrap();
+    let catalogue = checkout.describe(UNIT_CHART);
+    assert!(codes(&catalogue).is_empty(), "{:?}", codes(&catalogue));
+    assert_eq!(
+        demo(&catalogue).unit_chart.as_ref().unwrap().path.as_str(),
+        "gears/demo/deploy/helm/demo"
+    );
 }

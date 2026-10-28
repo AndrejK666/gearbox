@@ -113,9 +113,8 @@ fn nothing_in_the_slice_is_severable_if_declared_and_that_is_the_finding() {
     // REST, and `account-management` reaches it through `deps`
     // (`resource-group`, `credstore`, `oagw` and `event-broker` consume it as a
     // contract). `cluster` now
-    // provides its four coordination contracts over gRPC and `settings-service`
-    // its read contract; `event-broker`'s `deps = [cluster]` is reported by
-    // GBX0607 rather than as a cut.
+    // provides its four coordination contracts over gRPC; `event-broker`'s
+    // `deps = [cluster]` is reported by GBX0607 rather than as a cut.
     //
     // The work list is still empty only because the demo product selects none
     // of those three. So the corpus can now *demonstrate* a severable-if-
@@ -145,7 +144,6 @@ fn nothing_in_the_slice_is_severable_if_declared_and_that_is_the_finding() {
             &gid("api-contracts"),
             &gid("authz-resolver"),
             &gid("cluster"),
-            &gid("settings-service"),
         ],
         "the emptiness above depends on which gears provide anything at all"
     );

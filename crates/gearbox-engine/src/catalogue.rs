@@ -304,7 +304,8 @@ pub fn load_catalogue_staged(
             // alone retires the wrong one.
             pending.retain(|p| !(p.source == identity.source && p.gdl_path == identity.gdl_path));
 
-            let Some(merged) = merged else { continue };
+            let Some(mut merged) = merged else { continue };
+            drop_missing_unit_chart(root, identity, &mut merged.gear, &mut diagnostics);
 
             let id = merged.gear.id.clone();
             implemented
@@ -855,6 +856,42 @@ fn project_and_merge(
         merged.client_uses = client_uses;
         merged
     })
+}
+
+/// Forget a declared unit chart that is not on disk (GBX0126).
+///
+/// The application it would have shipped falls back to a generated chart, as if
+/// none were declared, rather than generation stopping at the missing file.
+fn drop_missing_unit_chart(
+    root: &SourceRoot,
+    identity: &FileIdentity,
+    gear: &mut GearDescriptor,
+    diagnostics: &mut Diagnostics,
+) {
+    let Some(chart) = &gear.unit_chart else {
+        return;
+    };
+    if root
+        .root
+        .join(chart.path.as_str())
+        .join("Chart.yaml")
+        .is_file()
+    {
+        return;
+    }
+    diagnostics.push(
+        Diagnostic::new(
+            DiagnosticCode::GdlUnitChartMissing,
+            format!(
+                "`{}` declares the unit chart `{}`, which has no Chart.yaml; a generated chart is used instead",
+                gear.id,
+                chart.path.as_str()
+            ),
+        )
+        .with_help("add the chart, or correct `deploy = helm_chart(path = ...)`")
+        .at(Location::file(identity.uri.clone())),
+    );
+    gear.unit_chart = None;
 }
 
 /// Report every contract whose owner names nothing the catalogue holds.

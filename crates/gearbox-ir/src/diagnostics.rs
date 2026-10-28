@@ -561,6 +561,14 @@ diagnostic_codes! {
     /// meant for unmapped and its operations refused.
     GdlPermissionMappingUnused = "GBX0125", Gdl, Warning, false, "the product maps a permission no gear declares";
 
+    /// A gear's `deploy = helm_chart(path = ...)` names a directory with no
+    /// `Chart.yaml`.
+    ///
+    /// A warning: the chart is not used, and a process that is exactly the
+    /// unit gets a generated chart instead, as if none were declared. Without
+    /// this, generation would stop at the missing file.
+    GdlUnitChartMissing = "GBX0126", Gdl, Warning, false, "a declared unit chart is not on disk";
+
     // ---------------------------------------------------------------- GBX02xx
     // GBX0201-GBX0205 are deliberately absent. They compared a `gear.gdl`
     // restatement of the gear id, co-location dependencies, runtime

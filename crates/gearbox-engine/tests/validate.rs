@@ -127,6 +127,17 @@ fn the_real_tree_has_no_unexpected_diagnostics() {
         // The local corpus may be a fork; the CLI still reports its remote URL.
         .filter(|d| d.code != DiagnosticCode::GdlSourceMismatch)
         .filter(|d| d.severity != Severity::Hint)
+        // Known in gears-rust's main. The storage plugin's description says its
+        // impl lands with the storage primitives and that Gearbox notes the gap
+        // until then; cluster names a chart it does not ship. Drop each line
+        // once gears-rust no longer reports it.
+        .filter(|d| {
+            !(d.code == DiagnosticCode::PluginImplMissing
+                && d.message.contains("`quota-enforcement-storage-plugin`"))
+        })
+        .filter(|d| {
+            !(d.code == DiagnosticCode::GdlUnitChartMissing && d.message.starts_with("`cluster`"))
+        })
         .map(|d| format!("[{}] {}", d.code, d.message))
         .collect();
     assert!(problems.is_empty(), "{problems:#?}");

@@ -370,6 +370,9 @@ Secret. Ports, listeners and hardening are the chart's, and the chart checks its
 production rules after merging the overlay. Any other application anchored on the
 gear gets a generated chart.
 
+A `path` with no `Chart.yaml` is reported when the catalogue loads (GBX0126) and
+the chart is not used: the unit gets a generated chart, as if none were declared.
+
 ### `endpoint(...)` → endpoint
 
 ```

@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 124, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 125, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -224,6 +224,14 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "warning",
     domain: "gdl",
     docs: "The product maps a permission no gear in it declares.\n\nA warning: most likely a typo, which would leave the permission it was\nmeant for unmapped and its operations refused.",
+    requiresEvidence: false,
+  },
+  GBX0126: {
+    code: "GBX0126",
+    title: "a declared unit chart is not on disk",
+    severity: "warning",
+    domain: "gdl",
+    docs: "A gear's `deploy = helm_chart(path = ...)` names a directory with no\n`Chart.yaml`.\n\nA warning: the chart is not used, and a process that is exactly the\nunit gets a generated chart instead, as if none were declared. Without\nthis, generation would stop at the missing file.",
     requiresEvidence: false,
   },
   GBX0206: {

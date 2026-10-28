@@ -62,6 +62,17 @@ fn the_slice_loads_without_unexpected_diagnostics() {
         // Runtime-gap hints (such as EB's deliberate local Cluster dependency)
         // describe deployment choices rather than malformed source projection.
         .filter(|d| d.severity != Severity::Hint)
+        // Known in gears-rust's main. The storage plugin's description says its
+        // impl lands with the storage primitives and that Gearbox notes the gap
+        // until then; cluster names a chart it does not ship. Drop each line
+        // once gears-rust no longer reports it.
+        .filter(|d| {
+            !(d.code == DiagnosticCode::PluginImplMissing
+                && d.message.contains("`quota-enforcement-storage-plugin`"))
+        })
+        .filter(|d| {
+            !(d.code == DiagnosticCode::GdlUnitChartMissing && d.message.starts_with("`cluster`"))
+        })
         .map(|d| format!("[{}] {}", d.code, d.message))
         .collect();
     assert!(
@@ -69,27 +80,13 @@ fn the_slice_loads_without_unexpected_diagnostics() {
         "unexpected diagnostics:\n{}",
         problems.join("\n")
     );
-    // Eight original gears, plus tenant-resolver and the five plugin gears
-    // that make the extension-point projection testable on real code, plus the
-    // four `platform-host` members described later -- account-management,
-    // authz-resolver, resource-group, credstore -- plus `event-broker`, the
-    // corpus's one role-split gear -- plus the twenty-five implemented gears
-    // described once the model was proven: plugins of described hosts, the
-    // license-resolver, usage-collector and bss-rate-provider families, eight
-    // plain services, chat-engine, and mini-chat's three -- plus
-    // settings-service, described when `gear.toml` was retired -- plus the
-    // four that arrived upstream: bss-approvals, bss-products, graph-storage
-    // and the clickhouse usage-collector plugin -- plus the six demo gears
-    // under `gears/demo`: lab-ui-backend, family-labs-bootstrap,
-    // family-labs-outbound, and the demo-authn, demo-authz and firebase-authn
-    // plugins -- plus family-labs-broker-events, once Event Broker left the
-    // gateway.
+    // Every gear with code in gears-rust's main: fifty-five, plugins included.
     //
     // The assertion above is the one that matters -- every description and
     // not one diagnostic between them. The count is here so that a corpus
     // moving underneath the suite is found in one place rather than inferred
     // from a stranger failure elsewhere.
-    assert_eq!(catalogue.gears.len(), 56, "the slice gears");
+    assert_eq!(catalogue.gears.len(), 55, "the slice gears");
 }
 
 #[test]
@@ -230,8 +227,7 @@ fn contract_identity_is_projected_from_the_contract_attribute() {
     // surface projectable rather than restated: the contract is read out of the
     // SDK, and the description only names the trait as a join key. Cluster's
     // four coordination contracts arrived when the gear published them as gRPC
-    // providers (gears-rust ADR-0010 section 4), and Settings' read contract
-    // with the demo gears.
+    // providers (gears-rust ADR-0010 section 4).
     let catalogue = require_tree!();
     let ids: Vec<&str> = catalogue
         .contracts
@@ -248,7 +244,6 @@ fn contract_identity_is_projected_from_the_contract_attribute() {
             "cluster/ClusterProfileApi@v1",
             "cluster/DistributedLockApi@v1",
             "cluster/LeaderElectionApi@v1",
-            "settings-service/SettingsReadApi@v1",
         ]
     );
 
