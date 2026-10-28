@@ -219,8 +219,8 @@ Several tests read a real `gears-rust` checkout: the golden outputs of `products
 examples and the error-enum corpus. They find it beside this repository or at
 `GEARBOX_CORPUS_ROOT`, and without one they print "skipping" and pass. Set
 `GEARBOX_CORPUS_REQUIRED=1` to make a missing corpus a failure. CI
-([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs `make check` that way, against the
-`gears-rust` commit pinned in `GEARS_RUST_REF`.
+([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs `make check` that way, against
+`gears-rust`'s current `main`, on every pull request and nightly.
 
 Four things in the tree are generated rather than written. For the first three, `make check`
 regenerates them and fails if anything changed, so the editor cannot drift from the engine:
