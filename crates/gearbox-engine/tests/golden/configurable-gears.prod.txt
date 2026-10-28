@@ -1410,6 +1410,10 @@ link = ["cluster"]
 [[gears.cluster.selected_by]]
 reason = "selected"
 
+[[gears.cluster.selected_by]]
+reason = "colocated_by"
+gear = "event-broker"
+
 [gears.event-broker]
 id = "event-broker"
 source = "gears-rust"
@@ -1420,7 +1424,10 @@ runtime_caps = [
     "rest",
     "stateful",
 ]
-colocated_deps = ["types-registry"]
+colocated_deps = [
+    "cluster",
+    "types-registry",
+]
 
 [gears.event-broker.package]
 crate_name = "cf-gears-event-broker"
@@ -1666,6 +1673,54 @@ choice = "auto"
 via = "provider"
 name = "postgres"
 
+[[cuttable_if_declared]]
+consumer = "event-broker"
+provider = "cluster"
+contract = "cluster/ClusterCacheApi@v1"
+blocked_by = "undeclared-hub-edge"
+suggested_edit = '#[toolkit::consumes(contract = cluster_sdk::ClusterCacheApi, from = "cluster")]'
+file = "gears/system/event-broker/event-broker"
+
+[cuttable_if_declared.estimated_savings]
+gears_moved = 0
+binary_gears_removed = 0
+
+[[cuttable_if_declared]]
+consumer = "event-broker"
+provider = "cluster"
+contract = "cluster/ClusterProfileApi@v1"
+blocked_by = "undeclared-hub-edge"
+suggested_edit = '#[toolkit::consumes(contract = cluster_sdk::ClusterProfileApi, from = "cluster")]'
+file = "gears/system/event-broker/event-broker"
+
+[cuttable_if_declared.estimated_savings]
+gears_moved = 0
+binary_gears_removed = 0
+
+[[cuttable_if_declared]]
+consumer = "event-broker"
+provider = "cluster"
+contract = "cluster/DistributedLockApi@v1"
+blocked_by = "undeclared-hub-edge"
+suggested_edit = '#[toolkit::consumes(contract = cluster_sdk::DistributedLockApi, from = "cluster")]'
+file = "gears/system/event-broker/event-broker"
+
+[cuttable_if_declared.estimated_savings]
+gears_moved = 0
+binary_gears_removed = 0
+
+[[cuttable_if_declared]]
+consumer = "event-broker"
+provider = "cluster"
+contract = "cluster/LeaderElectionApi@v1"
+blocked_by = "undeclared-hub-edge"
+suggested_edit = '#[toolkit::consumes(contract = cluster_sdk::LeaderElectionApi, from = "cluster")]'
+file = "gears/system/event-broker/event-broker"
+
+[cuttable_if_declared.estimated_savings]
+gears_moved = 0
+binary_gears_removed = 0
+
 [[provenance]]
 from = "application:api-gateway"
 to = "gear:api-gateway"
@@ -1739,10 +1794,22 @@ kind = "declared"
 because = "`cluster` is named in the product description"
 
 [[provenance]]
+from = "gear:cluster"
+to = "gear:event-broker"
+kind = "colocated-by"
+because = "`event-broker` names `cluster` in its `deps`, so the two are linked into one binary and no profile can separate them. Removing that entry is the only thing that can."
+
+[[provenance]]
 from = "gear:event-broker"
 to = "product:configurable-gears"
 kind = "declared"
 because = "`event-broker` is named in the product description"
+
+[[provenance]]
+from = "gear:event-broker"
+to = "gear:cluster"
+kind = "constrained-by"
+because = "cannot be separated: the dependency is a direct type-keyed lookup rather than a declared contract, so a boundary would fail at run time"
 
 [[provenance]]
 from = "gear:grpc-hub"
@@ -1862,6 +1929,91 @@ line = 64
 character = 55
 
 [[diagnostics]]
+code = "GBX0125"
+severity = "warning"
+message = "the product maps `events.consume`, which no gear in it declares"
+help = "remove it, or correct the name to the one the gear declares"
+
+[diagnostics.location]
+uri = "file://<repo>/products/configurable-gears/product.gdl"
+
+[diagnostics.location.range.start]
+line = 0
+character = 0
+
+[diagnostics.location.range.end]
+line = 0
+character = 0
+
+[[diagnostics]]
+code = "GBX0125"
+severity = "warning"
+message = "the product maps `events.producers.manage`, which no gear in it declares"
+help = "remove it, or correct the name to the one the gear declares"
+
+[diagnostics.location]
+uri = "file://<repo>/products/configurable-gears/product.gdl"
+
+[diagnostics.location.range.start]
+line = 0
+character = 0
+
+[diagnostics.location.range.end]
+line = 0
+character = 0
+
+[[diagnostics]]
+code = "GBX0125"
+severity = "warning"
+message = "the product maps `events.publish`, which no gear in it declares"
+help = "remove it, or correct the name to the one the gear declares"
+
+[diagnostics.location]
+uri = "file://<repo>/products/configurable-gears/product.gdl"
+
+[diagnostics.location.range.start]
+line = 0
+character = 0
+
+[diagnostics.location.range.end]
+line = 0
+character = 0
+
+[[diagnostics]]
+code = "GBX0125"
+severity = "warning"
+message = "the product maps `events.topics.read`, which no gear in it declares"
+help = "remove it, or correct the name to the one the gear declares"
+
+[diagnostics.location]
+uri = "file://<repo>/products/configurable-gears/product.gdl"
+
+[diagnostics.location.range.start]
+line = 0
+character = 0
+
+[diagnostics.location.range.end]
+line = 0
+character = 0
+
+[[diagnostics]]
+code = "GBX0125"
+severity = "warning"
+message = "the product maps `events.types.read`, which no gear in it declares"
+help = "remove it, or correct the name to the one the gear declares"
+
+[diagnostics.location]
+uri = "file://<repo>/products/configurable-gears/product.gdl"
+
+[diagnostics.location.range.start]
+line = 0
+character = 0
+
+[diagnostics.location.range.end]
+line = 0
+character = 0
+
+[[diagnostics]]
 code = "GBX0318"
 severity = "warning"
 message = "`event-broker` declares 3 roles, and a product builds one application per anchor gear -- so at most one of them is deployed"
@@ -1932,7 +2084,7 @@ character = 54
 [[diagnostics]]
 code = "GBX0323"
 severity = "info"
-message = "`cluster` is at preview: usable, but not declared stable"
+message = "`cluster` (co-located by `event-broker`) is at preview: usable, but not declared stable"
 help = "nothing to do for now; this says what the product depends on"
 
 [diagnostics.location]
@@ -2047,6 +2199,74 @@ character = 8
 [diagnostics.location.range.end]
 line = 79
 character = 57
+
+[[diagnostics]]
+code = "GBX0401"
+severity = "info"
+message = "`event-broker` and `cluster` could be separated if the `cluster/ClusterCacheApi@v1` edge were declared"
+help = """`event-broker` keeps `cluster` in its application with a `deps` entry, which is how a gear guarantees a type-keyed hub lookup will find it -- and that lookup leaves no trace the resolver can read. Add `#[toolkit::consumes(contract = cluster_sdk::ClusterCacheApi, from = "cluster")]` beside `event-broker`'s `#[toolkit::gear]` attribute and drop `cluster` from its `deps`, and the pair becomes severable"""
+
+[diagnostics.location]
+uri = "file://<repo>/products/configurable-gears/product.gdl"
+
+[diagnostics.location.range.start]
+line = 0
+character = 0
+
+[diagnostics.location.range.end]
+line = 0
+character = 0
+
+[[diagnostics]]
+code = "GBX0401"
+severity = "info"
+message = "`event-broker` and `cluster` could be separated if the `cluster/ClusterProfileApi@v1` edge were declared"
+help = """`event-broker` keeps `cluster` in its application with a `deps` entry, which is how a gear guarantees a type-keyed hub lookup will find it -- and that lookup leaves no trace the resolver can read. Add `#[toolkit::consumes(contract = cluster_sdk::ClusterProfileApi, from = "cluster")]` beside `event-broker`'s `#[toolkit::gear]` attribute and drop `cluster` from its `deps`, and the pair becomes severable"""
+
+[diagnostics.location]
+uri = "file://<repo>/products/configurable-gears/product.gdl"
+
+[diagnostics.location.range.start]
+line = 0
+character = 0
+
+[diagnostics.location.range.end]
+line = 0
+character = 0
+
+[[diagnostics]]
+code = "GBX0401"
+severity = "info"
+message = "`event-broker` and `cluster` could be separated if the `cluster/DistributedLockApi@v1` edge were declared"
+help = """`event-broker` keeps `cluster` in its application with a `deps` entry, which is how a gear guarantees a type-keyed hub lookup will find it -- and that lookup leaves no trace the resolver can read. Add `#[toolkit::consumes(contract = cluster_sdk::DistributedLockApi, from = "cluster")]` beside `event-broker`'s `#[toolkit::gear]` attribute and drop `cluster` from its `deps`, and the pair becomes severable"""
+
+[diagnostics.location]
+uri = "file://<repo>/products/configurable-gears/product.gdl"
+
+[diagnostics.location.range.start]
+line = 0
+character = 0
+
+[diagnostics.location.range.end]
+line = 0
+character = 0
+
+[[diagnostics]]
+code = "GBX0401"
+severity = "info"
+message = "`event-broker` and `cluster` could be separated if the `cluster/LeaderElectionApi@v1` edge were declared"
+help = """`event-broker` keeps `cluster` in its application with a `deps` entry, which is how a gear guarantees a type-keyed hub lookup will find it -- and that lookup leaves no trace the resolver can read. Add `#[toolkit::consumes(contract = cluster_sdk::LeaderElectionApi, from = "cluster")]` beside `event-broker`'s `#[toolkit::gear]` attribute and drop `cluster` from its `deps`, and the pair becomes severable"""
+
+[diagnostics.location]
+uri = "file://<repo>/products/configurable-gears/product.gdl"
+
+[diagnostics.location.range.start]
+line = 0
+character = 0
+
+[diagnostics.location.range.end]
+line = 0
+character = 0
 
 [[diagnostics]]
 code = "GBX0501"

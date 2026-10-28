@@ -4347,6 +4347,23 @@ because = "`oidc-authn-plugin` names `types-registry` in its `deps`, so the two 
 "directory.read" = ["*"]
 
 [[diagnostics]]
+code = "GBX0125"
+severity = "warning"
+message = "the product maps `directory.read`, which no gear in it declares"
+help = "remove it, or correct the name to the one the gear declares"
+
+[diagnostics.location]
+uri = "file://<repo>/products/payments-demo/product.gdl"
+
+[diagnostics.location.range.start]
+line = 0
+character = 0
+
+[diagnostics.location.range.end]
+line = 0
+character = 0
+
+[[diagnostics]]
 code = "GBX0323"
 severity = "info"
 message = "`api-contracts-consumer` is at preview: usable, but not declared stable"
