@@ -1,0 +1,73 @@
+name: CI
+
+# `make check` on every pull request and every push to main: fmt, clippy,
+# lint, deny, the whole test suite, and the three anti-drift guards.
+#
+# The suite reads a real gears-rust checkout -- the golden outputs of
+# products/ (crates/gearbox-engine/tests/golden_products.rs), the GDL examples,
+# the error-enum corpus. Without one those tests print "skipping" and pass, so
+# here the corpus is checked out at a pinned commit and
+# GEARBOX_CORPUS_REQUIRED turns a missing corpus into a failure.
+#
+# The checkouts sit side by side, gearbox/ and gears-rust/, as they do on a
+# developer's machine, so the products' `path("../../../gears-rust")` sources
+# resolve here too.
+#
+# GEARS_RUST_REF is the gears-rust commit the goldens are recorded against.
+# Moving it is a change like any other: bump it, run
+# `GEARBOX_BLESS=1 cargo test -p gearbox-engine --test golden_products`
+# against that commit, and review the golden diff in the same pull request.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GEARS_RUST_REF: a2bafb6624669f5096ceb7ffe365a54247b2cdf5
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    env:
+      GEARBOX_CORPUS_ROOT: ${{ github.workspace }}/gears-rust
+      GEARBOX_CORPUS_REQUIRED: 1
+    defaults:
+      run:
+        shell: bash
+        working-directory: gearbox
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: gearbox
+      - uses: actions/checkout@v6
+        with:
+          repository: constructorfabric/gears-rust
+          ref: ${{ env.GEARS_RUST_REF }}
+          path: gears-rust
+      # rust-toolchain.toml names the toolchain and its rustfmt and clippy.
+      - name: Toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-deny
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            gearbox/target
+          key: check-${{ hashFiles('gearbox/rust-toolchain.toml', 'gearbox/Cargo.lock') }}
+          restore-keys: check-
+      - name: make check
+        run: make check
