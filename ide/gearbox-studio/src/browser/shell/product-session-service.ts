@@ -39,6 +39,10 @@ import { inject, injectable } from "@theia/core/shared/inversify";
 
 import { GearboxService, type ProductRef, type StudioSession } from "../../common/protocol";
 import { WorkspaceService } from "@theia/workspace/lib/browser/workspace-service";
+import { FileService } from "@theia/filesystem/lib/browser/file-service";
+import { PreferenceService } from "@theia/core/lib/common/preferences/preference-service";
+import URI from "@theia/core/lib/common/uri";
+import { configuredDefaults } from "../../common/gearbox-preferences";
 
 import { CatalogueStore } from "../catalogue-store";
 import {
@@ -114,6 +118,8 @@ export class ProductSessionService {
   @inject(StorageService) protected readonly storage!: StorageService;
   @inject(WorkspaceService) protected readonly workspace!: WorkspaceService;
   @inject(GearSessionService) protected readonly gears!: GearSessionService;
+  @inject(FileService) protected readonly files!: FileService;
+  @inject(PreferenceService) protected readonly preferences!: PreferenceService;
 
   /**
    * The open in flight, if any.
@@ -434,8 +440,8 @@ export class ProductSessionService {
   protected workspaceFor(path: string, directory: string): string {
     const containing = this.workspace
       .tryGetRoots()
-      .map((stat) => stat.resource.path.fsPath())
-      .filter((root) => path.startsWith(`${root}/`))
+      .map((stat) => slashed(stat.resource.path.fsPath()))
+      .filter((root) => isInside(slashed(path), root))
       .sort((a, b) => b.length - a.length);
     return containing[0] ?? directory;
   }
@@ -543,7 +549,8 @@ export class ProductSessionService {
     const sources = sourceRootsOf(intent, (at) => resolveFrom(directory, at));
     const usable = sourcesUsable(ref.label, sources);
     if (!usable.ok) return this.failAndRestore("describe", usable.reason, generation, before);
-    const roots = [...sources.roots];
+    const roots = await this.presentOrConfigured(ref.label, sources.roots);
+    if (!this.current(generation)) return false;
 
     // Step 3 and 4: the real session, then the catalogue and the product.
     this.enterStage("catalogue", generation);
@@ -573,6 +580,38 @@ export class ProductSessionService {
   }
 
   /**
+   * The declared roots, with any this machine does not have replaced by the
+   * configured ones.
+   *
+   * A description says where *its author* keeps the gears --
+   * `path("../../../gears-rust")` beside the repository -- and another machine
+   * keeps its checkout somewhere else, under another name. The engine matches a
+   * product's gears by id, not by which root they came from, so a configured
+   * checkout of the same repository serves. Said out loud, because a product
+   * resolving against gears it did not name is a fact worth knowing; and only for
+   * a root that is missing, so a declared root that exists always wins.
+   */
+  protected async presentOrConfigured(label: string, declared: readonly string[]): Promise<string[]> {
+    const present: string[] = [];
+    const missing: string[] = [];
+    for (const root of declared) {
+      const exists = await this.files.exists(URI.fromFilePath(root)).catch(() => false);
+      (exists ? present : missing).push(root);
+    }
+    if (missing.length === 0) return present;
+    await this.preferences.ready;
+    const configured = (configuredDefaults(this.preferences)?.roots ?? []).filter(
+      (root) => !present.some((p) => slashed(p).toLowerCase() === slashed(root).toLowerCase()),
+    );
+    if (configured.length === 0) return [...declared];
+    void this.messages.info(
+      `${label} declares ${missing.join(", ")}, which is not on this machine; ` +
+        `its gears are read from ${configured.join(", ")} (gearbox.sourceRoots) instead.`,
+    );
+    return [...present, ...configured];
+  }
+
+  /**
    * Establish the engine again for the product already open, and re-read it.
    *
    * The whole open sequence rather than a narrower repair, because that sequence
@@ -598,10 +637,25 @@ export class ProductSessionService {
   }
 }
 
+/** `C:\x\y` as `C:/x/y`: one spelling, so one comparison and one resolution serve both platforms. */
+function slashed(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+/** A Windows path, whose drive letter and segments compare without case. */
+const DRIVE = /^[A-Za-z]:(\/|$)/;
+
+/** Whether `file` is under `root`, both slashed. */
+function isInside(file: string, root: string): boolean {
+  const base = root.endsWith("/") ? root : `${root}/`;
+  return DRIVE.test(file) ? file.toLowerCase().startsWith(base.toLowerCase()) : file.startsWith(base);
+}
+
 /** The directory a `product.gdl` sits in. */
 function parentOf(file: string): string {
-  const at = file.lastIndexOf("/");
-  return at <= 0 ? "/" : file.slice(0, at);
+  const slashedFile = slashed(file);
+  const at = slashedFile.lastIndexOf("/");
+  return at <= 0 ? "/" : slashedFile.slice(0, at);
 }
 
 /**
@@ -613,14 +667,19 @@ function parentOf(file: string): string {
  * at a sibling checkout -- `path("../../../gears-rust")` in the demo.
  */
 function resolveFrom(directory: string, at: string): string {
-  if (at.startsWith("/")) return at;
-  const parts = directory.split("/").filter((p) => p.length > 0);
-  for (const segment of at.split("/")) {
+  const relative = slashed(at);
+  if (relative.startsWith("/") || DRIVE.test(relative)) return relative;
+  const parts = slashed(directory).split("/").filter((p) => p.length > 0);
+  // `C:` is a root, not a directory: `..` stops at it, and it takes no leading
+  // `/` -- `/C:/projects` names nothing on Windows.
+  const drive = parts.length > 0 && DRIVE.test(parts[0]!) ? parts[0] : undefined;
+  for (const segment of relative.split("/")) {
     if (segment === "" || segment === ".") continue;
-    if (segment === "..") parts.pop();
-    else parts.push(segment);
+    if (segment === "..") {
+      if (parts.length > (drive === undefined ? 0 : 1)) parts.pop();
+    } else parts.push(segment);
   }
-  return `/${parts.join("/")}`;
+  return drive === undefined ? `/${parts.join("/")}` : parts.join("/");
 }
 
 function messageOf(error: unknown): string {

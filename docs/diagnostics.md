@@ -15,7 +15,7 @@ remedy at the point it is raised
 (`cpt-gearbox-nfr-actionable-diagnostics`), which is per-occurrence and
 so is not listed here.
 
-Codes: **124**.
+Codes: **125**.
 
 ## `GBX01xx` — Parsing and evaluating GDL
 
@@ -46,6 +46,7 @@ Codes: **124**.
 | [GBX0123](#gbx0123) | error | unreadable or unsupported gdl_version |
 | [GBX0124](#gbx0124) | error | a gear declares a permission the product does not map |
 | [GBX0125](#gbx0125) | warning | the product maps a permission no gear declares |
+| [GBX0126](#gbx0126) | warning | a declared unit chart is not on disk |
 
 ### GBX0101
 
@@ -304,12 +305,13 @@ either. What it can say is that nothing in the description supplies it.
 **a gear's declared git source disagrees with its checkout**
 
 A gear's `source = git(...)` disagrees with the checkout its
-description was read from: no remote has that url, or the gear is not
-at that `path` in it.
+description was read from: no remote is that repository or a fork of
+it, or the gear is not at that `path` in it.
 
 A warning: what is on disk is used either way. But a reader holding
 the description alone follows `source`, and would land in the wrong
-repository or directory.
+repository or directory. A wrong url is reported once per checkout,
+with the other descriptions that declare it as related places.
 
 ### GBX0122
 
@@ -351,6 +353,17 @@ The product maps a permission no gear in it declares.
 
 A warning: most likely a typo, which would leave the permission it was
 meant for unmapped and its operations refused.
+
+### GBX0126
+
+**a declared unit chart is not on disk**
+
+A gear's `deploy = helm_chart(path = ...)` names a directory with no
+`Chart.yaml`.
+
+A warning: the chart is not used, and a process that is exactly the
+unit gets a generated chart instead, as if none were declared. Without
+this, generation would stop at the missing file.
 
 ## `GBX02xx` — Cross-checking a description against Rust
 

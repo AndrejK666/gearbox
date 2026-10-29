@@ -673,6 +673,7 @@ test.describe("a gear created for a product ends up in it", () => {
       await openProduct(studio.page, "dev");
 
       // From inside the product, so the panel is told which product it is for.
+      await studio.page.getByLabel("More add actions", { exact: true }).click();
       await studio.page.locator("[data-create-gear]").click();
       await expect(studio.page.locator("[data-create-gear-for]")).toContainText("Payments Demo", {
         timeout: 30_000,
@@ -758,7 +759,7 @@ test.describe("edit config and profiles in the open product", () => {
       }).toPass({ timeout: 30_000 });
       await form.locator("[data-config-new-value]").fill("demo_value");
       await form.locator('[data-add-config="api-gateway"]').click();
-      await studio.page.locator(".gbx-toolbar [data-draft-apply]").click();
+      await studio.page.locator(".gbx-workspace-draft [data-draft-apply]").click();
       await acceptPreview(studio.page);
       await expect(form.locator('[data-config-key="demo_mode"]')).toBeVisible({
         timeout: 30_000,
@@ -777,7 +778,7 @@ test.describe("edit config and profiles in the open product", () => {
       // (§9.1), and a reload of the shared worker page races the next test against
       // an empty catalogue `rootPaths()`.
       await removeKey(form, "demo_mode");
-      await studio.page.locator(".gbx-toolbar [data-draft-apply]").click();
+      await studio.page.locator(".gbx-workspace-draft [data-draft-apply]").click();
       await acceptPreview(studio.page);
       await expect(form.locator('[data-config-key="demo_mode"]')).toHaveCount(0, {
         timeout: 30_000,
@@ -845,7 +846,7 @@ test.describe("edit config and profiles in the open product", () => {
       // product-wide `hasDraft()`, so a locator scoped to the gear-config block
       // was picking one of two buttons that did the same thing to the same draft
       // and remounted different inputs.
-      const draft = studio.page.locator(".gbx-toolbar");
+      const draft = studio.page.locator(".gbx-workspace-draft");
       await expect(draft.locator("[data-draft-apply]")).toHaveCount(1);
       await draft.locator("[data-draft-discard]").click();
       await expect(form.locator('[data-config-key="draft_a"]')).toHaveCount(0);
@@ -982,7 +983,7 @@ test.describe("edit config and profiles in the open product", () => {
       // half of this that a Rust test cannot reach.
       await form.locator('[data-profile="prod"]').click();
       await form.locator('[data-config-field="priority"] input').fill("50");
-      const toolbar = page.locator(".gbx-toolbar");
+      const toolbar = page.locator(".gbx-workspace-draft");
       await expect(toolbar.locator("[data-draft-apply]")).toHaveCount(1);
 
       await toolbar.locator("[data-draft-apply]").click();
@@ -1076,7 +1077,7 @@ test.describe("edit config and profiles in the open product", () => {
         "with every profile claimed there is nothing to pick from",
       ).toHaveCount(0);
 
-      await page.locator(".gbx-toolbar [data-draft-discard]").click();
+      await page.locator(".gbx-workspace-draft [data-draft-discard]").click();
       await expect.poll(() => diffOf(DEMO_REL), { timeout: 30_000 }).toBe("");
     } finally {
       if (diffOf(DEMO_REL) !== "") {
@@ -1110,6 +1111,7 @@ test.describe("edit config and profiles in the open product", () => {
       try {
         await settled(studio.page);
         await openProduct(studio.page, "dev");
+        await studio.page.getByLabel("Product menu", { exact: true }).click();
         await studio.page.locator("[data-add-profile]").click();
         await studio.page.locator("[data-profile-new-id]").fill(profileId);
         await studio.page.locator("[data-profile-new-kind]").selectOption(kind);
@@ -1122,17 +1124,17 @@ test.describe("edit config and profiles in the open product", () => {
         }
         await studio.page.locator("[data-profile-add-confirm]").click();
         await acceptPreview(studio.page);
-        await expect(studio.page.locator(`[data-profile="${profileId}"]`)).toBeVisible({
+        await expect(studio.page.locator(`[data-product-profile] option[value="${profileId}"]`)).toBeAttached({
           timeout: 30_000,
         });
-        await studio.page.locator(`[data-profile="${profileId}"]`).click();
+        await studio.page.locator("[data-product-profile]").selectOption(profileId);
         await expect(studio.page.locator(`[data-resolved-profile="${profileId}"]`)).toBeVisible({
           timeout: 60_000,
         });
 
         await studio.page.locator(`[data-remove-profile="${profileId}"]`).click();
         await acceptPreview(studio.page);
-        await expect(studio.page.locator(`[data-profile="${profileId}"]`)).toHaveCount(0, {
+        await expect(studio.page.locator(`[data-product-profile] option[value="${profileId}"]`)).toHaveCount(0, {
           timeout: 30_000,
         });
         expect(diffOf(DEMO_REL)).toBe("");

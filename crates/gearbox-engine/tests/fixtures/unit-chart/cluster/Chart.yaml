@@ -1,0 +1,6 @@
+# A stand-in for cluster's hand-written chart, which gears-rust's description
+# names (deploy/helm/cluster) but does not ship. generate.rs declares the unit
+# with it; the Service matches the description's `services`.
+apiVersion: v2
+name: cluster
+version: 0.1.0

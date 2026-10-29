@@ -42,6 +42,7 @@ import type {
   AiConnectivityResult,
   GitCloneReview,
   InitRepositoryResult,
+  StudioDefaults,
   StudioSession,
 } from "../common/protocol";
 import type { ResolveResult } from "../common/generated/ResolveResult";
@@ -132,13 +133,22 @@ export function productTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
  * after webpack bundles it. Those happen to sit at the same depth today, so a
  * counted path works by coincidence -- and would break the moment either layout
  * moved. Searching for a marker cannot drift that way.
+ *
+ * **`undefined` outside a checkout, not a throw.** An installed desktop app runs
+ * from its own directory, with no repository above it; what it works on comes
+ * from Studio's settings (`StudioDefaults`) instead. A throw here used to fail
+ * the service's construction, so not even the settings could be read.
  */
-export function findRepoRoot(start: string): string {
+export function findRepoRoot(start: string): string | undefined {
   const configured = process.env.GEARBOX_WORKSPACE;
   if (configured) {
     if (!fs.readFileSync(path.join(configured, "Cargo.toml"), "utf8").includes("[workspace]")) throw Error("Invalid Gearbox workspace");
     return fs.realpathSync(configured);
   }
+  // A packaged app never borrows a checkout it happens to sit in -- `dist/` is
+  // inside the repository it was built from -- or it would show that
+  // repository's products as its own.
+  if (process.env.GEARBOX_PACKAGED === "1") return undefined;
   let dir = start;
   for (;;) {
     const manifest = path.join(dir, "Cargo.toml");
@@ -147,19 +157,18 @@ export function findRepoRoot(start: string): string {
     }
     const parent = path.dirname(dir);
     if (parent === dir) {
-      throw new Error(`no Cargo workspace above ${start}; set GEARBOX_ENGINE`);
+      return undefined;
     }
     dir = parent;
   }
 }
 
 /**
- * Where the engine binary and the roots come from for this prototype.
+ * Where the engine binary and the roots come from when nothing configured them.
  *
- * Both are overridable by environment, and neither is read from preferences: the
- * slice exists to show the catalogue, and a preferences page is a separate piece
- * of work with its own failure modes. Stated here so it is a known simplification
- * and not a mystery.
+ * Both are overridable by environment. The configured values -- Studio's
+ * settings, which only the browser can read -- arrive as `StudioDefaults` and win
+ * over these; these are what a development checkout has always used.
  */
 function enginePath(): string {
   const fromEnv = process.env.GEARBOX_ENGINE;
@@ -169,15 +178,24 @@ function enginePath(): string {
   // `.exe` on Windows, because `spawn` does not add it and the failure is a
   // whole-IDE ENOENT for a binary that is sitting right there.
   const binary = process.platform === "win32" ? "gearbox.exe" : "gearbox";
-  return path.join(findRepoRoot(__dirname), "target", "debug", binary);
+  const repo = findRepoRoot(__dirname);
+  if (repo === undefined) throw new Error("no Gearbox engine: set GEARBOX_ENGINE");
+  return path.join(repo, "target", "debug", binary);
 }
 
-function roots(): string[] {
+function roots(defaults?: StudioDefaults): string[] {
+  if (defaults !== undefined && defaults.roots.length > 0) return [...defaults.roots];
   const fromEnv = process.env.GEARBOX_ROOT;
   if (fromEnv) {
     return [fromEnv];
   }
-  return [path.resolve(findRepoRoot(__dirname), "..", "gears-rust")];
+  const repo = findRepoRoot(__dirname);
+  return repo === undefined ? [] : [path.resolve(repo, "..", "gears-rust")];
+}
+
+/** The configured workspace, else the checkout this runs from, else none. */
+function defaultWorkspace(defaults?: StudioDefaults): string | undefined {
+  return defaults?.workspace ?? findRepoRoot(__dirname);
 }
 
 @injectable()
@@ -201,13 +219,13 @@ export class GearboxServiceImpl implements GearboxService {
    * the boundary is *this* value, and having two places compute it is how they
    * end up disagreeing.
    */
-  protected workspace = findRepoRoot(__dirname);
+  protected workspace: string | undefined = findRepoRoot(__dirname);
 
-  async initialize(session?: StudioSession): Promise<InitializeResult> {
+  async initialize(session?: StudioSession, defaults?: StudioDefaults): Promise<InitializeResult> {
     this.disposeEngine();
-    // From the session when there is one. The fixed repository root is only a
-    // default for the catalogue-only case.
-    this.workspace = session?.workspace ?? findRepoRoot(__dirname);
+    // From the session when there is one. The configured or repository
+    // workspace is only a default for the catalogue-only case.
+    this.workspace = session?.workspace ?? defaultWorkspace(defaults);
     // Empty `roots` means "use the defaults", not "open nothing". The frontend
     // reaches that after a reload, when `CatalogueStore.rootPaths()` is still
     // empty because the boot load has not installed `rootsById` yet; passing the
@@ -215,7 +233,7 @@ export class GearboxServiceImpl implements GearboxService {
     // `product/load` then answered `no source root is open`. The RPC side already
     // treats an empty `initialize.roots` as "keep the CLI defaults" -- match it.
     const roots_ =
-      session === undefined || session.roots.length === 0 ? roots() : [...session.roots];
+      session === undefined || session.roots.length === 0 ? roots(defaults) : [...session.roots];
     const engine = spawnEngine(enginePath(), roots_, this.logger);
     this.engine = engine;
 
@@ -298,7 +316,7 @@ export class GearboxServiceImpl implements GearboxService {
         // call, so each process sees exactly one `initialize` and has no boot of
         // its own to remember. These are that boot -- the same defaults the
         // catalogue-only case uses.
-        creation_boundary: { roots: roots(), workspace: findRepoRoot(__dirname) },
+        creation_boundary: { roots: roots(defaults), workspace: defaultWorkspace(defaults) },
       },
       INITIALIZE_TIMEOUT_MS,
     );
@@ -326,8 +344,9 @@ export class GearboxServiceImpl implements GearboxService {
     return engine.request<CatalogueLoadResult>(method.CATALOGUE_LOAD, {}, LOAD_TIMEOUT_MS);
   }
 
-  async workspaceRoots(): Promise<string[]> {
-    const candidates = [findRepoRoot(__dirname), ...roots()];
+  async workspaceRoots(defaults?: StudioDefaults): Promise<string[]> {
+    const workspace = defaultWorkspace(defaults);
+    const candidates = [...(workspace === undefined ? [] : [workspace]), ...roots(defaults)];
     const seen = new Set<string>();
     return candidates
       .map((dir) => path.resolve(dir))
@@ -349,9 +368,16 @@ export class GearboxServiceImpl implements GearboxService {
    * "the products" differ from what anyone typed on a command line. A product
    * outside this layout is still resolvable -- open it in the editor.
    */
-  async listProducts(): Promise<ProductRef[]> {
-    const root = findRepoRoot(__dirname);
-    const dir = path.join(root, "products");
+  async listProducts(defaults?: StudioDefaults): Promise<ProductRef[]> {
+    const root = defaultWorkspace(defaults);
+    // No workspace configured and no checkout to run from: a fresh install,
+    // which has nothing to offer yet.
+    if (root === undefined) return [];
+    // `<workspace>/products`, or the workspace itself when it has no `products/`:
+    // a configured workspace that *is* a products folder is a natural choice, and
+    // reading its parent's layout into it would show nothing.
+    const nested = path.join(root, "products");
+    const dir = fs.existsSync(nested) ? nested : root;
     let entries: string[];
     try {
       entries = fs.readdirSync(dir);
@@ -555,6 +581,22 @@ export class GearboxServiceImpl implements GearboxService {
     { readonly root: string; readonly candidates: Map<string, string> }
   >();
 
+  async cloneSourceRepository(url: string, parent: string): Promise<string> {
+    const trimmed = url.trim();
+    if (trimmed === "") throw new Error("git clone URL is empty");
+    const name = path.basename(trimmed.replace(/\/+$/, "")).replace(/\.git$/, "") || "gears";
+    const target = path.join(parent, name);
+    // Refused rather than merged into: a directory already there is somebody's.
+    if (fs.existsSync(target)) throw new Error(`${target} already exists; choose it as a checkout instead`);
+    try {
+      await execFileAsync("git", ["clone", trimmed, target], { maxBuffer: 10 * 1024 * 1024 });
+    } catch (error) {
+      removeQuietly(target);
+      throw new Error(`git clone ${trimmed} failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return target;
+  }
+
   async gitCloneProduct(url: string, ref: string | undefined): Promise<GitCloneReview> {
     const trimmed = url.trim();
     if (trimmed === "") {
@@ -566,6 +608,9 @@ export class GearboxServiceImpl implements GearboxService {
     // one failed clone made every retry fail on `already exists`, and the only
     // way out was to delete a directory by hand.
     const attemptId = `clone-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}`;
+    if (this.workspace === undefined) {
+      throw new Error("no workspace is configured to clone into; run Gearbox: Configure Sources");
+    }
     const root = path.join(cloneParent(this.workspace), attemptId);
     fs.mkdirSync(root, { recursive: true });
 

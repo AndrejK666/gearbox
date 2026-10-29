@@ -627,12 +627,24 @@ fn dispatch(connection: &Connection, state: &mut State, request: Request) -> Opt
             Err(e) => invalid_params(id, &e),
         }),
         method::CATALOGUE_LOAD => {
-            if let Some(refusal) = require_ready(state, &id) {
+            // **No root at all is an empty catalogue, not a refusal.** A fresh
+            // install has none configured yet, and refusing made the Studio show
+            // a disconnected engine where there is only nothing to read. A root
+            // that was given and failed still refuses, by name.
+            let refusal = if state.roots.is_empty() && state.failed_roots.is_empty() {
+                require_initialized(state, &id)
+            } else {
+                require_ready(state, &id)
+            };
+            if let Some(refusal) = refusal {
                 return Some(refusal);
             }
             catalogue_load(connection, state, id)
         }
-        method::PRODUCT_LOAD => Some(match require_ready(state, &id) {
+        // Reading a description needs no source root: `product_load` evaluates
+        // the file alone, and it is how a product's own `sources` are learned
+        // before any root is open.
+        method::PRODUCT_LOAD => Some(match require_initialized(state, &id) {
             Some(refusal) => refusal,
             None => match cast::<ProductLoadParams>(request) {
                 Ok((id, params)) => product_load(id, &params),

@@ -295,8 +295,8 @@ test.describe("Add Gear shows consequences before the write", () => {
       // Selecting a variant queues a draft, so it has to be dropped: the suite
       // refuses to start when `products/` differs from HEAD, and teardown
       // restores it -- a test that applied here would fail the next run.
-      await page.locator(".gbx-toolbar [data-draft-discard]").click();
-      await expect(page.locator(".gbx-toolbar [data-draft-apply]")).toHaveCount(0);
+      await page.locator(".gbx-workspace-draft [data-draft-discard]").click();
+      await expect(page.locator(".gbx-workspace-draft [data-draft-apply]")).toHaveCount(0);
     },
   );
 
@@ -312,12 +312,12 @@ test.describe("Add Gear shows consequences before the write", () => {
       // descriptions, and only one of them was the one that would be written.
       const { page } = studio;
       await openProduct(page, "dev");
-      await revealCatalogue(page);
-      await resetCatalogueView(page);
-
-      // `oidc-authn-plugin` implements the point `authn-resolver` declares, and the
-      // product has that host -- so this is the case that works.
-      await page.locator('[data-toggle-gear="oidc-authn-plugin"]').click();
+      await page.locator("[data-add-gear]").click();
+      const grouped = page.locator("[data-add-gear-flow] [data-group-plugins]");
+      await grouped.uncheck();
+      const search = page.getByRole("textbox", { name: "Search gear catalogue" });
+      await search.fill("oidc-authn-plugin");
+      await page.locator('[data-add-gear-select="oidc-authn-plugin"]').click();
       await expect(page.locator("[data-add-gear-flow]")).toBeVisible({ timeout: 30_000 });
 
       // The plugin path replaces features/config/plugins: `set_config` and
@@ -341,19 +341,8 @@ test.describe("Add Gear shows consequences before the write", () => {
       await expect(changes).toContainText("Choose the gear", { timeout: 30_000 });
       await expect(changes).not.toContainText("joins the closure");
 
-      // **What this claim cannot reach, said rather than left implied.** A
-      // *successful* new attach is not observable on this corpus: every plugin
-      // whose host the product has is already attached to it -- both authn
-      // plugins are in `payments-demo`'s description -- and every other host is
-      // absent, so there is no `add_plugin` that changes anything. The
-      // composition is checked in `scripts/store-smoke.mjs` against
-      // `add-gear/staged-edits.js`: attach for a named host, promote-then-attach
-      // for a closure-only one, nothing at all with no host, and the follow-ups
-      // dropped because a plugin has no `use_gear` for them to edit.
-      //
-      // What *is* observable is that the already-attached case agrees with
-      // itself, which is the disagreement this replaced: the serialization says
-      // nothing changes rather than proposing a top-level addition.
+      // Existing connections remain no-op proposals. A missing compatible host
+      // can now be explicitly added together with its plugin in the same preview.
       await host.selectOption("authn-resolver");
       const written = page.locator('[data-add-gear-section="closure"]');
       await expect(written).toContainText("already attached to authn-resolver", {
@@ -370,17 +359,16 @@ test.describe("Add Gear shows consequences before the write", () => {
       // so choosing put the list off screen; the dialog's list never leaves.
       // That makes this the more direct assertion: one click, and the host it
       // was holding is gone.
+      await search.fill("rg-tr-plugin");
       await page.locator('[data-add-gear-select="rg-tr-plugin"]').click();
-      const blocked = "Nothing in this product declares";
-      await expect(page.locator("[data-add-gear-host-none]")).toContainText(blocked, {
-        timeout: 30_000,
-      });
-      // The impact repeats the blocking reason instead of resolving a proposal
-      // that does not exist.
-      await expect(changes).toContainText(blocked, { timeout: 30_000 });
-      await expect(changes).not.toContainText("joins the closure");
-      await expect(page.locator("[data-add-gear-apply]")).toBeDisabled();
+      await expect(host).toHaveValue("");
+      await expect(host.locator('option[value="tenant-resolver"]')).toHaveCount(1);
+      await host.selectOption("tenant-resolver");
+      await expect(page.locator("[data-add-gear-promotes-host]")).toContainText("tenant-resolver");
+      await expect(changes).toContainText("tenant-resolver", { timeout: 30_000 });
+      await expect(page.locator("[data-add-gear-apply]")).toBeEnabled();
 
+      await grouped.check();
       await page.locator("[data-add-gear-cancel]").click();
       await expect(page.locator("[data-add-gear-flow]")).toHaveCount(0);
     },
@@ -445,8 +433,8 @@ test.describe("Add Gear shows consequences before the write", () => {
       await page.waitForTimeout(1_200);
       expect(await errors()).toBeGreaterThan(0);
 
-      await page.locator(".gbx-toolbar [data-draft-discard]").click();
-      await expect(page.locator(".gbx-toolbar [data-draft-apply]")).toHaveCount(0);
+      await page.locator(".gbx-workspace-draft [data-draft-discard]").click();
+      await expect(page.locator(".gbx-workspace-draft [data-draft-apply]")).toHaveCount(0);
     },
   );
 
@@ -475,7 +463,7 @@ test.describe("Add Gear shows consequences before the write", () => {
     await expect(add).toBeEnabled();
     // Nothing was queued -- the key was never added -- so there is no draft to
     // discard, and `global-teardown` finds `products/` as it left it.
-    await expect(page.locator(".gbx-toolbar [data-draft-apply]")).toHaveCount(0);
+    await expect(page.locator(".gbx-workspace-draft [data-draft-apply]")).toHaveCount(0);
   });
 
   test("features are curated, and one that is not for this deployment says so [plan §9.1: features are projected]", async ({
@@ -542,7 +530,7 @@ test.describe("Add Gear shows consequences before the write", () => {
     const onKubernetes = await configureGear(page, "grpc-hub");
     await expect(onKubernetes.locator('[data-feature-option="k8s-auth"]')).toHaveCount(1);
     await expect(onKubernetes.locator('[data-feature-elsewhere="k8s-auth"]')).toHaveCount(0);
-    await expect(page.locator(".gbx-toolbar [data-draft-apply]")).toHaveCount(0);
+    await expect(page.locator(".gbx-workspace-draft [data-draft-apply]")).toHaveCount(0);
   });
 
   test("errors warn beside the button and never disable it", async ({ studio }) => {

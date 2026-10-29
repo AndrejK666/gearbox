@@ -29,6 +29,7 @@ import { WORKSPACE_TRUST_TRUSTED_FOLDERS } from "@theia/workspace/lib/common/wor
 import { WorkspaceService } from "@theia/workspace/lib/browser/workspace-service";
 import { inject, injectable } from "@theia/core/shared/inversify";
 
+import { configuredDefaults } from "../../../common/gearbox-preferences";
 import { GearboxService } from "../../../common/protocol";
 
 @injectable()
@@ -38,7 +39,16 @@ export class DomainWorkspace implements FrontendApplicationContribution {
   @inject(GearboxService) protected readonly service!: GearboxService;
   @inject(ILogger) protected readonly logger!: ILogger;
 
-  async onStart(): Promise<void> {
+  // **Not awaited by startup.** Adding a root rewrites the workspace, and Theia
+  // does that through services still starting while `onStart` runs: awaited
+  // here, a configured workspace that was not yet a root held the application
+  // on its loading screen for good.
+  onStart(): void {
+    void this.apply();
+  }
+
+  /** Open the derived roots as the workspace, adding any that are missing. */
+  async apply(): Promise<void> {
     // `ready` first: `WorkspaceService` resolves whatever was saved during
     // startup, and opening one before it has finished races with that -- the
     // saved workspace would win, arbitrarily.
@@ -46,7 +56,8 @@ export class DomainWorkspace implements FrontendApplicationContribution {
 
     let roots: string[];
     try {
-      roots = await this.service.workspaceRoots();
+      await this.preferences.ready;
+      roots = await this.service.workspaceRoots(configuredDefaults(this.preferences));
     } catch (error) {
       // Not fatal, and not silent. A Studio with no workspace still browses the
       // catalogue; it just cannot browse files.

@@ -80,7 +80,7 @@ test.describe("recovery after the engine stops", () => {
     // ---- one read held past the cap
 
     hold();
-    await page.locator('[data-profile="prod"]').click();
+    await page.locator("[data-product-profile]").selectOption("prod");
     const trouble = page.locator("[data-product-error]");
     await expect(trouble).toBeVisible({ timeout: 40_000 });
 
@@ -124,7 +124,7 @@ test.describe("recovery after the engine stops", () => {
     // always answered with `default_profile`, so recovering while looking at
     // `prod` put the panel silently back on `dev` -- with the switcher agreeing,
     // which makes it a wrong answer rather than a lost preference.
-    await expect(page.locator('[data-profile="prod"]')).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("[data-product-profile]" )).toHaveValue("prod");
     await expect(page.locator(".gbx-toolbar")).toHaveAttribute("data-has-selection", "true");
     await expect(draft, "the draft is the person's, not the session's").toContainText(
       "1 pending change",
@@ -249,7 +249,7 @@ test.describe("recovery after the engine stops", () => {
     await openProductById(page, product.id, "dev");
 
     hold();
-    await page.locator('[data-profile="prod"]').click();
+    await page.locator("[data-product-profile]").selectOption("prod");
     await expect(page.locator("[data-product-error]")).toBeVisible({ timeout: 40_000 });
     release();
 

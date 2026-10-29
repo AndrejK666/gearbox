@@ -10,7 +10,7 @@ use gearbox_ir::{
     RestProjection, RestVisibility,
 };
 
-use super::{ContractAuthority, ContractMerge};
+use super::{ContractAuthority, ContractMerge, discover};
 
 fn gid(id: &str) -> GearId {
     GearId::new(id).expect("a valid gear id")
@@ -107,4 +107,41 @@ fn a_second_consumers_stub_does_not_displace_the_first() {
 fn the_ranks_order_as_they_read() {
     assert!(ContractAuthority::Consumed < ContractAuthority::Provided);
     assert!(ContractAuthority::Provided < ContractAuthority::OwnerProvided);
+}
+
+/// A worktree under `.claude/` is a second checkout; reading it declares every
+/// gear twice. The root is walked even when its own name is hidden.
+#[test]
+fn the_walk_skips_every_dot_directory_below_the_root() {
+    let root = std::env::temp_dir()
+        .join(format!("gbx-discover-{}", std::process::id()))
+        .join(".root");
+    std::fs::remove_dir_all(&root).ok();
+    for dir in [
+        "gears/a",
+        ".claude/worktrees/x/gears/a",
+        ".hidden/b",
+        "node_modules/c",
+        "target/d",
+    ] {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+        std::fs::write(root.join(dir).join(super::GEAR_FILE), "").unwrap();
+    }
+    std::fs::write(root.join(super::GEAR_FILE), "").unwrap();
+
+    let (found, failures) = discover(&root);
+    std::fs::remove_dir_all(root.parent().unwrap()).ok();
+
+    assert!(failures.is_empty(), "{failures:?}");
+    let found: Vec<_> = found
+        .iter()
+        .map(|path| path.strip_prefix(&root).unwrap().to_path_buf())
+        .collect();
+    assert_eq!(
+        found,
+        [
+            std::path::PathBuf::from(super::GEAR_FILE),
+            ["gears", "a", super::GEAR_FILE].iter().collect(),
+        ]
+    );
 }

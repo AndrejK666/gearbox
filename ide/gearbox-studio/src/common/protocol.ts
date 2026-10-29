@@ -161,6 +161,20 @@ export interface StudioSession {
 }
 
 /**
+ * This machine's configured source roots and workspace, from Studio's settings.
+ *
+ * What the backend falls back to where it used to fall back to the repository it
+ * runs from -- which an installed app does not have. Absent, a development
+ * checkout keeps those defaults.
+ */
+export interface StudioDefaults {
+  /** Source roots to scan when a session names none. Absolute. */
+  readonly roots: readonly string[];
+  /** The workspace when a session names none. Absolute. */
+  readonly workspace?: string;
+}
+
+/**
  * What the backend sees when it tries to reach the model provider.
  *
  * Hand-written rather than generated, because the engine has nothing to do with
@@ -225,7 +239,7 @@ export interface GearboxService {
    * replaces both values, and because `initialize` disposes and respawns the
    * engine, it takes effect wholesale rather than merging with what was there.
    */
-  initialize(session?: StudioSession): Promise<InitializeResult>;
+  initialize(session?: StudioSession, defaults?: StudioDefaults): Promise<InitializeResult>;
 
   /**
    * Begin a staged load. Resolves at the boundary between the two passes: the
@@ -250,7 +264,7 @@ export interface GearboxService {
    * `gearbox` and `gears-rust` -- are *siblings*, so one folder cannot
    * cover both and the workspace has to be multi-root.
    */
-  workspaceRoots(): Promise<string[]>;
+  workspaceRoots(defaults?: StudioDefaults): Promise<string[]>;
 
   /**
    * The product descriptions under the repository root.
@@ -259,7 +273,15 @@ export interface GearboxService {
    * open", so it works before `initialize` and does not fail when the engine is
    * down.
    */
-  listProducts(): Promise<ProductRef[]>;
+  listProducts(defaults?: StudioDefaults): Promise<ProductRef[]>;
+
+  /**
+   * `git clone <url>` into a new directory under `parent`; its absolute path.
+   *
+   * For first-run setup, which offers the known gears repository when this
+   * machine has no checkout of it yet.
+   */
+  cloneSourceRepository(url: string, parent: string): Promise<string>;
 
   /** Evaluate a `product.gdl`. Evaluation only; nothing is joined against the
    * catalogue. */

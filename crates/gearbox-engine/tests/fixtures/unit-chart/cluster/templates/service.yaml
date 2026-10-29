@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: cluster
+spec:
+  selector:
+    app: cluster
+  ports:
+    - name: grpc
+      port: 50051
+    - name: serve
+      port: 8090

@@ -978,6 +978,12 @@ impl GitOrigin {
     /// a checkout of `me/gears-rust` is a checkout of `org/gears-rust` for the
     /// purpose of finding a path in it. A different name is a different
     /// repository.
+    ///
+    /// **An SSH host alias stands for a host it does not name.** A remote such
+    /// as `git@github-me:me/gears-rust.git` dials whatever `~/.ssh/config`
+    /// maps `github-me` to, which is how a second account on one forge is
+    /// usually cloned. Resolving it would mean running `ssh -G`; a dotless SSH
+    /// host is never a real forge's name, so the name alone decides there.
     #[must_use]
     pub fn same_or_fork(&self, remote: &str) -> bool {
         let host_and_name = |url: &str| {
@@ -987,7 +993,9 @@ impl GitOrigin {
             let name = segments.next_back().unwrap_or_default().to_owned();
             (host, name)
         };
-        host_and_name(&self.url) == host_and_name(remote)
+        let (host, name) = host_and_name(&self.url);
+        let (remote_host, remote_name) = host_and_name(remote);
+        name == remote_name && (host == remote_host || is_ssh_alias(remote, &remote_host))
     }
 
     /// The repository in the one spelling two remotes can be compared in:
@@ -999,6 +1007,13 @@ impl GitOrigin {
             .map_or_else(|| url.to_owned(), |(_, rest)| rest.to_owned())
             .to_lowercase()
     }
+}
+
+/// Whether `url` is an SSH remote whose `host` is an `~/.ssh/config` alias.
+fn is_ssh_alias(url: &str, host: &str) -> bool {
+    let url = url.trim();
+    let ssh = url.starts_with("ssh://") || (!url.contains("://") && url.contains(':'));
+    ssh && !host.contains('.')
 }
 
 /// `git@host:org/repo.git` and `https://host/org/repo.git` as `https://host/org/repo`.

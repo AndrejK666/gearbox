@@ -8,6 +8,13 @@ import { createRequire } from "node:module";
 import { CancellationToken } from "@theia/core";
 import { LanguageModel, LanguageModelStreamResponsePart, ToolInvocationContext, UserRequest, formatToolCallContentForModel, hasToolCallError } from "@theia/ai-core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+// The agent SDK is ESM-only and is loaded with `require` below, so its types are
+// named in import mode. Its options then expect the MCP SDK's ESM `McpServer`,
+// while this CommonJS file constructs the CJS build of the same class: two
+// declarations of one object, so the instance is handed over as the ESM type.
+type ClaudeAgentSdk = typeof import("@anthropic-ai/claude-agent-sdk", { with: { "resolution-mode": "import" } });
+type EsmMcpServer = import("@modelcontextprotocol/sdk/server/mcp.js", { with: { "resolution-mode": "import" } }).McpServer;
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { mcpToolDefinition } from "../common/tool-presentation";
 import { ClaudeCodeResponseStream } from "./claude-code-response-stream";
@@ -73,13 +80,13 @@ export async function* claudeCodeStream(executable: string, request: UserRequest
   try {
     // The vendor ESM SDK uses import.meta.url for its resources. Keep it external
     // to Theia's CommonJS esbuild bundle rather than rewriting that URL away.
-    const {query}=createRequire(__filename)("@anthropic-ai/claude-agent-sdk") as typeof import("@anthropic-ai/claude-agent-sdk");
+    const {query}=createRequire(__filename)("@anthropic-ai/claude-agent-sdk") as ClaudeAgentSdk;
     const system=request.messages.filter(message => message.actor === "system" && message.type === "text").map(message => message.type === "text" ? message.text : "").join("\n\n");
     const conversation=request.messages.filter(message => message.actor !== "system");
     const stream=query({prompt:JSON.stringify(conversation),options:{
       pathToClaudeCodeExecutable:executable, cwd:directory, abortController:abort,
       systemPrompt:system, model:"sonnet", settingSources:[], persistSession:false,
-      tools:[], strictMcpConfig:true, mcpServers:{gearbox:{type:"sdk",name:"gearbox",instance:server}},
+      tools:[], strictMcpConfig:true, mcpServers:{gearbox:{type:"sdk",name:"gearbox",instance:server as unknown as EsmMcpServer}},
       maxTurns:12,
       canUseTool:async (name,input) => tools.some(tool => "mcp__gearbox__"+tool.name === name)
         ? {behavior:"allow",updatedInput:input}

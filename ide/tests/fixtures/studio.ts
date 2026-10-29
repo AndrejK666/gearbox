@@ -129,7 +129,7 @@ function installSampler(): void {
       pending: q(".gbx-row.gbx-pending").length,
       badges: q(".gbx-badge").length,
       rowIds: q(".gbx-row .gbx-id").length,
-      groups: q(".gbx-group-label").map(text),
+      groups: q('[role="treeitem"][data-category]').map(text),
       names: q(".gbx-row-name").map(text),
       waiting: q(".gbx-row .gbx-waiting").length,
     });
@@ -709,10 +709,11 @@ export async function resetCatalogueView(page: Page): Promise<void> {
   if ((await filter.count()) > 0 && (await filter.inputValue()) !== "") {
     await filter.fill("");
   }
-  const folded = page.locator('.gbx-widget-catalogue .gbx-group-label[data-collapsed="true"]');
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+  const folded = page.locator('.gbx-widget-catalogue [role="treeitem"][aria-expanded="false"]');
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     if ((await folded.count()) === 0) return;
-    await folded.first().click();
+    await folded.first().focus();
+    await page.keyboard.press("ArrowRight");
   }
 }
 
@@ -942,7 +943,8 @@ export async function revealLock(page: Page): Promise<void> {
  * lands -- so the test would read the previous profile's answer.
  */
 export async function openGenerate(page: Page): Promise<void> {
-  await revealView(page, "Gearbox Generate", ".gbx-generate");
+  await runCommand(page, "Gearbox: Show Generate");
+  await expect(page.locator(".gbx-embedded-generate")).toBeVisible();
 }
 
 /**
@@ -975,9 +977,15 @@ export async function expectContext(
  */
 export async function productSection(
   page: Page,
-  section: "overview" | "composition" | "topology" | "validation",
+  section: "overview" | "composition" | "topology" | "validation" | "checks" | "generate" | "settings",
 ): Promise<void> {
-  const tab = page.locator(`[data-product-section="${section}"]`);
+  if (section === "overview" || section === "settings") {
+    await page.locator('.gbx-product-menu > summary').click();
+    await page.getByRole("button", { name: "Product settings", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Product settings", exact: true })).toBeVisible();
+    return;
+  }
+  const tab = page.locator(`[data-product-section="${section === "validation" ? "checks" : section}"]`);
   await tab.waitFor({ state: "visible", timeout: 30_000 });
   await tab.click();
   await expect(tab).toHaveAttribute("aria-selected", "true");
@@ -1067,7 +1075,7 @@ export async function openProductById(
   // itself sits above the strip and works from any stage.
   await productSection(page, "overview");
   await page.locator("[data-resolved-profile]").waitFor({ state: "visible", timeout: 60_000 });
-  await page.locator(`[data-profile="${profile}"]`).click();
+  await page.locator("[data-product-profile]").selectOption(profile);
   await page
     .locator(`[data-resolved-profile="${profile}"]`)
     .waitFor({ state: "visible", timeout: 60_000 });

@@ -26,9 +26,8 @@ import React from "@theia/core/shared/react";
 import { errorsIn } from "../diagnostics/diagnostics-list";
 import { ProductEditService } from "../product-edit-service";
 import { ProductStore } from "../product-store";
-import { RESOLVE_PRODUCT } from "../view-contributions";
 import { EngineConnectionService } from "./engine-connection-service";
-import { CLOSE_GEAR, CLOSE_PRODUCT, SWITCH_PRODUCT } from "./session-command-ids";
+import { CLOSE_GEAR } from "./session-command-ids";
 import { StudioContextService } from "./studio-context-service";
 import { SelectionService } from "./selection-service";
 import { GearSessionService } from "./gear-session-service";
@@ -38,11 +37,7 @@ import { GearSessionService } from "./gear-session-service";
  * them from the source rather than from a running registry.
  */
 export const TOOLBAR_COMMAND_IDS = [
-  "gearbox.product.switch",
-  "gearbox.product.close",
   "gearbox.gear.close",
-  "gearbox.product.resolve",
-  "gearbox.generate.toggle",
 ] as const;
 
 /**
@@ -59,12 +54,8 @@ export const TOOLBAR_COMMAND_IDS = [
  */
 const ACTIONS: Readonly<Record<string, readonly string[]>> = {
   home: [],
-  product: [
-    SWITCH_PRODUCT.id,
-    CLOSE_PRODUCT.id,
-    RESOLVE_PRODUCT.id,
-    "gearbox.generate.toggle",
-  ],
+  // Product actions live in the workspace, including on native Electron menus.
+  product: [],
   gear: [CLOSE_GEAR.id],
 };
 
@@ -106,7 +97,7 @@ export class ToolbarWidget extends ReactWidget {
     const actions = ACTIONS[context.kind] ?? [];
     return (
       <div
-        className="gbx-toolbar"
+        className={`gbx-toolbar ${context.kind === "product" ? "gbx-toolbar-product-context" : ""}`}
         data-context={context.kind}
         // **Whether anything is selected, published where it does not move.**
         // Nothing on this bar draws from it; it is here because the question is
@@ -187,46 +178,6 @@ export class ToolbarWidget extends ReactWidget {
           >
             {state.profile}
           </span>
-        )}
-        {this.edits.hasDraft() && (
-          <>
-            <span
-              className="gbx-badge gbx-toolbar-status"
-              data-status="modified"
-              title="Unapplied draft edits"
-            >
-              modified
-            </span>
-            {/* **One pair, here, because there is one draft.** These buttons used
-                to sit in both the Inspector and the Product view, each gated on
-                the product-wide `hasDraft()` -- so editing a profile field lit up
-                a pair in a panel that had nothing to do with it, and the two
-                Discards behaved differently (each remounted only its own panel's
-                inputs). A draft commits as one dry run, one confirmation and one
-                write, so a button that claimed to apply "this section" would be
-                describing something the wire cannot do. The header is where the
-                `modified` badge already says a draft exists; acting on it belongs
-                beside that word. Which controls carry the edits is marked on the
-                controls themselves. */}
-            <button
-              type="button"
-              className="gbx-choice gbx-toolbar-draft"
-              data-draft-apply
-              title="Apply the draft edits to the description"
-              onClick={() => void this.edits.applyDraft()}
-            >
-              Apply changes
-            </button>
-            <button
-              type="button"
-              className="gbx-choice"
-              data-draft-discard
-              title="Drop the draft edits and restore the saved values"
-              onClick={() => this.edits.discardDraft()}
-            >
-              Discard
-            </button>
-          </>
         )}
         {this.renderStatus(state.status, product?.lock_hash !== undefined)}
       </>

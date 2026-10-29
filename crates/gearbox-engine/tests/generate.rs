@@ -3310,99 +3310,38 @@ fn a_production_self_hosted_hub_is_a_private_socket() {
     assert_eq!(hub_address(&intent), "uds:///run/payments/hub.sock");
 }
 
-/// A product whose process is exactly Flight
-/// Control ships Flight Control's chart and image, Types Registry's database
-/// included -- it reaches the chart in `configOverlay`, its password through
-/// `secretEnv` from the description's existing Secret.
+/// An application that is exactly cluster's unit -- cluster and its hub --
+/// ships cluster's hand-written chart and `cluster-oop` image beside the
+/// gateway's generated chart, and the topology names what that chart creates:
+/// cluster is advertised by its own Services. With `GEARBOX_HELM` set the
+/// umbrella renders.
 #[test]
-fn an_exact_flight_control_ships_its_unit_chart() {
+fn a_cluster_unit_ships_its_chart_beside_a_generated_one() {
     let Some(root) = gears_rust() else {
         return;
     };
     let opened = vec![SourceRoot::open(SourceId::new("gears-rust").unwrap(), &root).unwrap()];
-    let scan = load_catalogue(&opened);
-    let path = product_gdl();
-    let mut intent = load_product(&path, None)
-        .intent
-        .expect("the product evaluates");
-    let keep = [
-        "api-gateway",
-        "service-discovery",
-        "authn-resolver",
-        "types-registry",
-    ];
-    intent
-        .selected_gears
-        .retain(|s| keep.contains(&s.gear.as_str()));
-    if !intent
-        .selected_gears
-        .iter()
-        .any(|s| s.gear.as_str() == "types-registry")
-    {
-        let mut types = intent.selected_gears[0].clone();
-        types.gear = gearbox_ir::GearId::new("types-registry").unwrap();
-        types.config.clear();
-        types.plugins.clear();
-        intent.selected_gears.push(types);
-    }
-    intent.bindings.clear();
-    intent.cluster_scopes.clear();
-    intent.application_pins.clear();
-    let prod = ProfileId::new("prod").unwrap();
-    let resolution =
-        gearbox_engine::resolve::resolve_at(&scan.catalogue, &intent, &prod, Some(&path));
-    let sources = opened
-        .iter()
-        .map(|r| (r.id.clone(), r.to_resolved()))
-        .collect();
-    let lock =
-        gearbox_engine::resolve::product::assemble(&scan.catalogue, &intent, &resolution, sources);
-    assert_eq!(lock.applications.len(), 1, "{:?}", lock.applications);
-    let host = &lock.applications[0];
-    assert!(host.needs_db, "Types Registry is database-backed");
-    let chart = host
-        .unit_chart
-        .as_ref()
-        .unwrap_or_else(|| panic!("Flight Control's unit chart: {:?}", host.gears));
-    assert_eq!(chart.image, "flight-control");
-
-    let roots = opened
-        .iter()
-        .map(|r| (r.id.clone(), r.root.clone()))
-        .collect();
-    let files = generate_tree(&lock, &roots, &out_root()).files;
-    let values = yaml(text(&files, "helm/payments-demo/values.yaml"));
-    let block = &values[host.name.as_str()];
-    assert!(
-        block["configOverlay"]["database"]["servers"]["pg"].is_object(),
-        "{block}"
-    );
-    assert!(
-        block["configOverlay"]["gears"]["types-registry"]["database"]["dbname"].is_string(),
-        "{block}"
-    );
-    assert_eq!(
-        block["secretEnv"][0]["secretName"], "payments-db",
-        "{block}"
-    );
-    assert!(
-        !files.iter().any(|f| f.path.as_str().starts_with("apps/")),
-        "no crate is generated for it"
-    );
-}
-
-/// An exact Flight Control and a separate cluster
-/// unit ship both hand-written charts, and the topology names what those charts
-/// create -- workers dial `flight-control-grpc:50051` for the directory, and
-/// cluster is advertised by its own Service. The description's OIDC settings
-/// reach Flight Control's chart; with `GEARBOX_HELM` set the umbrella renders.
-#[test]
-fn flight_control_and_cluster_units_render_together() {
-    let Some(root) = gears_rust() else {
-        return;
-    };
-    let opened = vec![SourceRoot::open(SourceId::new("gears-rust").unwrap(), &root).unwrap()];
-    let scan = load_catalogue(&opened);
+    let mut scan = load_catalogue(&opened);
+    // gears-rust's cluster names a chart it does not ship (GBX0126), so the
+    // catalogue drops it; this test declares the unit itself, with the
+    // description's image, gears and Services, and the stand-in chart in
+    // tests/fixtures.
+    scan.catalogue
+        .gears
+        .get_mut(&GearId::new("cluster").unwrap())
+        .expect("gears-rust describes cluster")
+        .unit_chart = Some(gearbox_ir::UnitChart {
+        path: RelPath::new("cluster").unwrap(),
+        image: "cluster-oop".to_owned(),
+        gears: ["cluster", "grpc-hub"]
+            .into_iter()
+            .map(|g| GearId::new(g).unwrap())
+            .collect(),
+        services: [("grpc", "cluster:50051"), ("serve", "cluster:8090")]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect(),
+    });
     let path = product_gdl();
     let mut intent = load_product(&path, None)
         .intent
@@ -3481,35 +3420,74 @@ fn flight_control_and_cluster_units_render_together() {
         .iter()
         .map(|r| (r.id.clone(), r.to_resolved()))
         .collect();
-    let lock =
+    let mut lock =
         gearbox_engine::resolve::product::assemble(&scan.catalogue, &intent, &resolution, sources);
+    // The chart's files are read from the fixture root, not from gears-rust.
+    let fixture = SourceId::new("fixture").unwrap();
+    for application in &mut lock.applications {
+        if let Some(chart) = application.unit_chart.as_mut() {
+            chart.source = fixture.clone();
+        }
+    }
     let unit = |name: &str| {
         lock.applications
             .iter()
             .find(|a| a.unit_chart.as_ref().is_some_and(|c| c.image == name))
             .unwrap_or_else(|| panic!("{name}: {:?}", lock.applications))
     };
-    let flight_control = unit("flight-control");
     let cluster = unit("cluster-oop");
+    let gateway = lock
+        .applications
+        .iter()
+        .find(|a| a.anchor.as_str() == "api-gateway")
+        .unwrap_or_else(|| panic!("the gateway's process: {:?}", lock.applications));
+    assert!(
+        gateway.unit_chart.is_none(),
+        "the gateway's chart is generated"
+    );
 
-    let roots = opened
+    // cluster's chart fixes `grpc` at cluster:50051 and the worker's own
+    // listener at cluster:8090; the process is addressed by them.
+    let grpc = cluster
+        .listens
+        .iter()
+        .find(|e| e.name == "grpc")
+        .unwrap_or_else(|| panic!("cluster's gRPC endpoint: {:?}", cluster.listens));
+    assert_eq!(
+        grpc.advertise_uri.as_deref(),
+        Some("http://cluster.payments.svc.cluster.local:50051")
+    );
+    let serve = cluster.serve.as_ref().expect("cluster is a worker");
+    assert_eq!(serve.listen_addr, "0.0.0.0:8090");
+    assert_eq!(
+        serve.advertise_uri,
+        "http://cluster.payments.svc.cluster.local:8090"
+    );
+
+    let mut roots: BTreeMap<SourceId, PathBuf> = opened
         .iter()
         .map(|r| (r.id.clone(), r.root.clone()))
         .collect();
-    let files = generate_tree(&lock, &roots, &out_root()).files;
-    let values = yaml(text(&files, "helm/payments-demo/values.yaml"));
-    assert_eq!(
-        values[cluster.name.as_str()]["directoryEndpoint"],
-        "http://flight-control-grpc.payments.svc.cluster.local:50051",
-        "the directory is behind the Service Flight Control's chart creates"
+    roots.insert(
+        fixture,
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/unit-chart"),
     );
-    let jwt = &values[flight_control.name.as_str()]["configOverlay"]["gears"]["oidc-authn-plugin"]
-        ["config"]["jwt"];
-    assert_eq!(jwt["expected_audience"][0], "payments", "{jwt}");
+    let files = generate_tree(&lock, &roots, &out_root()).files;
+    assert!(
+        !files
+            .iter()
+            .any(|f| f.path.as_str().contains(cluster.crate_name.as_str())),
+        "no crate is generated for the unit"
+    );
+    let values = yaml(text(&files, "helm/payments-demo/values.yaml"));
+    assert!(
+        values[cluster.name.as_str()]["directoryEndpoint"].is_string(),
+        "the unit is wired to the directory"
+    );
 
     let tags = [
         "--set".to_owned(),
-        format!("{}.image.tag=t", flight_control.name),
+        format!("{}.image.tag=t", gateway.name),
         "--set".to_owned(),
         format!("{}.image.tag=t", cluster.name),
     ];
@@ -3519,10 +3497,6 @@ fn flight_control_and_cluster_units_render_together() {
     else {
         return;
     };
-    assert!(
-        rendered.contains("name: flight-control-grpc"),
-        "Flight Control's Services"
-    );
     assert!(rendered.contains("name: cluster\n"), "cluster's Service");
     assert_every_container_hardened(&rendered);
 }

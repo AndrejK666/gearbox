@@ -42,6 +42,7 @@ import { MessageService } from "@theia/core/lib/common/message-service";
 
 import { hasUnsavedEdits } from "./shell/unsaved";
 import { CatalogueStore } from "./catalogue-store";
+import { productSourceFor, type ProductSource } from "./add-gear/product-source";
 import { MonacoTextModelService } from "@theia/monaco/lib/browser/monaco-text-model-service";
 import { inject, injectable } from "@theia/core/shared/inversify";
 
@@ -658,6 +659,18 @@ export class ProductEditService implements FrontendApplicationContribution {
     return false;
   }
 
+  /** Resolve a catalogue gear to the source alias this product declares. */
+  sourceForGear(gear: string): ProductSource {
+    const { open, intent } = this.product.current;
+    if (!open || !intent) return { ok: false, reason: "Open a readable product before adding gears." };
+    const source = this.catalogue.sourceOf(gear);
+    if (source === undefined) return { ok: false, reason: `The descriptor for ${gear} is unavailable. Wait for the catalogue or reconnect.` };
+    return productSourceFor(source, {
+      productPath: open.path, intent, roots: this.catalogue.resolvedRoots(),
+      sourceOf: id => this.catalogue.sourceOf(id),
+    });
+  }
+
   /**
    * Dry-run the configurator's whole proposal, and return the text it would write.
    *
@@ -702,7 +715,7 @@ export class ProductEditService implements FrontendApplicationContribution {
       // one press per toast, and only then the dialog. That is the whole of
       // "Escape did not close it and Cancel did".
       this.noteEngine(error);
-      return { ok: false, reason: messageOf(error) };
+      return { ok: false, reason: failureText(error) };
     }
   }
 
@@ -753,7 +766,7 @@ export class ProductEditService implements FrontendApplicationContribution {
       // this runs on every keystroke's debounce, and a message per failed
       // preview would be noise.
       this.noteEngine(error);
-      return { ok: false, reason: messageOf(error) };
+      return { ok: false, reason: failureText(error) };
     }
   }
 

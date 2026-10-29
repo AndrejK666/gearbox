@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 124, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 125, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -191,7 +191,7 @@ export const DIAGNOSTIC_CATALOGUE: {
     title: "a gear's declared git source disagrees with its checkout",
     severity: "warning",
     domain: "gdl",
-    docs: "A gear's `source = git(...)` disagrees with the checkout its\ndescription was read from: no remote has that url, or the gear is not\nat that `path` in it.\n\nA warning: what is on disk is used either way. But a reader holding\nthe description alone follows `source`, and would land in the wrong\nrepository or directory.",
+    docs: "A gear's `source = git(...)` disagrees with the checkout its\ndescription was read from: no remote is that repository or a fork of\nit, or the gear is not at that `path` in it.\n\nA warning: what is on disk is used either way. But a reader holding\nthe description alone follows `source`, and would land in the wrong\nrepository or directory. A wrong url is reported once per checkout,\nwith the other descriptions that declare it as related places.",
     requiresEvidence: false,
   },
   GBX0122: {
@@ -224,6 +224,14 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "warning",
     domain: "gdl",
     docs: "The product maps a permission no gear in it declares.\n\nA warning: most likely a typo, which would leave the permission it was\nmeant for unmapped and its operations refused.",
+    requiresEvidence: false,
+  },
+  GBX0126: {
+    code: "GBX0126",
+    title: "a declared unit chart is not on disk",
+    severity: "warning",
+    domain: "gdl",
+    docs: "A gear's `deploy = helm_chart(path = ...)` names a directory with no\n`Chart.yaml`.\n\nA warning: the chart is not used, and a process that is exactly the\nunit gets a generated chart instead, as if none were declared. Without\nthis, generation would stop at the missing file.",
     requiresEvidence: false,
   },
   GBX0206: {

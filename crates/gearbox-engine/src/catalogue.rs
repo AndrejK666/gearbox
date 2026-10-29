@@ -21,12 +21,29 @@ use crate::source::SourceRoot;
 /// of them diagnostics and the other silence.
 pub use gearbox_gdl::GEAR_FILE;
 
-/// Directory names never worth descending into.
+/// Directory names never worth descending into, besides every dot-directory.
 ///
 /// `target` alone would save most of the time, but a `node_modules` under
-/// `ide/` and a `.git` object store are both large enough to matter and can
-/// never contain a gear description.
-const SKIP_DIRS: &[&str] = &["target", "node_modules", ".git", ".gearbox"];
+/// `ide/` is large enough to matter and can never contain a gear description.
+const SKIP_DIRS: &[&str] = &["target", "node_modules"];
+
+/// Whether the walk prunes this directory.
+///
+/// **Every name starting with `.` is pruned**, not a list of them. `.git` and
+/// `.gearbox` were listed, and the list missed `.claude/worktrees/`: each
+/// worktree there is a whole second checkout, so every gear in it was declared
+/// twice (GBX0105) and the catalogue kept whichever copy sorted first -- the
+/// worktree's, not the checkout's. A hidden directory is tooling's, never where
+/// a gear lives. The root itself is exempt, so `--root .` and a source under a
+/// hidden parent are still walked.
+pub(crate) fn is_pruned(entry: &walkdir::DirEntry) -> bool {
+    entry.depth() > 0
+        && entry.file_type().is_dir()
+        && entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with('.') || SKIP_DIRS.contains(&name))
+}
 
 /// A catalogue plus everything that went wrong building it.
 #[derive(Debug)]
@@ -287,7 +304,8 @@ pub fn load_catalogue_staged(
             // alone retires the wrong one.
             pending.retain(|p| !(p.source == identity.source && p.gdl_path == identity.gdl_path));
 
-            let Some(merged) = merged else { continue };
+            let Some(mut merged) = merged else { continue };
+            drop_missing_unit_chart(root, identity, &mut merged.gear, &mut diagnostics);
 
             let id = merged.gear.id.clone();
             implemented
@@ -840,6 +858,42 @@ fn project_and_merge(
     })
 }
 
+/// Forget a declared unit chart that is not on disk (GBX0126).
+///
+/// The application it would have shipped falls back to a generated chart, as if
+/// none were declared, rather than generation stopping at the missing file.
+fn drop_missing_unit_chart(
+    root: &SourceRoot,
+    identity: &FileIdentity,
+    gear: &mut GearDescriptor,
+    diagnostics: &mut Diagnostics,
+) {
+    let Some(chart) = &gear.unit_chart else {
+        return;
+    };
+    if root
+        .root
+        .join(chart.path.as_str())
+        .join("Chart.yaml")
+        .is_file()
+    {
+        return;
+    }
+    diagnostics.push(
+        Diagnostic::new(
+            DiagnosticCode::GdlUnitChartMissing,
+            format!(
+                "`{}` declares the unit chart `{}`, which has no Chart.yaml; a generated chart is used instead",
+                gear.id,
+                chart.path.as_str()
+            ),
+        )
+        .with_help("add the chart, or correct `deploy = helm_chart(path = ...)`")
+        .at(Location::file(identity.uri.clone())),
+    );
+    gear.unit_chart = None;
+}
+
 /// Report every contract whose owner names nothing the catalogue holds.
 ///
 /// `#[toolkit::contract(gear = "...")]` is a free string, and the two places
@@ -1275,14 +1329,7 @@ fn discover(root: &Path) -> (Vec<PathBuf>, Vec<String>) {
     for entry in walkdir::WalkDir::new(root)
         .follow_links(false)
         .into_iter()
-        .filter_entry(|entry| {
-            // Keep files; prune only uninteresting directories.
-            !entry.file_type().is_dir()
-                || entry
-                    .file_name()
-                    .to_str()
-                    .is_none_or(|name| !SKIP_DIRS.contains(&name))
-        })
+        .filter_entry(|entry| !is_pruned(entry))
     {
         match entry {
             Ok(entry) => {

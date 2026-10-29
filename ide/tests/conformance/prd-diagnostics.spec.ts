@@ -123,18 +123,22 @@ test.describe("diagnostics reach a person", () => {
       );
       await settled(page);
       await revealCatalogue(page);
+      // The rows live in the bottom area now; the catalogue header counts them
+      // and is the way there.
+      const link = page.locator(".gbx-widget-catalogue .gbx-catalogue-diagnostics-link");
+      await expect(link, "the catalogue must say it has diagnostics").toBeVisible({ timeout: 60_000 });
+      await link.click();
 
-      const rendered = page.locator(".gbx-widget-catalogue .gbx-conflict");
+      const panel = page.locator("#theia-bottom-content-panel .gbx-widget-catalogue-diagnostics");
+      const rendered = panel.locator(".gbx-conflict");
       await expect(rendered.first(), "the catalogue must render what the load produced").toBeVisible(
         { timeout: 60_000 },
       );
       expect(await rendered.first().textContent()).toMatch(/GBX\d{4}/);
       // The specific one, so a different diagnostic arriving for a different
       // reason cannot satisfy this claim by accident.
-      await expect(page.locator('[data-catalogue-diagnostics]')).toBeVisible();
-      await expect(
-        page.locator(".gbx-widget-catalogue").locator('[data-conflict-code="GBX0108"]'),
-      ).toHaveCount(1);
+      await expect(panel.locator("[data-catalogue-diagnostics]")).toBeVisible();
+      await expect(panel.locator('[data-conflict-code="GBX0108"]')).toHaveCount(1);
     } finally {
       // **Put back by `git`, not by the snapshot read above.** Writing `original`
       // back assumes it was the committed text -- and when it is not, the restore

@@ -65,8 +65,11 @@ import { HiddenDebugView } from "./theia/debug/hidden-debug-view";
 import { HiddenProblemsView } from "./theia/markers/hidden-problems-view";
 import { HiddenOutlineView } from "./theia/outline-view/hidden-outline-view";
 import { ShellPolicy } from "./theia/core/shell-policy";
+import { WindowTitleUpdater } from "@theia/core/lib/browser/window/window-title-updater";
+import { StudioWindowTitleUpdater } from "./theia/core/studio-window-title-updater";
 import { ReadOnlyLockEditorProvider } from "./theia/monaco/read-only-lock-editor-provider";
 import { DomainWorkspace } from "./theia/workspace/domain-workspace";
+import { FirstRunContribution } from "./shell/first-run-contribution";
 import { StudioWorkspaceTrustService } from "./theia/workspace/studio-workspace-trust-service";
 import { EditorContribution } from "@theia/editor/lib/browser/editor-contribution";
 import { MonacoStatusBarContribution } from "@theia/monaco/lib/browser/monaco-status-bar-contribution";
@@ -81,6 +84,7 @@ import { RevealService } from "./reveal-service";
 import { CataloguePicker } from "./catalogue/catalogue-picker";
 import { CatalogueWidget } from "./catalogue/catalogue-widget";
 import { ConflictsWidget } from "./conflicts/conflicts-widget";
+import { CatalogueDiagnosticsWidget } from "./diagnostics/catalogue-diagnostics-widget";
 import { CreateProductWidget } from "./create/create-product-widget";
 import { CreateGearWidget } from "./create/create-gear-widget";
 import { PendingCreate } from "./create/pending-create";
@@ -89,6 +93,7 @@ import {
   AddGearViewContribution,
   CatalogueViewContribution,
   ConflictsViewContribution,
+  CatalogueDiagnosticsViewContribution,
   CreateGearViewContribution,
   CreateProductViewContribution,
   GearAuthorViewContribution,
@@ -102,6 +107,7 @@ import {
 import { GraphWidget } from "./graph/graph-widget";
 import { InspectorWidget } from "./inspector/inspector-widget";
 import { GenerateWidget } from "./generate/generate-widget";
+import { GenerateViewServices } from "./generate/generate-content";
 import { LockWidget } from "./lock/lock-widget";
 import { ProductWidget } from "./product/product-widget";
 import { GearAuthorWidget } from "./gear/gear-author-widget";
@@ -152,6 +158,9 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   // can say so for one filename rather than for a whole URI scheme. The subclass
   // explains the two alternatives it rejected.
   rebind(MonacoEditorProvider).to(ReadOnlyLockEditorProvider).inSingletonScope();
+
+  // The title names Studio and its domain subject, rather than the active IDE panel/workspace.
+  rebind(WindowTitleUpdater).to(StudioWindowTitleUpdater).inSingletonScope();
 
   // Why: `@theia/debug` and `@theia/test` arrive with `@theia/plugin-ext`, which
   // needs them for the VS Code debug and testing APIs, and both open a panel in
@@ -265,6 +274,9 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   // none of them look like "no workspace".
   bind(DomainWorkspace).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(DomainWorkspace);
+  bind(FirstRunContribution).toSelf().inSingletonScope();
+  bind(FrontendApplicationContribution).toService(FirstRunContribution);
+  bind(CommandContribution).toService(FirstRunContribution);
 
   // Why: what Studio is working on drives the shell, and it has to be derived
   // from what is actually open rather than from a restored layout -- a
@@ -382,11 +394,13 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   bindWidget(bind, ProductWidget);
   bindWidget(bind, InspectorWidget);
   bindWidget(bind, ConflictsWidget);
+  bindWidget(bind, CatalogueDiagnosticsWidget);
   bindWidget(bind, StartWidget);
   bindWidget(bind, CreateProductWidget);
   bindWidget(bind, CreateGearWidget);
   bindWidget(bind, GearAuthorWidget);
   bindWidget(bind, LockWidget);
+  bind(GenerateViewServices).toSelf().inSingletonScope();
   bindWidget(bind, GenerateWidget);
 
   // `bindViewContribution` already binds `CommandContribution`,
@@ -428,6 +442,7 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   bindViewContribution(bind, GearAuthorViewContribution);
   bindViewContribution(bind, AddGearViewContribution);
   bindViewContribution(bind, ConflictsViewContribution);
+  bindViewContribution(bind, CatalogueDiagnosticsViewContribution);
   bindViewContribution(bind, LockViewContribution);
   bindViewContribution(bind, GenerateViewContribution);
 

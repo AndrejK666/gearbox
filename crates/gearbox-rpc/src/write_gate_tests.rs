@@ -286,6 +286,37 @@ fn create_is_dispatched_in_a_session_with_no_roots() {
     }
 }
 
+/// A fresh install has no source root configured, and that is an empty
+/// catalogue rather than a refusal the Studio would show as a dead engine.
+#[test]
+fn a_catalogue_load_with_no_roots_answers_empty() {
+    let tmp = scratch("catalogue-no-roots");
+    let mut state = write_state(tmp.join("ws"));
+    assert!(state.roots.is_empty() && state.failed_roots.is_empty());
+
+    let (server, client) = lsp_server::Connection::memory();
+    let request = lsp_server::Request {
+        id: RequestId::from(1),
+        method: crate::protocol::method::CATALOGUE_LOAD.to_owned(),
+        params: serde_json::Value::Null,
+    };
+    let response = dispatch(&server, &mut state, request).or_else(|| {
+        client
+            .receiver
+            .try_iter()
+            .find_map(|message| match message {
+                lsp_server::Message::Response(response) => Some(response),
+                _ => None,
+            })
+    });
+    let response = response.expect("the load answers");
+    assert!(
+        response.response_result.is_ok(),
+        "no root is nothing to read, not a refusal: {:?}",
+        response.response_result
+    );
+}
+
 /// A session that declared no write capability is refused, dry run or not.
 ///
 /// **`dry_run` used to be a way past this gate.** `create_product` and

@@ -1,0 +1,4 @@
+# CI wants every failing test in one run; locally `make test` still stops at
+# the first.
+[profile.ci]
+fail-fast = false

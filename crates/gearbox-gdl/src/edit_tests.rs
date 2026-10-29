@@ -2113,3 +2113,55 @@ fn a_created_product_accepts_another_source_and_gear() {
     assert_eq!(intent.selected_gears.len(), 1);
     assert_eq!(intent.selected_gears[0].gear.as_str(), "new-service");
 }
+
+#[test]
+fn inline_empty_gears_keep_the_entry_inside_the_brackets() {
+    for source in [
+        "product(id = \"demo\", gears = [], version = \"0.1.0\")\n",
+        "product(\n    id = \"demo\",\n    preferences = [], gears = [])\n",
+    ] {
+        let edited = add_gear(URI, source, "tenant-resolver", "s").unwrap();
+        let text = edited.changed().unwrap();
+        assert_eq!(
+            text,
+            source.replace(
+                "gears = []",
+                "gears = [use_gear(\"tenant-resolver\", source = \"s\")]"
+            )
+        );
+        AstModule::parse(URI, text.to_owned(), &crate::declarative::dialect())
+            .expect("still parses");
+    }
+}
+
+#[test]
+fn inline_empty_product_accepts_a_host_then_its_plugin() {
+    let source = r#"gdl_version = "1.4"
+product(id = "p", name = "Pair", version = "0.1.0",
+    sources = [source(id = "s", at = path("../sdk"))],
+    profiles = [embedded(id = "dev", development = True)], default_profile = "dev", gears = [])
+"#;
+    let host = add_gear(URI, source, "tenant-resolver", "s").unwrap();
+    let connected = add_plugin_selection(
+        URI,
+        host.changed().unwrap(),
+        "tenant-resolver",
+        "static-tr-plugin",
+        &[],
+    )
+    .unwrap();
+    let text = connected.changed().unwrap();
+    let evaluated = crate::GdlEngine::new().eval_product(&product_identity(), text);
+    assert!(
+        !evaluated.diagnostics.has_errors(),
+        "{:?}",
+        evaluated.diagnostics
+    );
+    let intent = evaluated.value.unwrap();
+    assert_eq!(intent.selected_gears.len(), 1);
+    assert_eq!(intent.selected_gears[0].gear.as_str(), "tenant-resolver");
+    assert_eq!(
+        intent.selected_gears[0].plugins[0].gear.as_str(),
+        "static-tr-plugin"
+    );
+}

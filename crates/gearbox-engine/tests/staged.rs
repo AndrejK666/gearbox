@@ -336,14 +336,14 @@ fn stopping_midway_through_projection_keeps_what_is_done() {
         "the gears not reached are still pending, not lost"
     );
     // The invariant, not the number: nothing discovered is lost on a stop. The
-    // total is the corpus's description count -- sixty-six: fifty-six gears
-    // with code and ten designs -- and it is
+    // total is the corpus's description count -- sixty-four: fifty-five gears
+    // with code and nine designs -- and it is
     // written out rather than read from the scan so that a gear vanishing
     // between discovery and projection cannot satisfy both sides of the
     // equation at once. Designs complete in the first pass, before the stop.
     assert_eq!(
         scan.catalogue.gears.len() + scan.pending.len() + scan.catalogue.designs.len(),
-        66,
+        64,
         "every discovered description is projected, pending or a design"
     );
 }

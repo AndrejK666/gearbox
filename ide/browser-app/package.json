@@ -49,6 +49,8 @@
         "defaultTheme": "gearbox-fabric-light",
         "preferences": {
           "workbench.colorTheme": "gearbox-fabric-light",
+          "window.title": "${appName}${separator}${dirty}${activeEditorShort}",
+          "window.titleSeparator": " — ",
           "//ai-features": "Theia AI ships off unless something says otherwise. `@theia/ai-ide` is deliberately NOT installed -- it drags puppeteer-core and an AI terminal surface, which ADR-0011 withdrew -- and it is that package that would rebind AIActivationService to be preference-gated. Without it the service defaults to active, so this key is a statement rather than a switch: the shell offers the chat on purpose. The API key is never written here: Studio's own `gearbox.ai.apiKey` setting is the primary source and wins, and `ANTHROPIC_API_KEY` in the backend's environment is the fallback -- see ADR-0011's 2026-09-14 amendment and the root README.",
           "ai-features.AiEnable.enableAI": true,
           "//tool-confirmation": "The eight read tools are pre-approved; `gearbox_toggle_gear` is deliberately absent and so falls back to `defaultToolConfirmation`, which ships as `confirm`. The asymmetry is the ADR-0017 boundary made operational: a read returns engine output and writes nothing, so a per-call dialog in front of it is friction that teaches people to click through dialogs -- which is the habit the write gate depends on them NOT having. The write verb keeps both gates: this one, and the diff dialog `ProductEditService.toggle` shows.",

@@ -3,7 +3,9 @@
 //! A path in a description is looked for on disk first. When it is not there
 //! and the gear names its git source, it becomes a link into that repository
 //! instead of GBX0109. A URL is kept as written. And when the description is
-//! read from a checkout, `source` is checked against it (GBX0121).
+//! read from a checkout, `source` is checked against it (GBX0121). A unit
+//! chart (`deploy = helm_chart(...)`) must be on disk, or it is not used
+//! (GBX0126).
 
 #![allow(
     clippy::unwrap_used,
@@ -202,4 +204,83 @@ fn a_checkout_of_a_fork_matches_the_canonical_source() {
         r#"source = git(url = "{REPO}", path = "gears/demo")"#
     ));
     assert!(codes(&catalogue).is_empty(), "{:?}", catalogue.diagnostics);
+}
+
+#[test]
+fn a_fork_cloned_through_an_ssh_host_alias_matches_the_canonical_source() {
+    // `github-me` is an `~/.ssh/config` alias for github.com; nothing here can
+    // see that, so the repository's name decides.
+    let checkout = Checkout::new("alias", "git@github-me:someone/gears-rust.git");
+    let catalogue = checkout.describe(&format!(
+        r#"source = git(url = "{REPO}", path = "gears/demo")"#
+    ));
+    assert!(codes(&catalogue).is_empty(), "{:?}", catalogue.diagnostics);
+}
+
+#[test]
+fn an_ssh_host_alias_of_another_repository_is_still_reported() {
+    let checkout = Checkout::new("alias-other", "git@github-me:someone/else.git");
+    let catalogue = checkout.describe(&format!(
+        r#"source = git(url = "{REPO}", path = "gears/demo")"#
+    ));
+    assert_eq!(codes(&catalogue), [DiagnosticCode::GdlSourceMismatch]);
+}
+
+#[test]
+fn a_checkout_that_disagrees_is_reported_once_for_all_its_descriptions() {
+    let checkout = Checkout::new("once", "https://github.com/someone/else.git");
+    let other = checkout.0.join("gears/other");
+    std::fs::create_dir_all(other.join("src")).unwrap();
+    std::fs::write(
+        other.join("Cargo.toml"),
+        "[package]\nname = \"other\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        other.join("src/lib.rs"),
+        "#[toolkit::gear(name = \"other\")]\n#[derive(Default)]\npub struct Other;\n",
+    )
+    .unwrap();
+    std::fs::write(
+        other.join("gear.gdl"),
+        format!(
+            "gear(maturity = \"stable\", package = cargo(crate_name = \"other\", lib = \"other\"),\n\
+             source = git(url = \"{REPO}\", path = \"gears/other\"))\n"
+        ),
+    )
+    .unwrap();
+    let catalogue = checkout.describe(&format!(
+        r#"source = git(url = "{REPO}", path = "gears/demo")"#
+    ));
+    assert_eq!(codes(&catalogue), [DiagnosticCode::GdlSourceMismatch]);
+    assert_eq!(catalogue.diagnostics.as_slice()[0].related.len(), 1);
+}
+
+const UNIT_CHART: &str =
+    r#"deploy = helm_chart(path = path("deploy/helm/demo"), image = "demo", gears = ["demo"])"#;
+
+#[test]
+fn a_unit_chart_that_is_not_on_disk_is_reported_and_not_used() {
+    let checkout = Checkout::new("no-chart", "git@github.com:cf/gears-rust.git");
+    let catalogue = checkout.describe(UNIT_CHART);
+    assert_eq!(codes(&catalogue), [DiagnosticCode::GdlUnitChartMissing]);
+    assert!(demo(&catalogue).unit_chart.is_none());
+}
+
+#[test]
+fn a_unit_chart_on_disk_is_kept() {
+    let checkout = Checkout::new("chart", "git@github.com:cf/gears-rust.git");
+    let chart = checkout.0.join("gears/demo/deploy/helm/demo");
+    std::fs::create_dir_all(&chart).unwrap();
+    std::fs::write(
+        chart.join("Chart.yaml"),
+        "apiVersion: v2\nname: demo\nversion: 0.1.0\n",
+    )
+    .unwrap();
+    let catalogue = checkout.describe(UNIT_CHART);
+    assert!(codes(&catalogue).is_empty(), "{:?}", codes(&catalogue));
+    assert_eq!(
+        demo(&catalogue).unit_chart.as_ref().unwrap().path.as_str(),
+        "gears/demo/deploy/helm/demo"
+    );
 }

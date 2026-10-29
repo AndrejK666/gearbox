@@ -167,7 +167,7 @@ test.describe("session trust [ADR-0011 amendment 2026-09-02]", () => {
   }) => {
     await openProduct(studio.page, "dev");
     // Profile edit sits under the selected profile in the Product tree.
-    await studio.page.locator('[data-profile="dev"]').click();
+    await studio.page.locator("[data-product-profile]").selectOption("dev");
     await studio.page.locator("[data-add-profile]").click();
     await expect(studio.page.locator("[data-profile-new-id]")).toBeVisible({ timeout: 15_000 });
     await expect(studio.page.locator("[data-profile-new-kind]")).toBeVisible();
