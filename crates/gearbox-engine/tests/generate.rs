@@ -1072,6 +1072,16 @@ fn a_kubernetes_profile_generates_a_dockerfile_per_process() {
         assert!(body.contains("USER 65532"), "{path}:\n{body}");
         assert!(body.contains("ca-certificates"), "{path}:\n{body}");
         assert!(body.contains("protobuf-compiler"), "{path}:\n{body}");
+        // The context's layout may hold spaces (a desktop project folder
+        // does): only WORKDIR may name it, since neither a --mount option nor
+        // a COPY source takes one.
+        for line in body.lines() {
+            let named = line.contains("--mount") || line.trim_start().starts_with("COPY --from");
+            assert!(
+                !(named && line.contains("/src/")),
+                "{path} names the context's layout where a space breaks it: {line}\n{body}"
+            );
+        }
         assert!(
             body.contains(&format!(
                 r#"CMD ["{}", "--config", "/etc/gearbox/{}.yaml"]"#,

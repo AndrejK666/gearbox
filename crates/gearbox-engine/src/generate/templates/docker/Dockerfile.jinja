@@ -6,11 +6,17 @@ RUN apt-get update \
 WORKDIR /src
 COPY . .
 WORKDIR /src/{{ out_rel }}
+{#- out_rel is the context's own layout and may hold spaces (a desktop project
+    folder does). WORKDIR takes them; a --mount option and a COPY source do
+    not. So cargo builds into a fixed target directory, and the configuration
+    is copied out by the shell, relative to the WORKDIR. #}
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/src/{{ out_rel }}/target,sharing=locked \
-    cargo build --release --package {{ crate_name }} \
- && cp target/release/{{ bin_name }} /usr/local/bin/{{ bin_name }}
+    --mount=type=cache,id=gearbox-target-{{ crate_name }},target=/cargo-target,sharing=locked \
+    CARGO_TARGET_DIR=/cargo-target cargo build --release --package {{ crate_name }} \
+ && cp /cargo-target/release/{{ bin_name }} /usr/local/bin/{{ bin_name }} \
+ && mkdir -p /out \
+ && cp config/{{ application }}.yaml /out/{{ application }}.yaml
 
 FROM debian:bookworm-slim
 RUN apt-get update \
@@ -20,7 +26,7 @@ RUN apt-get update \
  && mkdir -p {{ home_dir }} \
  && chown {{ uid }}:{{ uid }} {{ home_dir }}
 COPY --from=build --chown={{ uid }}:{{ uid }} /usr/local/bin/{{ bin_name }} /usr/local/bin/{{ bin_name }}
-COPY --from=build --chown={{ uid }}:{{ uid }} /src/{{ out_rel }}/config/{{ application }}.yaml /etc/gearbox/{{ application }}.yaml
+COPY --from=build --chown={{ uid }}:{{ uid }} /out/{{ application }}.yaml /etc/gearbox/{{ application }}.yaml
 USER {{ uid }}
 {% for port in ports %}EXPOSE {{ port }}
 {% endfor %}CMD ["{{ bin_name }}", "--config", "/etc/gearbox/{{ application }}.yaml"]
