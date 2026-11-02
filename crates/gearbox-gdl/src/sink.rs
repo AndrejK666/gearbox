@@ -128,6 +128,7 @@ impl GearDecl {
 #[derive(Debug, Clone, Default)]
 pub struct ProductDecl {
     pub ui: Option<crate::records::UiProductRecord>,
+    pub frontend: Option<crate::records::FrontxProductRecord>,
     pub id: String,
     pub display_name: String,
     pub version: String,

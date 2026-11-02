@@ -140,6 +140,45 @@ pub fn build(
             }
         }
     });
+    let frontend = decl.frontend.as_ref().and_then(|frontend| {
+        let mut mfes = Vec::new();
+        for mfe in &frontend.mfes {
+            let requires: Result<std::collections::BTreeSet<_>, _> = mfe
+                .requires
+                .iter()
+                .map(|id| GearId::new(id.clone()))
+                .collect();
+            match requires {
+                Ok(requires) => mfes.push(gearbox_ir::frontx::FrontxMfe {
+                    package: mfe.package.clone(),
+                    source: mfe.source.clone(),
+                    requires,
+                }),
+                Err(error) => {
+                    diagnostics.push(Diagnostic::error(
+                        DiagnosticCode::GdlEval,
+                        format!("invalid gear id in frontx_mfe(requires = [...]): {error}"),
+                        "name the backend gears the micro-frontend calls by their ids",
+                    ));
+                    return None;
+                }
+            }
+        }
+        Some(gearbox_ir::frontx::ProductFrontx {
+            shell: frontend.shell.clone(),
+            source: frontend.source.clone(),
+            mfes,
+            entry_points: frontend.entry_points.iter().cloned().collect(),
+        })
+    });
+    if ui.is_some() && frontend.is_some() {
+        diagnostics.push(invalid(
+            Location::file(uri.to_owned()),
+            "a product has `ui = ui_product(...)` or `frontend = frontx_product(...)`, not both"
+                .to_owned(),
+            "keep the one the product's screens are written for",
+        ));
+    }
     Some(ProductIntent {
         id: decl.id.clone(),
         display_name: decl.display_name.clone(),
@@ -156,6 +195,7 @@ pub fn build(
         profiles,
         default_profile,
         ui,
+        frontend,
         permissions: decl.permissions.clone(),
     })
 }

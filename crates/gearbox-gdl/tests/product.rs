@@ -83,6 +83,58 @@ fn product_ui_explicitly_selects_modules_and_package_paths() {
 }
 
 #[test]
+fn a_frontx_frontend_names_its_shell_and_micro_frontends() {
+    let (intent, codes, messages) = eval(&product(
+        r#"frontend = frontx_product(
+            shell = path("template-shell"),
+            source = "frontx-templates",
+            mfes = [
+                frontx_mfe(package = path("studio-frontend/src-app/mfe_packages/people-mfe"), requires = ["studio-user"]),
+                frontx_mfe(package = path("blank-mfe"), source = "frontx-templates"),
+            ],
+            entry_points = {"Portal": "/"},
+        ),"#,
+    ));
+    assert!(codes.is_empty(), "{codes:?} {messages}");
+    let frontend = intent.unwrap().frontend.unwrap();
+    assert_eq!(frontend.shell, "template-shell");
+    assert_eq!(frontend.source.unwrap().as_str(), "frontx-templates");
+    assert_eq!(frontend.mfes.len(), 2);
+    assert_eq!(
+        frontend.mfes[0].package,
+        "studio-frontend/src-app/mfe_packages/people-mfe"
+    );
+    assert_eq!(
+        frontend.mfes[0]
+            .requires
+            .iter()
+            .map(gearbox_ir::GearId::as_str)
+            .collect::<Vec<_>>(),
+        ["studio-user"]
+    );
+    assert!(frontend.mfes[0].source.is_none());
+    assert_eq!(frontend.entry_points["Portal"], "/");
+}
+
+#[test]
+fn a_product_has_a_ui_or_a_frontx_frontend_not_both() {
+    let (_, codes, messages) = eval(&product(
+        r#"ui = ui_product(shell = path("shell"), sdk = path("sdk"), modules = []),
+        frontend = frontx_product(shell = path("template-shell"), mfes = []),"#,
+    ));
+    assert!(!codes.is_empty(), "{messages}");
+    assert!(messages.contains("not both"), "{messages}");
+}
+
+#[test]
+fn a_frontx_package_is_a_path() {
+    let (_, codes, messages) = eval(&product(
+        r#"frontend = frontx_product(shell = git(url = "https://example.com/r.git", rev = "main"), mfes = []),"#,
+    ));
+    assert!(!codes.is_empty(), "{messages}");
+}
+
+#[test]
 fn use_gear_on_the_third_line_records_line_two() {
     // 0-based: a call written on the third source line must not claim the start
     // of the file. That is the unit proof behind "the link opens on use_gear".

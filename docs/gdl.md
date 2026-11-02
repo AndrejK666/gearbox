@@ -118,6 +118,59 @@ Firebase Web SDK configuration belongs in the prepared product's public runtime
 configuration. User mappings, bearer tokens and private assets do not belong in
 GDL or UI source packages.
 
+## FrontX frontend (GDL 1.5)
+
+A product whose screens are FrontX micro-frontends describes them with
+`frontx_product(...)` instead of `ui_product(...)`. A product has one or the
+other: they ship the same UI image.
+
+```python
+frontend = frontx_product(
+    source = "frontx-templates",          # optional: `shell` is under this source's root
+    shell = path("template-shell"),       # a FrontX template, or a product's own fork of one
+    mfes = [
+        frontx_mfe(
+            package = path("studio-frontend/src-app/mfe_packages/people-mfe"),
+            requires = ["studio-user", "account-management"],
+        ),
+    ],
+    entry_points = {"Portal": "/"},
+),
+```
+
+FrontX packages keep FrontX's own contract, so none of `ui_product`'s package
+rules apply: versions may be prereleases, there is no `gearsUi` metadata, and
+micro-frontends are module-federation remotes the shell mounts from `mfe.json`.
+
+- **The shell** is an npm workspace that lists `src-app/mfe_packages/*` and
+  has a `build` script; a FrontX template's does (it builds the packages the
+  shell carries, each micro-frontend, the manifests it mounts them from, then
+  the site). The FrontX packages it **carries** are its own `packages/*`, the
+  `@gears-frontx/*` it depends on, and itself.
+- **A micro-frontend** has a `package.json` and an `mfe.json`. Without `source`
+  its path is relative to the product description. `requires` names the
+  backend gears its screens call; resolution reports one the profile does not
+  have (GBX0720). It neither adds the gear nor links anything.
+- **Versions are aligned to the shell.** A micro-frontend gets the FrontX the
+  shell carries, whatever it pinned. Generation sets each exact pin of a
+  carried package to the shell's version (peer ranges are left alone) and
+  records every change in `frontend/frontx.lock.json`. A package that uses
+  something the shell's version lacks then fails to build, and the lock says
+  which pin moved.
+
+Generation writes `frontend/`: the shell's files (without its own
+micro-frontends (a library beside them, with no `mfe.json`, stays), or
+install and build output; its `package-lock.json` is kept, and the image's
+`npm install` starts from it),
+each micro-frontend under `src-app/mfe_packages/<its directory name>`,
+`frontx.lock.json` (the shell's name, version and carried packages; each
+micro-frontend's name, version, extensions, required gears, aligned pins and
+content hash), a `Dockerfile` and `.dockerignore`. A kubernetes profile adds
+`frontend/nginx.conf`, which proxies `/cf/` to the API Gateway application
+unchanged and serves `/env.js` uncached, and the deployment and service under
+the umbrella chart's `ui` values, image `gbx-<product>-frontend:<version>`.
+Templates: `frontx/Dockerfile`, `frontx/dockerignore`, `frontx/nginx.conf`.
+
 ## External database (GDL 1.1)
 
 Each `embedded`, `self_hosted` and `kubernetes` profile accepts an optional
@@ -244,7 +297,7 @@ gdl_version = "1.2"
 gear(...)  # or product(...)
 ```
 
-The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.4. The legacy `gear(gdl_version=...)` and `product(gdl_version=...)` arguments remain accepted; conflicting declarations are rejected.
+The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.5. The legacy `gear(gdl_version=...)` and `product(gdl_version=...)` arguments remain accepted; conflicting declarations are rejected.
 
 - A minor version only adds: optional fields, constructors and values. A file for an older minor version reads with no change.
 - A major version can remove a field, rename a field or change what a field means.

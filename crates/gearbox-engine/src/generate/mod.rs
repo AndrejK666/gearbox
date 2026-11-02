@@ -40,6 +40,7 @@
 mod apply;
 mod config;
 mod docker;
+mod frontx;
 mod helm;
 mod json;
 mod manifest;
@@ -363,6 +364,9 @@ pub fn generate(input: &GenerateInput<'_>) -> Result<Generated, GenerateError> {
     }
 
     for entry in ui::files(input)? {
+        insert(&mut files, entry)?;
+    }
+    for entry in frontx::files(input)? {
         insert(&mut files, entry)?;
     }
     for entry in docker::files(input)? {

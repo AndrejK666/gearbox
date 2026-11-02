@@ -12,6 +12,7 @@ pub use database::{PostgresDatabase, SqliteDatabase};
 pub mod diagnostics;
 pub mod explain;
 pub mod fileset;
+pub mod frontx;
 pub mod ids;
 pub mod intent;
 pub mod requirement;

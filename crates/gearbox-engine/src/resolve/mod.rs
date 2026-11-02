@@ -52,6 +52,7 @@ fn unknown_profile(intent: &ProductIntent, profile: &ProfileId, uri: &str) -> Di
 /// Everything one resolution produced.
 pub struct Resolution {
     pub ui: Option<gearbox_ir::ui::ResolvedUi>,
+    pub frontend: Option<gearbox_ir::frontx::ProductFrontx>,
     pub database: Option<gearbox_ir::PostgresDatabase>,
     pub sqlite_databases:
         std::collections::BTreeMap<gearbox_ir::GearId, gearbox_ir::SqliteDatabase>,
@@ -307,9 +308,11 @@ pub fn resolve_at(
     }
 
     let ui = ui::resolve(catalogue, intent, &closure, &uri, &mut diagnostics);
+    let frontend = ui::resolve_frontx(intent, &closure, &uri, &mut diagnostics);
     diagnostics.finish();
     Resolution {
         ui,
+        frontend,
         database,
         sqlite_databases: intent
             .profiles

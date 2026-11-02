@@ -4,6 +4,7 @@ import type { Diagnostics } from "./Diagnostics";
 import type { GearId } from "./GearId";
 import type { KubernetesSettings } from "./KubernetesSettings";
 import type { PostgresDatabase } from "./PostgresDatabase";
+import type { ProductFrontx } from "./ProductFrontx";
 import type { ProvenanceEdge } from "./ProvenanceEdge";
 import type { ResolvedApplication } from "./ResolvedApplication";
 import type { ResolvedBinding } from "./ResolvedBinding";
@@ -60,4 +61,8 @@ provenance?: Array<ProvenanceEdge>,
  * The product's permission mapping, written into every process's
  * configuration (gears-rust `cpt-cf-adr-operation-permissions` section 2).
  */
-permissions?: { [key in string]: Array<string> }, diagnostics?: Diagnostics, ui?: ResolvedUi | null, };
+permissions?: { [key in string]: Array<string> }, diagnostics?: Diagnostics, ui?: ResolvedUi | null, 
+/**
+ * The `FrontX` frontend, its required backends checked against the gears.
+ */
+frontend?: ProductFrontx | null, };

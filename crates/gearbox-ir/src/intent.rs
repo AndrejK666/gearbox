@@ -791,6 +791,9 @@ pub struct ProductIntent {
     pub preferences: Vec<Preference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<crate::ui::ProductUi>,
+    /// A `FrontX` frontend (GDL 1.5), the alternative to `ui`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frontend: Option<crate::frontx::ProductFrontx>,
 
     /// Permission -> the token scopes that grant it, any of them
     /// (`product(permissions = {...})`, gears-rust

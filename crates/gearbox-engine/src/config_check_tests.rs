@@ -121,6 +121,7 @@ fn intent(key: &str, value: serde_json::Value) -> ProductIntent {
     selection.config.insert(key.to_owned(), value);
     ProductIntent {
         ui: None,
+        frontend: None,
         templates: None,
         layout: None,
         id: "fixture".to_owned(),

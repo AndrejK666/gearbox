@@ -40,6 +40,9 @@
 //! | `ui/nginx.conf` | `ui/nginx.conf` (`gateway`, `gateway_port`) |
 //! | `helm/ui/deployment.yaml` | `helm/<product>/templates/ui-deployment.yaml` (`name`, `port`) |
 //! | `helm/ui/service.yaml` | `helm/<product>/templates/ui-service.yaml` (`name`, `port`) |
+//! | `frontx/Dockerfile` | `frontend/Dockerfile` |
+//! | `frontx/dockerignore` | `frontend/.dockerignore` |
+//! | `frontx/nginx.conf` | `frontend/nginx.conf` (`gateway`, `gateway_port`) |
 //! | `terraform/helm/main.tf` | `terraform/main.tf` (`product`) |
 //! | `terraform/helm/variables.tf` | `terraform/variables.tf` (`product_json`, `namespace_json`) |
 //! | `terraform/helm/outputs.tf` | `terraform/outputs.tf` |
@@ -181,6 +184,9 @@ pub const KEYS: &[&str] = &[
     "ui/dockerignore",
     "ui/Dockerfile",
     "ui/nginx.conf",
+    "frontx/Dockerfile",
+    "frontx/dockerignore",
+    "frontx/nginx.conf",
     "terraform/helm/main.tf",
     "terraform/helm/variables.tf",
     "terraform/helm/outputs.tf",
@@ -289,6 +295,9 @@ impl TemplateSet {
             "ui/dockerignore" => Some(include_str!("templates/ui/dockerignore.jinja")),
             "ui/Dockerfile" => Some(include_str!("templates/ui/Dockerfile.jinja")),
             "ui/nginx.conf" => Some(include_str!("templates/ui/nginx.conf.jinja")),
+            "frontx/Dockerfile" => Some(include_str!("templates/frontx/Dockerfile.jinja")),
+            "frontx/dockerignore" => Some(include_str!("templates/frontx/dockerignore.jinja")),
+            "frontx/nginx.conf" => Some(include_str!("templates/frontx/nginx.conf.jinja")),
             "helm/ui/deployment.yaml" => {
                 Some(include_str!("templates/helm/ui/deployment.yaml.jinja"))
             }

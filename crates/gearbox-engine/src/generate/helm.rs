@@ -435,10 +435,17 @@ fn umbrella_values(
         );
     }
     let values = UmbrellaValues {
-        ui: input.lock.ui.as_ref().map(|_| UiValues {
+        // A `ui` or a FrontX `frontend`: one UI image either way, under `ui`.
+        ui: (input.lock.ui.is_some() || input.lock.frontend.is_some()).then(|| UiValues {
             image: format!(
-                "gbx-{}-ui:{}",
-                input.lock.product.id, input.lock.product.version
+                "gbx-{}-{}:{}",
+                input.lock.product.id,
+                if input.lock.frontend.is_some() {
+                    "frontend"
+                } else {
+                    "ui"
+                },
+                input.lock.product.version
             ),
             pull_policy: "IfNotPresent",
         }),
@@ -491,7 +498,7 @@ fn values_schema(input: &GenerateInput<'_>) -> Result<FileEntry, GenerateError> 
     let subchart = draft7_subchart_schema()?;
     let mut properties = serde_json::Map::new();
     properties.insert("global".to_owned(), global_schema()?);
-    if input.lock.ui.is_some() {
+    if input.lock.ui.is_some() || input.lock.frontend.is_some() {
         properties.insert(
             "ui".to_owned(),
             serde_json::json!({

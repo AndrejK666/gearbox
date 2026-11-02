@@ -303,6 +303,7 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
     // is `profile_changed`.
     let gearbox_ir::ResolvedProduct {
         ui: before_ui,
+        frontend: before_frontend,
         sqlite_databases: before_sqlite,
         database: before_db,
         schema_version: before_schema,
@@ -321,6 +322,7 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
     } = before;
     let gearbox_ir::ResolvedProduct {
         ui: after_ui,
+        frontend: after_frontend,
         sqlite_databases: after_sqlite,
         database: after_db,
         schema_version: after_schema,
@@ -362,6 +364,11 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
     }
 
     compare("ui", format!("{before_ui:?}"), format!("{after_ui:?}"));
+    compare(
+        "frontend",
+        format!("{before_frontend:?}"),
+        format!("{after_frontend:?}"),
+    );
     // One line per permission: a changed grant names what it grants.
     let mut permission_keys = std::collections::BTreeSet::new();
     permission_keys.extend(before_permissions.keys());

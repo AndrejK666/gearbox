@@ -77,6 +77,7 @@ pub fn assemble(
         provenance: explain(catalogue, intent, resolution).edges,
         diagnostics: resolution.diagnostics.clone(),
         ui: resolution.ui.clone(),
+        frontend: resolution.frontend.clone(),
         permissions: intent.permissions.clone(),
     };
 

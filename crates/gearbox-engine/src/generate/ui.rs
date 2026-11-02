@@ -10,7 +10,7 @@ fn invalid(message: impl Into<String>) -> GenerateError {
     GenerateError::Ui(message.into())
 }
 
-fn file(path: &str, bytes: impl Into<Vec<u8>>) -> Result<FileEntry, GenerateError> {
+pub(super) fn file(path: &str, bytes: impl Into<Vec<u8>>) -> Result<FileEntry, GenerateError> {
     let bytes = bytes.into();
     let binary_extension = Path::new(path)
         .extension()
@@ -413,7 +413,7 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
 }
 
 /// The port the UI's nginx listens on inside its container.
-const UI_PORT: u16 = 8080;
+pub(super) const UI_PORT: u16 = 8080;
 
 #[cfg(test)]
 mod tests {

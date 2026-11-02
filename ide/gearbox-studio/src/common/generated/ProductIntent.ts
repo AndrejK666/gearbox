@@ -5,6 +5,7 @@ import type { ClusterScopeIntent } from "./ClusterScopeIntent";
 import type { DeploymentProfileDecl } from "./DeploymentProfileDecl";
 import type { GearSelection } from "./GearSelection";
 import type { Preference } from "./Preference";
+import type { ProductFrontx } from "./ProductFrontx";
 import type { ProductUi } from "./ProductUi";
 import type { ProfileId } from "./ProfileId";
 import type { RelPath } from "./RelPath";
@@ -50,6 +51,10 @@ layout?: string | null, profiles: { [key in ProfileId]: DeploymentProfileDecl },
  * The gears asked for directly. Their co-location closures bring in more.
  */
 selected_gears: Array<GearSelection>, bindings?: Array<BindingIntent>, cluster_scopes?: Array<ClusterScopeIntent>, application_pins?: Array<ApplicationPin>, preferences?: Array<Preference>, ui?: ProductUi | null, 
+/**
+ * A `FrontX` frontend (GDL 1.5), the alternative to `ui`.
+ */
+frontend?: ProductFrontx | null, 
 /**
  * Permission -> the token scopes that grant it, any of them
  * (`product(permissions = {...})`, gears-rust

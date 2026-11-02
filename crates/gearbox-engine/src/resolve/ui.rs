@@ -60,3 +60,32 @@ pub(super) fn resolve(
         modules,
     })
 }
+
+/// The `FrontX` frontend, with every backend its micro-frontends require checked
+/// against the profile's closure. Its packages are read at generate, not here.
+pub(super) fn resolve_frontx(
+    intent: &ProductIntent,
+    closure: &Closure,
+    uri: &str,
+    diagnostics: &mut Diagnostics,
+) -> Option<gearbox_ir::frontx::ProductFrontx> {
+    let requested = intent.frontend.as_ref()?;
+    for mfe in &requested.mfes {
+        for required in &mfe.requires {
+            if !closure.members.contains_key(required) {
+                diagnostics.push(
+                    Diagnostic::error(
+                        DiagnosticCode::UiInvalid,
+                        format!(
+                            "micro-frontend `{}` requires backend `{required}` in this product profile",
+                            mfe.package
+                        ),
+                        "include the backend gear or remove the micro-frontend",
+                    )
+                    .at(Location::file(uri)),
+                );
+            }
+        }
+    }
+    Some(requested.clone())
+}

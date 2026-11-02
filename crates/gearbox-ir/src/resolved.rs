@@ -1007,6 +1007,9 @@ pub struct ResolvedProduct {
     pub diagnostics: Diagnostics,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<crate::ui::ResolvedUi>,
+    /// The `FrontX` frontend, its required backends checked against the gears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frontend: Option<crate::frontx::ProductFrontx>,
 }
 
 impl ResolvedProduct {

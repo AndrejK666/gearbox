@@ -39,6 +39,8 @@ export const PRODUCT_FUNCTIONS: readonly string[] = [
   "bind",
   "cluster_profile",
   "embedded",
+  "frontx_mfe",
+  "frontx_product",
   "git",
   "kubernetes",
   "path",

@@ -668,32 +668,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
         if npm_lock.is_some_and(|lock| lock.kind != "path") {
             return Err(anyhow::anyhow!("npm_lock requires path(...)"));
         }
-        let mut entries = Vec::new();
-        if let Some(value) = entry_points {
-            let dict = starlark::values::dict::DictRef::from_value(value).ok_or_else(|| {
-                anyhow::anyhow!("entry_points requires a dictionary of names to UI paths")
-            })?;
-            for (name, route) in dict.iter() {
-                let name = name
-                    .unpack_str()
-                    .ok_or_else(|| anyhow::anyhow!("entry point name must be a string"))?;
-                let route = route
-                    .unpack_str()
-                    .ok_or_else(|| anyhow::anyhow!("entry point path must be a string"))?;
-                if name.trim().is_empty()
-                    || !route.starts_with('/')
-                    || route.starts_with("//")
-                    || route.contains('\\')
-                    || route.contains("..")
-                    || route.chars().any(char::is_control)
-                {
-                    return Err(anyhow::anyhow!(
-                        "entry_points requires nonempty names and same-origin absolute UI paths"
-                    ));
-                }
-                entries.push((name.to_owned(), route.to_owned()));
-            }
-        }
+        let entries = entry_points_of(entry_points)?;
         Ok(crate::records::UiProductRecord {
             shell: shell.at.clone().unwrap_or_default(),
             sdk: sdk.at.clone().unwrap_or_default(),
@@ -701,6 +676,57 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
             source: source.map(gearbox_ir::SourceId::new).transpose()?,
             npm_lock: npm_lock.and_then(|lock| lock.at.clone()),
             entry_points: entries,
+        })
+    }
+
+    /// One `FrontX` micro-frontend a product mounts in its shell (GDL 1.5).
+    ///
+    /// # Arguments
+    /// * `package`: The package directory, as path(...): it holds `package.json` and `mfe.json`.
+    /// * `source`: Optional source id; `package` is relative to its root, else to product.gdl.
+    /// * `requires`: Backend gears its screens call; each must be in the product.
+    fn frontx_mfe<'v>(
+        #[starlark(require = named)] package: &'v SourceAtRecord,
+        #[starlark(require = named)] source: Option<String>,
+        #[starlark(require = named)] requires: Option<UnpackList<String>>,
+    ) -> anyhow::Result<crate::records::FrontxMfeRecord> {
+        if package.kind != "path" {
+            return Err(anyhow::anyhow!(
+                "frontx_mfe(package = ...) requires path(...)"
+            ));
+        }
+        Ok(crate::records::FrontxMfeRecord {
+            package: package.at.clone().unwrap_or_default(),
+            source: source.map(gearbox_ir::SourceId::new).transpose()?,
+            requires: requires.map(|r| r.items).unwrap_or_default(),
+        })
+    }
+
+    /// A `FrontX` frontend: a shell from a `FrontX` template with micro-frontends
+    /// mounted in it (GDL 1.5). The alternative to `ui_product(...)`.
+    ///
+    /// # Arguments
+    /// * `shell`: The shell's directory, as path(...): a `FrontX` template (`template-shell`)
+    ///   or a product's own fork of one.
+    /// * `source`: Optional source id; `shell` is relative to its root, else to product.gdl.
+    /// * `mfes`: The micro-frontends, as `frontx_mfe(...)`, in the order the shell lists them.
+    /// * `entry_points`: Named UI paths shown as links after deployment.
+    fn frontx_product<'v>(
+        #[starlark(require = named)] shell: &'v SourceAtRecord,
+        #[starlark(require = named)] source: Option<String>,
+        #[starlark(require = named)] mfes: UnpackList<&'v crate::records::FrontxMfeRecord>,
+        #[starlark(require = named)] entry_points: Option<Value<'v>>,
+    ) -> anyhow::Result<crate::records::FrontxProductRecord> {
+        if shell.kind != "path" {
+            return Err(anyhow::anyhow!(
+                "frontx_product(shell = ...) requires path(...)"
+            ));
+        }
+        Ok(crate::records::FrontxProductRecord {
+            shell: shell.at.clone().unwrap_or_default(),
+            source: source.map(gearbox_ir::SourceId::new).transpose()?,
+            mfes: mfes.items.into_iter().cloned().collect(),
+            entry_points: entry_points_of(entry_points)?,
         })
     }
 
@@ -715,6 +741,8 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `templates`: The template overlay, as `path(...)`. The default is `templates/` beside this
     ///   file.
     /// * `ui`: Optional shell and gear UI composition, as `ui_product(...)`.
+    /// * `frontend`: Optional `FrontX` frontend, as `frontx_product(...)`. GDL 1.5. A product
+    ///   has `ui` or `frontend`, not both.
     /// * `layout`: The directory generated applications go under. The default is `apps`.
     /// * `profiles`: The deployment profiles: `embedded(...)`, `self_hosted(...)`,
     ///   `kubernetes(...)`. At least one.
@@ -739,6 +767,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] templates: Option<&'v SourceAtRecord>,
         #[starlark(require = named)] layout: Option<&str>,
         #[starlark(require = named)] ui: Option<&'v crate::records::UiProductRecord>,
+        #[starlark(require = named)] frontend: Option<&'v crate::records::FrontxProductRecord>,
         #[starlark(require = named)] profiles: UnpackList<&'v ProfileRecord>,
         #[starlark(require = named)] default_profile: &str,
         #[starlark(require = named)] gears: UnpackList<&'v UseGearRecord>,
@@ -766,6 +795,7 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
         let permissions = permission_map(permissions)?;
         sink(eval)?.set_product(ProductDecl {
             ui: ui.cloned(),
+            frontend: frontend.cloned(),
             id: id.to_owned(),
             display_name: name.unwrap_or(id).to_owned(),
             version: version.to_owned(),
@@ -853,4 +883,36 @@ pub(crate) fn product_globals() -> starlark::environment::Globals {
 #[must_use]
 pub fn product_vocabulary() -> starlark::environment::Globals {
     GlobalsBuilder::new().with(product_additions).build()
+}
+
+/// `entry_points = {...}`: display names to same-origin UI paths.
+fn entry_points_of(value: Option<Value<'_>>) -> anyhow::Result<Vec<(String, String)>> {
+    let mut entries = Vec::new();
+    let Some(value) = value else {
+        return Ok(entries);
+    };
+    let dict = starlark::values::dict::DictRef::from_value(value).ok_or_else(|| {
+        anyhow::anyhow!("entry_points requires a dictionary of names to UI paths")
+    })?;
+    for (name, route) in dict.iter() {
+        let name = name
+            .unpack_str()
+            .ok_or_else(|| anyhow::anyhow!("entry point name must be a string"))?;
+        let route = route
+            .unpack_str()
+            .ok_or_else(|| anyhow::anyhow!("entry point path must be a string"))?;
+        if name.trim().is_empty()
+            || !route.starts_with('/')
+            || route.starts_with("//")
+            || route.contains('\\')
+            || route.contains("..")
+            || route.chars().any(char::is_control)
+        {
+            return Err(anyhow::anyhow!(
+                "entry_points requires nonempty names and same-origin absolute UI paths"
+            ));
+        }
+        entries.push((name.to_owned(), route.to_owned()));
+    }
+    Ok(entries)
 }

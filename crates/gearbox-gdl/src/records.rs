@@ -101,6 +101,27 @@ gdl_record! {
 }
 
 gdl_record! {
+    /// `frontx_mfe(package = path(...), source = "...", requires = [...])`
+    FrontxMfeRecord as "gdl_frontx_mfe" {
+        pub package: String,
+        #[allocative(skip)]
+        pub source: Option<gearbox_ir::SourceId>,
+        pub requires: Vec<String>,
+    }
+}
+
+gdl_record! {
+    /// `frontx_product(shell = path(...), mfes = [frontx_mfe(...)])`
+    FrontxProductRecord as "gdl_frontx_product" {
+        pub shell: String,
+        #[allocative(skip)]
+        pub source: Option<gearbox_ir::SourceId>,
+        pub mfes: Vec<FrontxMfeRecord>,
+        pub entry_points: Vec<(String, String)>,
+    }
+}
+
+gdl_record! {
     /// `cargo(crate = ..., lib = ..., path = ..., features = [...], link = [...])`
     ///
     /// `lib` is mandatory rather than derived from `crate`: a crate with no
