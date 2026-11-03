@@ -799,7 +799,7 @@ fn the_current_version_reads_as_written() {
 #[test]
 fn a_newer_minor_is_read_and_says_so_only_if_it_fails() {
     let (decl, codes) = eval(&format!(
-        r#"gear(gdl_version = "1.7", maturity = "preview", {PKG})"#
+        r#"gear(gdl_version = "1.6", maturity = "preview", {PKG})"#
     ));
     assert!(codes.is_empty(), "{codes:?}");
     assert!(
@@ -809,11 +809,11 @@ fn a_newer_minor_is_read_and_says_so_only_if_it_fails() {
 
     // A constructor from the newer minor fails when the module compiles.
     let diagnostics = diagnostics_of(&format!(
-        r#"gear(gdl_version = "1.7", maturity = "preview", {PKG}, sdk = pypi(name = "x"))"#
+        r#"gear(gdl_version = "1.6", maturity = "preview", {PKG}, sdk = pypi(name = "x"))"#
     ));
     let help = diagnostics[0].help.as_deref().unwrap_or_default();
     assert!(
-        help.contains("written for GDL 1.7, and this Gearbox reads GDL 1.6"),
+        help.contains("written for GDL 1.6, and this Gearbox reads GDL 1.5"),
         "{diagnostics:?}"
     );
 }
@@ -848,7 +848,7 @@ fn a_version_is_major_and_minor() {
             diagnostics[0]
                 .help
                 .as_deref()
-                .is_some_and(|h| h.contains("gdl_version = \"1.6\"")),
+                .is_some_and(|h| h.contains("gdl_version = \"1.5\"")),
             "{bad}: {diagnostics:?}"
         );
     }

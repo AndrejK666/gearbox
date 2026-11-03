@@ -99,7 +99,7 @@ fn eval_gear_text(path: &Path, root: Option<&Path>, source: &str) -> Diagnostics
     diagnostics
 }
 
-/// Evaluate a `frontx.gdl` (GDL 1.6). It has no `load()`: a package describes
+/// Evaluate a `frontx.gdl` (GDL 1.5). It has no `load()`: a package describes
 /// itself in one file, so there is no boundary to choose.
 fn eval_frontx_text(path: &Path, source: &str) -> Diagnostics {
     let identity = FileIdentity {

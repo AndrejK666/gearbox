@@ -1,4 +1,4 @@
-//! Evaluating a `frontx.gdl` (GDL 1.6): a `FrontX` package describing itself.
+//! Evaluating a `frontx.gdl` (GDL 1.5): a `FrontX` package describing itself.
 //!
 //! A package declares only what its own manifests cannot say -- whether a
 //! shell signs users in and where it reads its runtime addresses, which
@@ -37,7 +37,7 @@ fn eval(src: &str) -> (Option<FrontxPackage>, Vec<DiagnosticCode>, String) {
 #[test]
 fn a_shell_says_whether_it_signs_in_and_where_it_reads_its_addresses() {
     let (package, codes, messages) = eval(
-        r#"gdl_version = "1.6"
+        r#"gdl_version = "1.5"
 
 shell(signs_in = True, runtime_env = "public/env.js")
 "#,
@@ -162,7 +162,7 @@ fn a_package_is_one_kind() {
 
 #[test]
 fn a_description_with_no_declaration_says_which_to_add() {
-    let (package, codes, messages) = eval(r#"gdl_version = "1.6""#);
+    let (package, codes, messages) = eval(r#"gdl_version = "1.5""#);
     assert!(package.is_none());
     assert_eq!(codes, [DiagnosticCode::GdlCardinality], "{messages}");
     assert!(

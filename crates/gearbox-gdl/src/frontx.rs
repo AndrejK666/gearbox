@@ -1,4 +1,4 @@
-//! The `frontx.gdl` vocabulary (GDL 1.6): a `FrontX` package describing itself.
+//! The `frontx.gdl` vocabulary (GDL 1.5): a `FrontX` package describing itself.
 //!
 //! One file at a package's root, beside its `package.json`, with one call that
 //! says what the package is: `shell(...)`, `mfe(...)` or `library()`. It states
@@ -47,7 +47,7 @@ fn package_relative(field: &str, path: &str) -> anyhow::Result<String> {
 #[starlark_module]
 fn gdl_frontx_vocabulary(builder: &mut GlobalsBuilder) {
     /// `shell(...)` -- this package is a `FrontX` shell: a workspace that mounts
-    /// micro-frontends from `src-app/mfe_packages/*` (GDL 1.6).
+    /// micro-frontends from `src-app/mfe_packages/*` (GDL 1.5).
     ///
     /// What it carries is not declared: it is read from its `packages/*`, its
     /// exact `@gears-frontx/*` dependencies and its own `package.json`.
@@ -74,7 +74,7 @@ fn gdl_frontx_vocabulary(builder: &mut GlobalsBuilder) {
         Ok(NoneType)
     }
 
-    /// `mfe(...)` -- this package is a `FrontX` micro-frontend (GDL 1.6). Its screens
+    /// `mfe(...)` -- this package is a `FrontX` micro-frontend (GDL 1.5). Its screens
     /// and extensions stay in its `mfe.json`.
     ///
     /// # Arguments
@@ -98,7 +98,7 @@ fn gdl_frontx_vocabulary(builder: &mut GlobalsBuilder) {
     }
 
     /// `library()` -- this package is shared by micro-frontends and is not one
-    /// itself (GDL 1.6). It has nothing more to declare.
+    /// itself (GDL 1.5). It has nothing more to declare.
     fn library(eval: &mut Evaluator<'_, '_, '_>) -> anyhow::Result<NoneType> {
         sink(eval)?.set_frontx(FrontxPackage::Library);
         Ok(NoneType)

@@ -8,7 +8,7 @@ Three file kinds, three vocabularies. `gear()` is not callable in a product file
 |---|---|---|
 | `gear.gdl` | one gear: facts Rust does not already own | exactly one `gear(...)` |
 | `product.gdl` | one product: operator intent | exactly one `product(...)` |
-| `frontx.gdl` | one FrontX package: facts its `package.json` and `mfe.json` do not own (GDL 1.6) | exactly one `shell(...)`, `mfe(...)` or `library()` |
+| `frontx.gdl` | one FrontX package: facts its `package.json` and `mfe.json` do not own (GDL 1.5) | exactly one `shell(...)`, `mfe(...)` or `library()` |
 
 Zero or two top-level declarations is **GBX0105**. Profile-specific behaviour is a `profiles = [...]` list on the declaration, not a branch.
 
@@ -182,7 +182,7 @@ unchanged and serves `/env.js` uncached, and the deployment and service under
 the umbrella chart's `ui` values, image `gbx-<product>-frontend:<version>`.
 Templates: `frontx/Dockerfile`, `frontx/dockerignore`, `frontx/nginx.conf`.
 
-### A package's own description: `frontx.gdl` (GDL 1.6)
+### A package's own description: `frontx.gdl`
 
 A FrontX package may describe itself in a `frontx.gdl` at its root, beside its
 `package.json`, the way a gear has its `gear.gdl`. It states only what the
@@ -193,7 +193,7 @@ One call says what the package is:
 
 ```python
 # template-shell/frontx.gdl
-gdl_version = "1.6"
+gdl_version = "1.5"
 
 shell(
     signs_in = False,              # required: does it sign users in before mounting a screen?
@@ -203,14 +203,14 @@ shell(
 
 ```python
 # src-app/mfe_packages/people-mfe/frontx.gdl
-gdl_version = "1.6"
+gdl_version = "1.5"
 
 mfe(requires = ["account-management", "studio-user"])   # the backend gears its screens call; [] calls none
 ```
 
 ```python
 # src-app/mfe_packages/shared/frontx.gdl
-gdl_version = "1.6"
+gdl_version = "1.5"
 
 library()
 ```
@@ -357,7 +357,7 @@ gdl_version = "1.2"
 gear(...)  # or product(...)
 ```
 
-The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.6. The legacy `gear(gdl_version=...)` and `product(gdl_version=...)` arguments remain accepted; conflicting declarations are rejected.
+The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.5. The legacy `gear(gdl_version=...)` and `product(gdl_version=...)` arguments remain accepted; conflicting declarations are rejected.
 
 - A minor version only adds: optional fields, constructors and values. A file for an older minor version reads with no change.
 - A major version can remove a field, rename a field or change what a field means.

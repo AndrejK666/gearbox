@@ -37,7 +37,7 @@ pub const PRODUCT_FILE: &str = "product.gdl";
 /// The name a gear description must have. See [`PRODUCT_FILE`].
 pub const GEAR_FILE: &str = "gear.gdl";
 
-/// The name a `FrontX` package's own description must have (GDL 1.6). See
+/// The name a `FrontX` package's own description must have (GDL 1.5). See
 /// [`PRODUCT_FILE`].
 pub const FRONTX_FILE: &str = "frontx.gdl";
 

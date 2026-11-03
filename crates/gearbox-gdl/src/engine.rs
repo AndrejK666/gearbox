@@ -169,7 +169,7 @@ impl GdlEngine {
 
 impl GdlEngine {
     /// Evaluate one `frontx.gdl` into what the `FrontX` package declares about
-    /// itself (GDL 1.6).
+    /// itself (GDL 1.5).
     ///
     /// Nothing here reads the package: whether `runtime_env` exists, or the
     /// package is mounted as the kind it says, is asked where the package is

@@ -342,7 +342,7 @@ fn what_the_packages_declare_reaches_the_lock() {
         &[
             (
                 SHELL_GDL,
-                "gdl_version = \"1.6\"\nshell(signs_in = True, runtime_env = \"public/env.js\")\n",
+                "gdl_version = \"1.5\"\nshell(signs_in = True, runtime_env = \"public/env.js\")\n",
             ),
             ("template-shell/public/env.js", "window.env = {};\n"),
             (MFE_GDL, "mfe(requires = [\"authn-resolver\"])\n"),

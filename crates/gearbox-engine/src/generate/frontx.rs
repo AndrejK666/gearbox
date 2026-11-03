@@ -11,7 +11,7 @@
 //! name the shell's version lacks is explained by the lock, not discovered in
 //! a stack trace.
 //!
-//! A package may describe itself in a `frontx.gdl` (GDL 1.6): a shell whether
+//! A package may describe itself in a `frontx.gdl` (GDL 1.5): a shell whether
 //! it signs users in and where it reads its runtime addresses, a
 //! micro-frontend the backend gears it calls. A package without one is read
 //! as before, and what it would have said is recorded as unknown.

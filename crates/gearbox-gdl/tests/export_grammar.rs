@@ -179,7 +179,7 @@ fn render() -> String {
             array(&product.functions),
         ),
         (
-            "The callable vocabulary of a `frontx.gdl` (GDL 1.6).",
+            "The callable vocabulary of a `frontx.gdl` (GDL 1.5).",
             "FRONTX_FUNCTIONS: readonly string[]",
             array(&frontx.functions),
         ),
