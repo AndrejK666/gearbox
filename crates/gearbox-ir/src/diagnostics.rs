@@ -1555,6 +1555,16 @@ diagnostic_codes! {
 
     /// A UI package or composition cannot be built for this product.
     UiInvalid = "GBX0720", Generator, Error, false, "invalid UI composition or package";
+
+    /// A product signs its users in, and the `FrontX` shell it mounts its
+    /// screens in says (`shell(signs_in = False)` in its `frontx.gdl`) that it
+    /// does not.
+    ///
+    /// The frontend still builds and serves, and every call its screens make to
+    /// the backend comes back 401: nothing obtained a token to send. Pick a shell
+    /// that signs in, or correct the shell's `frontx.gdl` if it is wrong. A shell
+    /// with no `frontx.gdl` says nothing, and is not reported.
+    GenFrontxShellNoSignIn = "GBX0721", Generator, Warning, false, "the product signs users in and its FrontX shell does not";
 }
 
 /// A diagnostic code string that this build does not know.

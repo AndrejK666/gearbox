@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 125, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 126, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -1038,6 +1038,14 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "error",
     domain: "generator",
     docs: "A UI package or composition cannot be built for this product.",
+    requiresEvidence: false,
+  },
+  GBX0721: {
+    code: "GBX0721",
+    title: "the product signs users in and its FrontX shell does not",
+    severity: "warning",
+    domain: "generator",
+    docs: "A product signs its users in, and the `FrontX` shell it mounts its\nscreens in says (`shell(signs_in = False)` in its `frontx.gdl`) that it\ndoes not.\n\nThe frontend still builds and serves, and every call its screens make to\nthe backend comes back 401: nothing obtained a token to send. Pick a shell\nthat signs in, or correct the shell's `frontx.gdl` if it is wrong. A shell\nwith no `frontx.gdl` says nothing, and is not reported.",
     requiresEvidence: false,
   },
 };

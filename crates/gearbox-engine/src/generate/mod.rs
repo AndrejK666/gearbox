@@ -366,7 +366,7 @@ pub fn generate(input: &GenerateInput<'_>) -> Result<Generated, GenerateError> {
     for entry in ui::files(input)? {
         insert(&mut files, entry)?;
     }
-    for entry in frontx::files(input)? {
+    for entry in frontx::files(input, &mut diagnostics)? {
         insert(&mut files, entry)?;
     }
     for entry in docker::files(input)? {

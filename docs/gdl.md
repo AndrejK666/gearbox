@@ -2,12 +2,13 @@
 
 GDL (Gears Description Language) is a declarative DSL. A file states facts. The resolver decides.
 
-Two file kinds, two vocabularies. `gear()` is not callable in a product file; `product()` is not callable in a gear file.
+Three file kinds, three vocabularies. `gear()` is not callable in a product file; `product()` is not callable in a gear file; neither is callable in a `frontx.gdl`.
 
 | File | Declares | Required call |
 |---|---|---|
 | `gear.gdl` | one gear: facts Rust does not already own | exactly one `gear(...)` |
 | `product.gdl` | one product: operator intent | exactly one `product(...)` |
+| `frontx.gdl` | one FrontX package: facts its `package.json` and `mfe.json` do not own (GDL 1.6) | exactly one `shell(...)`, `mfe(...)` or `library()` |
 
 Zero or two top-level declarations is **GBX0105**. Profile-specific behaviour is a `profiles = [...]` list on the declaration, not a branch.
 
@@ -152,7 +153,8 @@ micro-frontends are module-federation remotes the shell mounts from `mfe.json`.
 - **A micro-frontend** has a `package.json` and an `mfe.json`. Without `source`
   its path is relative to the product description. `requires` names the
   backend gears its screens call; resolution reports one the profile does not
-  have (GBX0720). It neither adds the gear nor links anything.
+  have (GBX0720). It neither adds the gear nor links anything. What the
+  package's own `frontx.gdl` requires is added to it (see below).
 - **A library** is a package the micro-frontends depend on that is not one
   itself: a `package.json` and no `mfe.json`. A shell keeps its own libraries;
   `libraries` brings one the shell lacks (micro-frontends written for another
@@ -170,13 +172,64 @@ micro-frontends (a library beside them, with no `mfe.json`, stays), or
 install and build output; its `package-lock.json` is kept, and the image's
 `npm install` starts from it),
 each micro-frontend and library under `src-app/mfe_packages/<its directory
-name>`, `frontx.lock.json` (the shell's name, version and carried packages; each
-micro-frontend's name, version, extensions, required gears, aligned pins and
-content hash; each library's name, version, aligned pins and content hash), a `Dockerfile` and `.dockerignore`. A kubernetes profile adds
+name>`, `frontx.lock.json` (the shell's name, version and carried packages,
+and what its `frontx.gdl` says: `signsIn`, `runtimeEnv`, `described`; each
+micro-frontend's name, version, extensions, required gears, whether it has a
+`frontx.gdl`, aligned pins and content hash; each library's name, version,
+aligned pins and content hash), a `Dockerfile` and `.dockerignore`. A kubernetes profile adds
 `frontend/nginx.conf`, which proxies `/cf/` to the API Gateway application
 unchanged and serves `/env.js` uncached, and the deployment and service under
 the umbrella chart's `ui` values, image `gbx-<product>-frontend:<version>`.
 Templates: `frontx/Dockerfile`, `frontx/dockerignore`, `frontx/nginx.conf`.
+
+### A package's own description: `frontx.gdl` (GDL 1.6)
+
+A FrontX package may describe itself in a `frontx.gdl` at its root, beside its
+`package.json`, the way a gear has its `gear.gdl`. It states only what the
+package's manifests cannot: its name, version and pins stay in `package.json`,
+a micro-frontend's screens and extensions in `mfe.json`, and what a shell
+carries is still read from its workspace. Restating any of them is GBX0106.
+One call says what the package is:
+
+```python
+# template-shell/frontx.gdl
+gdl_version = "1.6"
+
+shell(
+    signs_in = False,              # required: does it sign users in before mounting a screen?
+    runtime_env = None,            # or "public/env.js": read at start, so one image serves every environment
+)
+```
+
+```python
+# src-app/mfe_packages/people-mfe/frontx.gdl
+gdl_version = "1.6"
+
+mfe(requires = ["account-management", "studio-user"])   # the backend gears its screens call; [] calls none
+```
+
+```python
+# src-app/mfe_packages/shared/frontx.gdl
+gdl_version = "1.6"
+
+library()
+```
+
+The calls are not the product's `frontx_mfe(...)` and `frontx_library(...)`:
+those locate a package (`package = path(...)`); here the file is the locator.
+`runtime_env` is a path inside the package. `requires` takes gear ids. A file
+with two calls, or none, is **GBX0105**.
+
+At generation, for each package the product mounts:
+
+| The package's `frontx.gdl` | Result |
+|---|---|
+| absent | read as before; the lock records `signsIn: null`, `runtimeEnv: null`, `described: false` |
+| declares another kind than the product mounts it as (`library()` listed under `mfes`, …) | **GBX0720** |
+| does not evaluate | **GBX0720**, naming the description's own diagnostics |
+| `mfe(requires = [...])` | added to the product's `frontx_mfe(requires = ...)` (the union: either may know of a call the other does not); a gear the product lacks is **GBX0720** |
+| `shell(runtime_env = "...")` naming a file the shell lacks | **GBX0720** |
+| `shell(signs_in = False)`, on a product with a gear that signs users in (`oidc-authn`, `keycloak` or `idp` among its id's words) | **GBX0721**, a warning: the screens' calls will be refused |
 
 ## External database (GDL 1.1)
 
@@ -304,7 +357,7 @@ gdl_version = "1.2"
 gear(...)  # or product(...)
 ```
 
-The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.5. The legacy `gear(gdl_version=...)` and `product(gdl_version=...)` arguments remain accepted; conflicting declarations are rejected.
+The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.6. The legacy `gear(gdl_version=...)` and `product(gdl_version=...)` arguments remain accepted; conflicting declarations are rejected.
 
 - A minor version only adds: optional fields, constructors and values. A file for an older minor version reads with no change.
 - A major version can remove a field, rename a field or change what a field means.

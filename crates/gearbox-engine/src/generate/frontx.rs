@@ -10,10 +10,17 @@
 //! recorded in `frontend/frontx.lock.json`, so a build that then fails on a
 //! name the shell's version lacks is explained by the lock, not discovered in
 //! a stack trace.
+//!
+//! A package may describe itself in a `frontx.gdl` (GDL 1.6): a shell whether
+//! it signs users in and where it reads its runtime addresses, a
+//! micro-frontend the backend gears it calls. A package without one is read
+//! as before, and what it would have said is recorded as unknown.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use gearbox_ir::{FileEntry, RelPath};
+use gearbox_gdl::{FRONTX_FILE, FileIdentity, GdlEngine};
+use gearbox_ir::frontx::{FrontxPackage, FrontxShell};
+use gearbox_ir::{Diagnostic, DiagnosticCode, Diagnostics, FileEntry, GearId, RelPath, SourceId};
 use serde_json::{Value, json};
 
 use super::{GenerateError, GenerateInput};
@@ -48,6 +55,62 @@ const GENERATED: &[&str] = &[
 
 /// The workspace glob a `FrontX` shell mounts micro-frontends from.
 const MFE_WORKSPACE: &str = "src-app/mfe_packages/*";
+
+/// What the package in `dir` declares in its `frontx.gdl`, when it has one.
+///
+/// A description that does not evaluate fails generation: a package that says
+/// something about itself and says it wrongly is not one to guess about.
+fn declared(
+    dir: &Path,
+    what: &str,
+    diagnostics: &mut Diagnostics,
+) -> Result<Option<FrontxPackage>, GenerateError> {
+    let path = dir.join(FRONTX_FILE);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| invalid(format!("{}: {e}", path.display())))?;
+    let identity = FileIdentity {
+        uri: gearbox_ir::file_uri(&path),
+        source: SourceId::new("frontx").map_err(|e| invalid(e.to_string()))?,
+        gdl_path: RelPath::new(FRONTX_FILE).map_err(|e| invalid(e.to_string()))?,
+        load_paths: None,
+    };
+    let outcome = GdlEngine::new().eval_frontx(&identity, &text);
+    let Some(package) = outcome.value else {
+        let reasons: Vec<String> = outcome
+            .diagnostics
+            .iter()
+            .map(|d| format!("{}: {}", d.code, d.message))
+            .collect();
+        return Err(invalid(format!(
+            "{what}: {FRONTX_FILE} does not evaluate: {}",
+            reasons.join("; ")
+        )));
+    };
+    diagnostics.extend(outcome.diagnostics);
+    Ok(Some(package))
+}
+
+/// How a `frontx.gdl` spells a kind, for a message that it is the wrong one.
+fn spelled(package: &FrontxPackage) -> &'static str {
+    match package {
+        FrontxPackage::Shell(_) => "`shell(...)`",
+        FrontxPackage::Mfe { .. } => "`mfe(...)`",
+        FrontxPackage::Library => "`library()`",
+    }
+}
+
+/// A gear that signs a product's users in: a browser in front of that product
+/// has to sign in before its calls are let through. The same rule Studio's
+/// frontend constructor applies: a gear id with `oidc-authn`, `keycloak` or
+/// `idp` among its hyphen-separated words.
+fn signs_users_in(gear: &GearId) -> bool {
+    let words: Vec<&str> = gear.as_str().split('-').collect();
+    words.iter().any(|w| matches!(*w, "keycloak" | "idp"))
+        || words.windows(2).any(|w| w == ["oidc", "authn"])
+}
 
 /// Every file under `dir`, relative to it, without [`SKIPPED_DIRS`] or
 /// `skip(rel)`. A symlink is refused: it could reach outside the package.
@@ -315,7 +378,105 @@ fn mount(
     })
 }
 
-pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, GenerateError> {
+/// What the shell's `frontx.gdl` declares, checked against the shell and the
+/// product: a `runtime_env` it lacks fails, and a shell that does not sign in
+/// on a product that does is reported (GBX0721).
+fn shell_declaration(
+    input: &GenerateInput<'_>,
+    shell_dir: &Path,
+    shell_name: &str,
+    diagnostics: &mut Diagnostics,
+) -> Result<Option<FrontxShell>, GenerateError> {
+    let shell = match declared(shell_dir, shell_name, diagnostics)? {
+        None => return Ok(None),
+        Some(FrontxPackage::Shell(shell)) => shell,
+        Some(other) => {
+            return Err(invalid(format!(
+                "{shell_name}: its {FRONTX_FILE} declares {}, not `shell(...)`",
+                spelled(&other)
+            )));
+        }
+    };
+    if let Some(env) = &shell.runtime_env
+        && !shell_dir.join(env).is_file()
+    {
+        return Err(invalid(format!(
+            "{shell_name}: its {FRONTX_FILE} reads the product's addresses from `{env}`, \
+             which it does not have"
+        )));
+    }
+    if !shell.signs_in
+        && let Some(idp) = input.lock.gears.keys().find(|id| signs_users_in(id))
+    {
+        diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::GenFrontxShellNoSignIn,
+                format!(
+                    "the product signs users in with `{idp}`, and the FrontX shell \
+                     {shell_name} declares `signs_in = False`: its screens' calls will be refused"
+                ),
+            )
+            .with_help("mount the screens in a shell that signs users in against the product"),
+        );
+    }
+    Ok(Some(shell))
+}
+
+/// The gears a micro-frontend requires: what the product says, and what the
+/// package's own `frontx.gdl` says. The union, because a product may know of a
+/// call the package does not (one made through a shared library), and neither
+/// may drop the other's. Also whether the package has a `frontx.gdl`.
+fn mfe_requires(
+    input: &GenerateInput<'_>,
+    mfe: &gearbox_ir::frontx::FrontxMfe,
+    dir: &Path,
+    what: &str,
+    diagnostics: &mut Diagnostics,
+) -> Result<(BTreeSet<GearId>, bool), GenerateError> {
+    let mut requires = mfe.requires.clone();
+    match declared(dir, what, diagnostics)? {
+        None => Ok((requires, false)),
+        Some(FrontxPackage::Mfe { requires: own }) => {
+            if let Some(absent) = own.iter().find(|id| !input.lock.gears.contains_key(*id)) {
+                return Err(invalid(format!(
+                    "{what} requires absent backend {absent} (its {FRONTX_FILE} says so)"
+                )));
+            }
+            requires.extend(own);
+            Ok((requires, true))
+        }
+        Some(other) => Err(invalid(format!(
+            "{what}: its {FRONTX_FILE} declares {}, not `mfe(...)`",
+            spelled(&other)
+        ))),
+    }
+}
+
+/// A package the product brings as a library is not a micro-frontend: it has
+/// no `mfe.json`, and its `frontx.gdl`, if any, says `library()`.
+fn check_library(
+    dir: &Path,
+    what: &str,
+    diagnostics: &mut Diagnostics,
+) -> Result<(), GenerateError> {
+    if dir.join("mfe.json").is_file() {
+        return Err(invalid(format!(
+            "{what} has an mfe.json: list it under `mfes`"
+        )));
+    }
+    match declared(dir, what, diagnostics)? {
+        None | Some(FrontxPackage::Library) => Ok(()),
+        Some(other) => Err(invalid(format!(
+            "{what}: its {FRONTX_FILE} declares {}, not `library()`",
+            spelled(&other)
+        ))),
+    }
+}
+
+pub(super) fn files(
+    input: &GenerateInput<'_>,
+    diagnostics: &mut Diagnostics,
+) -> Result<Vec<FileEntry>, GenerateError> {
     let Some(frontend) = &input.lock.frontend else {
         return Ok(Vec::new());
     };
@@ -348,6 +509,7 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
         )));
     }
     let carries = carried(&shell_dir, &shell_manifest)?;
+    let shell_declares = shell_declaration(input, &shell_dir, &shell_name, diagnostics)?;
     // The shell's npm lock is kept: `npm install` starts from it, so what the
     // shell resolved stays resolved, and only what the product changed (its
     // micro-frontends, the pins aligned) is resolved anew. Without it a range
@@ -367,11 +529,7 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
             &library.package,
             &what,
         )?;
-        if dir.join("mfe.json").is_file() {
-            return Err(invalid(format!(
-                "{what} has an mfe.json: list it under `mfes`"
-            )));
-        }
+        check_library(&dir, &what, diagnostics)?;
         let mounted = mount(&dir, &what, &carries)?;
         if !names.insert(mounted.name.clone()) || !dirs.insert(mounted.folder.clone()) {
             return Err(invalid(format!(
@@ -425,6 +583,7 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
             &mfe.package,
             &what,
         )?;
+        let (requires, described) = mfe_requires(input, mfe, &dir, &what, diagnostics)?;
         let mfe_json = read_json(&dir.join("mfe.json"))
             .map_err(|_| invalid(format!("{what}: a micro-frontend has an mfe.json")))?;
         let extensions: Vec<Value> = mfe_json["extensions"]
@@ -447,7 +606,8 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
             "name": package.name,
             "version": package.version,
             "directory": package.folder,
-            "requires": mfe.requires,
+            "requires": requires,
+            "described": described,
             "extensions": extensions,
             "aligned": package.aligned_json(),
             "blake3": package.hash,
@@ -464,6 +624,10 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
             "carries": carries,
             "blake3": hash(&shell_files),
             "npmLock": npm_lock,
+            // `null` when the shell has no `frontx.gdl` to say.
+            "signsIn": shell_declares.as_ref().map(|s| s.signs_in),
+            "runtimeEnv": shell_declares.as_ref().and_then(|s| s.runtime_env.clone()),
+            "described": shell_declares.is_some(),
         },
         "mfes": mounted,
         "libraries": libraries.iter().map(|l| json!({

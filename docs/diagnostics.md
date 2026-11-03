@@ -15,7 +15,7 @@ remedy at the point it is raised
 (`cpt-gearbox-nfr-actionable-diagnostics`), which is per-occurrence and
 so is not listed here.
 
-Codes: **125**.
+Codes: **126**.
 
 ## `GBX01xx` — Parsing and evaluating GDL
 
@@ -1626,6 +1626,7 @@ incomplete, so GBX0124 cannot tell whether the product maps all of it.
 | [GBX0711](#gbx0711) | warning | the registry could not be reached |
 | [GBX0712](#gbx0712) | warning | a product template did not take the new builtin |
 | [GBX0720](#gbx0720) | error | invalid UI composition or package |
+| [GBX0721](#gbx0721) | warning | the product signs users in and its FrontX shell does not |
 
 ### GBX0701
 
@@ -1768,4 +1769,17 @@ someone merges by hand, or deletes the copy to take the default.
 **invalid UI composition or package**
 
 A UI package or composition cannot be built for this product.
+
+### GBX0721
+
+**the product signs users in and its FrontX shell does not**
+
+A product signs its users in, and the `FrontX` shell it mounts its
+screens in says (`shell(signs_in = False)` in its `frontx.gdl`) that it
+does not.
+
+The frontend still builds and serves, and every call its screens make to
+the backend comes back 401: nothing obtained a token to send. Pick a shell
+that signs in, or correct the shell's `frontx.gdl` if it is wrong. A shell
+with no `frontx.gdl` says nothing, and is not reported.
 
