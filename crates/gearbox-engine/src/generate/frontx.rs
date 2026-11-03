@@ -253,6 +253,68 @@ fn hash(files: &[(String, Vec<u8>)]) -> String {
     hasher.finalize().to_hex().to_string()
 }
 
+/// A package mounted under `src-app/mfe_packages/<folder>`, its `FrontX` pins
+/// set to the shell's.
+struct Mounted {
+    name: String,
+    version: Value,
+    folder: String,
+    aligned: Vec<Aligned>,
+    /// Of the package as written, before its pins were aligned.
+    hash: String,
+    files: Vec<(String, Vec<u8>)>,
+}
+
+impl Mounted {
+    fn aligned_json(&self) -> Vec<Value> {
+        self.aligned
+            .iter()
+            .map(|a| json!({"package": a.package, "from": a.from, "to": a.to}))
+            .collect()
+    }
+}
+
+fn mount(
+    dir: &Path,
+    what: &str,
+    carries: &BTreeMap<String, String>,
+) -> Result<Mounted, GenerateError> {
+    let mut manifest = read_json(&dir.join("package.json"))?;
+    let name = str_field(&manifest, "name", what)?.to_owned();
+    let folder = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| invalid(format!("{what}: no directory name")))?
+        .to_owned();
+    let mut files = Vec::new();
+    walk(dir, "", &|rel| rel == "package-lock.json", &mut files)?;
+    let hash = hash(&files);
+    let aligned = align(&mut manifest, carries);
+    let mut mounted = Vec::with_capacity(files.len());
+    for (path, bytes) in files {
+        let bytes = if path == "package.json" && !aligned.is_empty() {
+            let mut text =
+                serde_json::to_vec_pretty(&manifest).map_err(|e| invalid(e.to_string()))?;
+            text.push(b'\n');
+            text
+        } else {
+            bytes
+        };
+        mounted.push((
+            format!("frontend/src-app/mfe_packages/{folder}/{path}"),
+            bytes,
+        ));
+    }
+    Ok(Mounted {
+        name,
+        version: manifest["version"].clone(),
+        folder,
+        aligned,
+        hash,
+        files: mounted,
+    })
+}
+
 pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, GenerateError> {
     let Some(frontend) = &input.lock.frontend else {
         return Ok(Vec::new());
@@ -293,9 +355,37 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
     let npm_lock = std::fs::read(shell_dir.join("package-lock.json"))
         .ok()
         .map(|bytes| blake3::hash(&bytes).to_hex().to_string());
+    // The libraries the product brings, each under its own directory name;
+    // one the shell has there gives way.
+    let mut names = BTreeSet::new();
+    let mut dirs = BTreeSet::new();
+    let mut libraries = Vec::new();
+    for library in &frontend.libraries {
+        let what = format!("library {}", library.package);
+        let dir = package_dir(
+            base(input, library.source.as_ref(), &what)?,
+            &library.package,
+            &what,
+        )?;
+        if dir.join("mfe.json").is_file() {
+            return Err(invalid(format!(
+                "{what} has an mfe.json: list it under `mfes`"
+            )));
+        }
+        let mounted = mount(&dir, &what, &carries)?;
+        if !names.insert(mounted.name.clone()) || !dirs.insert(mounted.folder.clone()) {
+            return Err(invalid(format!(
+                "{}: mounted twice, or two packages share `{}`",
+                mounted.name, mounted.folder
+            )));
+        }
+        libraries.push(mounted);
+    }
+
     // The shell's own micro-frontends (a template's examples) are not the
     // product's: only the ones it picks are mounted. A package there without
-    // an `mfe.json` is a library the shell's screens share, and stays.
+    // an `mfe.json` is a library the shell's screens share, and stays unless
+    // the product brings its own.
     let own_mfes = own_mfes(&shell_dir)?;
     let mut shell_files = Vec::new();
     walk(
@@ -304,21 +394,23 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
         &|rel| {
             rel.strip_prefix("src-app/mfe_packages/")
                 .and_then(|r| r.split('/').next())
-                .is_some_and(|dir| own_mfes.contains(dir))
+                .is_some_and(|dir| own_mfes.contains(dir) || dirs.contains(dir))
                 || rel == "public/generated-mfe-manifests.json"
                 || GENERATED.contains(&rel)
         },
         &mut shell_files,
     )?;
 
-    // The micro-frontends, each under its own directory name.
-    let mut mounted = Vec::new();
-    let mut names = BTreeSet::new();
-    let mut dirs = BTreeSet::new();
     let mut out_files: Vec<(String, Vec<u8>)> = shell_files
         .iter()
         .map(|(p, b)| (format!("frontend/{p}"), b.clone()))
         .collect();
+    for library in &mut libraries {
+        out_files.append(&mut library.files);
+    }
+
+    // The micro-frontends, each under its own directory name.
+    let mut mounted = Vec::new();
     for mfe in &frontend.mfes {
         let what = format!("micro-frontend {}", mfe.package);
         if let Some(absent) = mfe
@@ -333,10 +425,8 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
             &mfe.package,
             &what,
         )?;
-        let mut manifest = read_json(&dir.join("package.json"))?;
-        let name = str_field(&manifest, "name", &what)?.to_owned();
         let mfe_json = read_json(&dir.join("mfe.json"))
-            .map_err(|_| invalid(format!("{name}: a micro-frontend has an mfe.json")))?;
+            .map_err(|_| invalid(format!("{what}: a micro-frontend has an mfe.json")))?;
         let extensions: Vec<Value> = mfe_json["extensions"]
             .as_array()
             .map(|all| {
@@ -345,42 +435,22 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
                     .collect()
             })
             .unwrap_or_default();
-        let folder = dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or_else(|| invalid(format!("{what}: no directory name")))?
-            .to_owned();
-        if !names.insert(name.clone()) || !dirs.insert(folder.clone()) {
+        let mut package = mount(&dir, &what, &carries)?;
+        if !names.insert(package.name.clone()) || !dirs.insert(package.folder.clone()) {
             return Err(invalid(format!(
-                "{name}: mounted twice, or two packages share `{folder}`"
+                "{}: mounted twice, or two packages share `{}`",
+                package.name, package.folder
             )));
         }
-        let mut files = Vec::new();
-        walk(&dir, "", &|rel| rel == "package-lock.json", &mut files)?;
-        let source_hash = hash(&files);
-        let aligned = align(&mut manifest, &carries);
-        for (path, bytes) in files {
-            let bytes = if path == "package.json" && !aligned.is_empty() {
-                let mut text =
-                    serde_json::to_vec_pretty(&manifest).map_err(|e| invalid(e.to_string()))?;
-                text.push(b'\n');
-                text
-            } else {
-                bytes
-            };
-            out_files.push((
-                format!("frontend/src-app/mfe_packages/{folder}/{path}"),
-                bytes,
-            ));
-        }
+        out_files.append(&mut package.files);
         mounted.push(json!({
-            "name": name,
-            "version": manifest["version"],
-            "directory": folder,
+            "name": package.name,
+            "version": package.version,
+            "directory": package.folder,
             "requires": mfe.requires,
             "extensions": extensions,
-            "aligned": aligned.iter().map(|a| json!({"package": a.package, "from": a.from, "to": a.to})).collect::<Vec<_>>(),
-            "blake3": source_hash,
+            "aligned": package.aligned_json(),
+            "blake3": package.hash,
         }));
     }
 
@@ -396,6 +466,13 @@ pub(super) fn files(input: &GenerateInput<'_>) -> Result<Vec<FileEntry>, Generat
             "npmLock": npm_lock,
         },
         "mfes": mounted,
+        "libraries": libraries.iter().map(|l| json!({
+            "name": l.name,
+            "version": l.version,
+            "directory": l.folder,
+            "aligned": l.aligned_json(),
+            "blake3": l.hash,
+        })).collect::<Vec<_>>(),
     });
     let mut out = Vec::new();
     for (path, bytes) in out_files {

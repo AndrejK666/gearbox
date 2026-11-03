@@ -92,6 +92,7 @@ fn a_frontx_frontend_names_its_shell_and_micro_frontends() {
                 frontx_mfe(package = path("studio-frontend/src-app/mfe_packages/people-mfe"), requires = ["studio-user"]),
                 frontx_mfe(package = path("blank-mfe"), source = "frontx-templates"),
             ],
+            libraries = [frontx_library(package = path("studio-frontend/src-app/mfe_packages/shared"))],
             entry_points = {"Portal": "/"},
         ),"#,
     ));
@@ -113,6 +114,12 @@ fn a_frontx_frontend_names_its_shell_and_micro_frontends() {
         ["studio-user"]
     );
     assert!(frontend.mfes[0].source.is_none());
+    assert_eq!(frontend.libraries.len(), 1);
+    assert_eq!(
+        frontend.libraries[0].package,
+        "studio-frontend/src-app/mfe_packages/shared"
+    );
+    assert!(frontend.libraries[0].source.is_none());
     assert_eq!(frontend.entry_points["Portal"], "/");
 }
 

@@ -168,6 +168,14 @@ pub fn build(
             shell: frontend.shell.clone(),
             source: frontend.source.clone(),
             mfes,
+            libraries: frontend
+                .libraries
+                .iter()
+                .map(|library| gearbox_ir::frontx::FrontxLibrary {
+                    package: library.package.clone(),
+                    source: library.source.clone(),
+                })
+                .collect(),
             entry_points: frontend.entry_points.iter().cloned().collect(),
         })
     });

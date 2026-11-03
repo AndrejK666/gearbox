@@ -134,6 +134,8 @@ frontend = frontx_product(
             requires = ["studio-user", "account-management"],
         ),
     ],
+    # optional: packages the micro-frontends share that are not ones themselves
+    libraries = [frontx_library(package = path("studio-frontend/src-app/mfe_packages/shared"))],
     entry_points = {"Portal": "/"},
 ),
 ```
@@ -151,6 +153,11 @@ micro-frontends are module-federation remotes the shell mounts from `mfe.json`.
   its path is relative to the product description. `requires` names the
   backend gears its screens call; resolution reports one the profile does not
   have (GBX0720). It neither adds the gear nor links anything.
+- **A library** is a package the micro-frontends depend on that is not one
+  itself: a `package.json` and no `mfe.json`. A shell keeps its own libraries;
+  `libraries` brings one the shell lacks (micro-frontends written for another
+  shell), and replaces one the shell has under the same directory. Its FrontX
+  pins are aligned like a micro-frontend's.
 - **Versions are aligned to the shell.** A micro-frontend gets the FrontX the
   shell carries, whatever it pinned. Generation sets each exact pin of a
   carried package to the shell's version (peer ranges are left alone) and
@@ -162,10 +169,10 @@ Generation writes `frontend/`: the shell's files (without its own
 micro-frontends (a library beside them, with no `mfe.json`, stays), or
 install and build output; its `package-lock.json` is kept, and the image's
 `npm install` starts from it),
-each micro-frontend under `src-app/mfe_packages/<its directory name>`,
-`frontx.lock.json` (the shell's name, version and carried packages; each
+each micro-frontend and library under `src-app/mfe_packages/<its directory
+name>`, `frontx.lock.json` (the shell's name, version and carried packages; each
 micro-frontend's name, version, extensions, required gears, aligned pins and
-content hash), a `Dockerfile` and `.dockerignore`. A kubernetes profile adds
+content hash; each library's name, version, aligned pins and content hash), a `Dockerfile` and `.dockerignore`. A kubernetes profile adds
 `frontend/nginx.conf`, which proxies `/cf/` to the API Gateway application
 unchanged and serves `/env.js` uncached, and the deployment and service under
 the umbrella chart's `ui` values, image `gbx-<product>-frontend:<version>`.

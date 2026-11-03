@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use gearbox_engine::TemplateSet;
 use gearbox_engine::generate::GenerateInput;
-use gearbox_ir::frontx::{FrontxMfe, ProductFrontx};
+use gearbox_ir::frontx::{FrontxLibrary, FrontxMfe, ProductFrontx};
 use gearbox_ir::{Discovery, FileSet, ProfileId, RelPath, RuntimeCap};
 use serde_json::{Value, json};
 
@@ -90,10 +90,22 @@ fn mfe(dir: &Path) {
     write(&dir.join("src/lifecycle.tsx"), "export {};\n");
 }
 
-fn generated(tmp: &Tmp, requires: &[&str]) -> Result<FileSet, String> {
+/// A library the micro-frontends share, written for another shell than the
+/// template: the template has its own `shared`, which this one replaces.
+fn library(dir: &Path) {
+    json_file(
+        &dir.join("package.json"),
+        &json!({"name": "@demo/shared", "version": "0.3.0",
+            "dependencies": {"@gears-frontx/react": "0.2.0-alpha.0"}}),
+    );
+    write(&dir.join("src/index.ts"), "export const shared = 1;\n");
+}
+
+fn generated(tmp: &Tmp, requires: &[&str], libraries: &[FrontxLibrary]) -> Result<FileSet, String> {
     let product_dir = tmp.0.join("product");
     shell(&product_dir.join("template-shell"));
     mfe(&product_dir.join("screens/people-mfe"));
+    library(&product_dir.join("screens/shared"));
 
     let mut gateway = fixtures::gear_with_caps(
         "api-gateway",
@@ -127,6 +139,7 @@ fn generated(tmp: &Tmp, requires: &[&str]) -> Result<FileSet, String> {
                 .map(|id| fixtures::gid(id))
                 .collect::<BTreeSet<_>>(),
         }],
+        libraries: libraries.to_vec(),
         entry_points: BTreeMap::from([("Portal".to_owned(), "/".to_owned())]),
     });
     let resolution = gearbox_engine::resolve::resolve(&catalogue, &intent, &prod);
@@ -168,7 +181,7 @@ fn has(files: &FileSet, path: &str) -> bool {
 #[test]
 fn a_frontx_frontend_mounts_its_micro_frontends_in_the_shell() {
     let tmp = Tmp::new("mount");
-    let files = generated(&tmp, &["api-gateway"]).unwrap();
+    let files = generated(&tmp, &["api-gateway"], &[]).unwrap();
 
     // The shell, without its own example, install output or root Dockerfile;
     // its shared library stays.
@@ -241,6 +254,47 @@ fn a_frontx_frontend_mounts_its_micro_frontends_in_the_shell() {
 #[test]
 fn a_micro_frontend_that_requires_an_absent_gear_is_refused_at_resolve() {
     let tmp = Tmp::new("absent");
-    let err = generated(&tmp, &["studio-user"]).unwrap_err();
+    let err = generated(&tmp, &["studio-user"], &[]).unwrap_err();
     assert!(err.contains("requires backend `studio-user`"), "{err}");
+}
+
+#[test]
+fn a_library_the_product_brings_replaces_the_shells_and_is_aligned() {
+    let tmp = Tmp::new("library");
+    let shared = FrontxLibrary {
+        package: "screens/shared".into(),
+        source: None,
+    };
+    let files = generated(&tmp, &["api-gateway"], &[shared]).unwrap();
+
+    text(&files, "frontend/src-app/mfe_packages/shared/src/index.ts");
+    let manifest: Value = serde_json::from_str(text(
+        &files,
+        "frontend/src-app/mfe_packages/shared/package.json",
+    ))
+    .unwrap();
+    assert_eq!(manifest["version"], "0.3.0");
+    assert_eq!(
+        manifest["dependencies"]["@gears-frontx/react"],
+        "0.2.0-alpha.15"
+    );
+
+    let lock: Value = serde_json::from_str(text(&files, "frontend/frontx.lock.json")).unwrap();
+    assert_eq!(lock["libraries"][0]["name"], "@demo/shared");
+    assert_eq!(lock["libraries"][0]["directory"], "shared");
+    assert_eq!(
+        lock["libraries"][0]["aligned"],
+        json!([{"package": "@gears-frontx/react", "from": "0.2.0-alpha.0", "to": "0.2.0-alpha.15"}])
+    );
+}
+
+#[test]
+fn a_micro_frontend_is_not_a_library() {
+    let tmp = Tmp::new("not-library");
+    let people = FrontxLibrary {
+        package: "screens/people-mfe".into(),
+        source: None,
+    };
+    let err = generated(&tmp, &["api-gateway"], &[people]).unwrap_err();
+    assert!(err.contains("list it under `mfes`"), "{err}");
 }

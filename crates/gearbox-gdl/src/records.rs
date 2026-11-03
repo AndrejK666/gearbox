@@ -111,12 +111,22 @@ gdl_record! {
 }
 
 gdl_record! {
-    /// `frontx_product(shell = path(...), mfes = [frontx_mfe(...)])`
+    /// `frontx_library(package = path(...), source = "...")`
+    FrontxLibraryRecord as "gdl_frontx_library" {
+        pub package: String,
+        #[allocative(skip)]
+        pub source: Option<gearbox_ir::SourceId>,
+    }
+}
+
+gdl_record! {
+    /// `frontx_product(shell = path(...), mfes = [frontx_mfe(...)], libraries = [frontx_library(...)])`
     FrontxProductRecord as "gdl_frontx_product" {
         pub shell: String,
         #[allocative(skip)]
         pub source: Option<gearbox_ir::SourceId>,
         pub mfes: Vec<FrontxMfeRecord>,
+        pub libraries: Vec<FrontxLibraryRecord>,
         pub entry_points: Vec<(String, String)>,
     }
 }

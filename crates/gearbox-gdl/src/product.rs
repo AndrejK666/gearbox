@@ -702,6 +702,27 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
         })
     }
 
+    /// A package `FrontX` micro-frontends share that is not one itself (GDL 1.5):
+    /// a library of common components, mounted beside them.
+    ///
+    /// # Arguments
+    /// * `package`: The package directory, as path(...): it holds `package.json`.
+    /// * `source`: Optional source id; `package` is relative to its root, else to product.gdl.
+    fn frontx_library<'v>(
+        #[starlark(require = named)] package: &'v SourceAtRecord,
+        #[starlark(require = named)] source: Option<String>,
+    ) -> anyhow::Result<crate::records::FrontxLibraryRecord> {
+        if package.kind != "path" {
+            return Err(anyhow::anyhow!(
+                "frontx_library(package = ...) requires path(...)"
+            ));
+        }
+        Ok(crate::records::FrontxLibraryRecord {
+            package: package.at.clone().unwrap_or_default(),
+            source: source.map(gearbox_ir::SourceId::new).transpose()?,
+        })
+    }
+
     /// A `FrontX` frontend: a shell from a `FrontX` template with micro-frontends
     /// mounted in it (GDL 1.5). The alternative to `ui_product(...)`.
     ///
@@ -710,11 +731,16 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     ///   or a product's own fork of one.
     /// * `source`: Optional source id; `shell` is relative to its root, else to product.gdl.
     /// * `mfes`: The micro-frontends, as `frontx_mfe(...)`, in the order the shell lists them.
+    /// * `libraries`: Packages the micro-frontends share, as `frontx_library(...)`; one the
+    ///   shell has under the same directory is replaced.
     /// * `entry_points`: Named UI paths shown as links after deployment.
     fn frontx_product<'v>(
         #[starlark(require = named)] shell: &'v SourceAtRecord,
         #[starlark(require = named)] source: Option<String>,
         #[starlark(require = named)] mfes: UnpackList<&'v crate::records::FrontxMfeRecord>,
+        #[starlark(require = named)] libraries: Option<
+            UnpackList<&'v crate::records::FrontxLibraryRecord>,
+        >,
         #[starlark(require = named)] entry_points: Option<Value<'v>>,
     ) -> anyhow::Result<crate::records::FrontxProductRecord> {
         if shell.kind != "path" {
@@ -726,6 +752,9 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
             shell: shell.at.clone().unwrap_or_default(),
             source: source.map(gearbox_ir::SourceId::new).transpose()?,
             mfes: mfes.items.into_iter().cloned().collect(),
+            libraries: libraries
+                .map(|l| l.items.into_iter().cloned().collect())
+                .unwrap_or_default(),
             entry_points: entry_points_of(entry_points)?,
         })
     }

@@ -23,6 +23,17 @@ pub struct FrontxMfe {
     pub requires: BTreeSet<GearId>,
 }
 
+/// A package the micro-frontends share that is not one itself (no `mfe.json`),
+/// such as a library of common components. It is mounted beside them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct FrontxLibrary {
+    /// The package directory, relative to `source`'s root, or to the product
+    /// description without one.
+    pub package: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SourceId>,
+}
+
 /// A product's `FrontX` frontend, as the description chose it. The lock carries
 /// the same record once resolution has checked the backends it requires.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -34,6 +45,10 @@ pub struct ProductFrontx {
     pub source: Option<SourceId>,
     /// In the order the product lists them.
     pub mfes: Vec<FrontxMfe>,
+    /// Packages the micro-frontends share, mounted beside them. One the shell
+    /// already has under the same directory is replaced.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub libraries: Vec<FrontxLibrary>,
     /// Named same-origin paths published by deployment adapters.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub entry_points: BTreeMap<String, String>,

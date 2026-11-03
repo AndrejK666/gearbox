@@ -59,6 +59,7 @@ export * from "./FeatureGate";
 export * from "./FileAction";
 export * from "./FileKind";
 export * from "./FilePlan";
+export * from "./FrontxLibrary";
 export * from "./FrontxMfe";
 export * from "./GearDescriptor";
 export * from "./GearDocs";
