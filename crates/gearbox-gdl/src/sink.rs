@@ -161,6 +161,7 @@ pub struct ProductDecl {
 pub struct GdlSink {
     gear: RefCell<Option<GearDecl>>,
     product: RefCell<Option<ProductDecl>>,
+    frontx: RefCell<Option<gearbox_ir::frontx::FrontxPackage>>,
     diagnostics: RefCell<Diagnostics>,
     /// Set when a second `gear()`/`product()` call is seen, so the engine can
     /// report GBX0105 without the host function needing to fail the evaluation.
@@ -197,6 +198,17 @@ impl GdlSink {
         }
     }
 
+    /// Record what a `frontx.gdl` declares. Same write-once rule: a package is
+    /// one kind, so a second `shell()`/`mfe()`/`library()` is GBX0105.
+    pub fn set_frontx(&self, package: gearbox_ir::frontx::FrontxPackage) {
+        let mut slot = self.frontx.borrow_mut();
+        if slot.is_some() {
+            *self.duplicate.borrow_mut() = true;
+        } else {
+            *slot = Some(package);
+        }
+    }
+
     #[must_use]
     pub fn saw_duplicate(&self) -> bool {
         *self.duplicate.borrow()
@@ -212,6 +224,12 @@ impl GdlSink {
     #[must_use]
     pub fn take_product(&self) -> Option<ProductDecl> {
         self.product.borrow_mut().take()
+    }
+
+    /// Take the recorded `FrontX` package declaration, leaving the sink empty.
+    #[must_use]
+    pub fn take_frontx(&self) -> Option<gearbox_ir::frontx::FrontxPackage> {
+        self.frontx.borrow_mut().take()
     }
 
     /// Take the collected diagnostics, leaving the sink empty.

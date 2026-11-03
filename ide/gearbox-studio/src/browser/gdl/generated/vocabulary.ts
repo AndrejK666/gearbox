@@ -2,7 +2,8 @@
 // Regenerate with `make grammar`; the result must be a no-op in git.
 //
 // Derived from the globals the interpreter itself evaluates against
-// (`gearbox_gdl::globals::gear_vocabulary`, `product::product_vocabulary`) and from
+// (`gearbox_gdl::globals::gear_vocabulary`, `product::product_vocabulary`,
+// `frontx::frontx_vocabulary`) and from
 // the keyword verdicts of `gearbox_gdl::declarative::keyword_verdicts`, so the editor
 // cannot colour a function the engine does not have, nor miss one it does.
 
@@ -55,6 +56,9 @@ export const PRODUCT_FUNCTIONS: readonly string[] = [
   "ui_product",
   "use_gear",
 ];
+
+/** The callable vocabulary of a `frontx.gdl` (GDL 1.6). */
+export const FRONTX_FUNCTIONS: readonly string[] = ["library", "mfe", "shell"];
 
 /** Starlark standard callables GDL keeps. Legal, but not GDL's own -- coloured
  * differently so a typo'd `use_gears(` stays visibly plain next to a `use_gear(`. */

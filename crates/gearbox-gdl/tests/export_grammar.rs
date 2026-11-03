@@ -39,6 +39,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use gearbox_gdl::declarative::{KeywordVerdict, keyword_verdicts};
+use gearbox_gdl::frontx::frontx_vocabulary;
 use gearbox_gdl::globals::gear_vocabulary;
 use gearbox_gdl::product::product_vocabulary;
 use starlark::environment::{Globals, GlobalsBuilder};
@@ -145,6 +146,7 @@ fn record(namespaces: &Members) -> String {
 fn render() -> String {
     let gear = surface_of(&gear_vocabulary());
     let product = surface_of(&product_vocabulary());
+    let frontx = surface_of(&frontx_vocabulary());
 
     // The value namespaces are registered into both, and identically -- both
     // loops walk `vocabulary::ALL_NAMESPACES`. Merging rather than emitting two
@@ -159,12 +161,13 @@ fn render() -> String {
          // Regenerate with `make grammar`; the result must be a no-op in git.\n\
          //\n\
          // Derived from the globals the interpreter itself evaluates against\n\
-         // (`gearbox_gdl::globals::gear_vocabulary`, `product::product_vocabulary`) and from\n\
+         // (`gearbox_gdl::globals::gear_vocabulary`, `product::product_vocabulary`,\n\
+         // `frontx::frontx_vocabulary`) and from\n\
          // the keyword verdicts of `gearbox_gdl::declarative::keyword_verdicts`, so the editor\n\
          // cannot colour a function the engine does not have, nor miss one it does.\n\n",
     );
 
-    let sections: [(&str, &str, String); 8] = [
+    let sections: [(&str, &str, String); 9] = [
         (
             "The callable vocabulary of a `gear.gdl`.",
             "GEAR_FUNCTIONS: readonly string[]",
@@ -174,6 +177,11 @@ fn render() -> String {
             "The callable vocabulary of a `product.gdl`.",
             "PRODUCT_FUNCTIONS: readonly string[]",
             array(&product.functions),
+        ),
+        (
+            "The callable vocabulary of a `frontx.gdl` (GDL 1.6).",
+            "FRONTX_FUNCTIONS: readonly string[]",
+            array(&frontx.functions),
         ),
         (
             "Starlark standard callables GDL keeps. Legal, but not GDL's own -- coloured\n\

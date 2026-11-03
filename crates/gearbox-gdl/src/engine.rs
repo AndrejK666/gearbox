@@ -95,7 +95,7 @@ impl GdlEngine {
             identity,
             source,
             &gear_globals(),
-            "gear",
+            &Declares::GEAR,
             GdlSink::take_gear,
         ) {
             Ok(pair) => pair,
@@ -148,7 +148,7 @@ impl GdlEngine {
             identity,
             source,
             &crate::product::product_globals(),
-            "product",
+            &Declares::PRODUCT,
             GdlSink::take_product,
         ) {
             Ok(pair) => pair,
@@ -167,13 +167,86 @@ impl GdlEngine {
     }
 }
 
+impl GdlEngine {
+    /// Evaluate one `frontx.gdl` into what the `FrontX` package declares about
+    /// itself (GDL 1.6).
+    ///
+    /// Nothing here reads the package: whether `runtime_env` exists, or the
+    /// package is mounted as the kind it says, is asked where the package is
+    /// read, at generation.
+    #[must_use]
+    #[expect(
+        clippy::unused_self,
+        reason = "symmetry with eval_gear; cached Globals will live on the engine"
+    )]
+    pub fn eval_frontx(
+        &self,
+        identity: &FileIdentity,
+        source: &str,
+    ) -> EvalOutcome<gearbox_ir::frontx::FrontxPackage> {
+        match evaluate(
+            identity,
+            source,
+            &crate::frontx::frontx_globals(),
+            &Declares::FRONTX,
+            GdlSink::take_frontx,
+        ) {
+            Ok((package, mut diagnostics)) => {
+                diagnostics.finish();
+                if diagnostics.has_errors() {
+                    EvalOutcome::failed(diagnostics)
+                } else {
+                    EvalOutcome {
+                        value: Some(package),
+                        diagnostics,
+                    }
+                }
+            }
+            Err(diagnostics) => EvalOutcome::failed(diagnostics),
+        }
+    }
+}
+
+/// The top-level declaration a kind of file makes, for the cardinality
+/// diagnostics: `gear()` in a `gear.gdl`, one of three in a `frontx.gdl`.
+struct Declares {
+    /// `` `gear()` ``
+    call: &'static str,
+    /// `` `gear(...)` ``
+    add: &'static str,
+    file: &'static str,
+    /// What the file describes exactly one of.
+    one: &'static str,
+}
+
+impl Declares {
+    const GEAR: Self = Self {
+        call: "`gear()`",
+        add: "`gear(...)`",
+        file: crate::GEAR_FILE,
+        one: "gear",
+    };
+    const PRODUCT: Self = Self {
+        call: "`product()`",
+        add: "`product(...)`",
+        file: crate::PRODUCT_FILE,
+        one: "product",
+    };
+    const FRONTX: Self = Self {
+        call: "`shell()`, `mfe()` or `library()`",
+        add: "`shell(...)`, `mfe(...)` or `library(...)`",
+        file: crate::FRONTX_FILE,
+        one: "FrontX package",
+    };
+}
+
 /// The shared pipeline: token scan, parse, evaluate, drain the sink.
 ///
 /// The order is deliberate. Scanning first means a file full of conditionals
 /// reports every one of them (GBX0103) instead of stopping at whatever the
 /// parser happens to dislike first.
 ///
-/// `decl_name` is the top-level call this file is expected to make, so the
+/// `declares` is the top-level call this file is expected to make, so the
 /// cardinality diagnostic can name it. `gear()` and `product()` are registered
 /// in different global sets, so a file that calls the wrong one fails at the
 /// call rather than producing half of each.
@@ -181,7 +254,7 @@ fn evaluate<T>(
     identity: &FileIdentity,
     source: &str,
     globals: &starlark::environment::Globals,
-    decl_name: &str,
+    declares: &Declares,
     take: impl FnOnce(&GdlSink) -> Option<T>,
 ) -> Result<(T, Diagnostics), Diagnostics> {
     let forbidden = scan_forbidden_tokens(&identity.uri, source);
@@ -259,10 +332,10 @@ fn evaluate<T>(
     if sink.saw_duplicate() {
         diagnostics.push(cardinality_error(
             &identity.uri,
-            &format!("more than one `{decl_name}()` declaration"),
+            &format!("more than one {} declaration", declares.call),
             &format!(
-                "a {decl_name}.gdl describes exactly one {decl_name}; split the extra \
-                 declaration into its own file"
+                "a {} describes exactly one {}; split the extra declaration into its own file",
+                declares.file, declares.one
             ),
         ));
     }
@@ -270,8 +343,8 @@ fn evaluate<T>(
     let Some(value) = take(&sink) else {
         diagnostics.push(cardinality_error(
             &identity.uri,
-            &format!("no `{decl_name}()` declaration"),
-            &format!("add a `{decl_name}(...)` call"),
+            &format!("no {} declaration", declares.call),
+            &format!("add a {} call", declares.add),
         ));
         diagnostics.finish();
         return Err(diagnostics);

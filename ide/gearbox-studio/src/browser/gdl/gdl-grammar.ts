@@ -12,7 +12,7 @@
 // `\u{...}`, a string is raw exactly when its prefix contains `r`, and f-strings
 // do not exist (`enable_f_strings: false`).
 //
-// One grammar for both `gear.gdl` and `product.gdl`. Splitting on filename
+// One grammar for `gear.gdl`, `product.gdl` and `frontx.gdl`. Splitting on filename
 // would need two language ids and would still not cover the `load()` fragments,
 // which may be named anything -- and highlighting is not validation. The engine
 // already refuses `gear()` inside a product with a better message than a
@@ -21,6 +21,7 @@
 import {
   FORBIDDEN_KEYWORDS,
   FUNCTION_NAMESPACES,
+  FRONTX_FUNCTIONS,
   GEAR_FUNCTIONS,
   IMPORT_KEYWORD,
   PRODUCT_FUNCTIONS,
@@ -38,12 +39,12 @@ const alt = (words: readonly string[]): string => words.join("|");
 const IDENT = String.raw`[A-Za-z_][A-Za-z0-9_]*`;
 
 /**
- * The GDL callables, gear-side and product-side together.
+ * The GDL callables, gear-side, product-side and `frontx.gdl` together.
  *
  * A union rather than two rules: `path()` is a product function and `cargo()` a
  * gear one, but a reader opening a `load()` fragment should see both coloured.
  */
-const GDL_FUNCTIONS = [...new Set([...GEAR_FUNCTIONS, ...PRODUCT_FUNCTIONS])].sort();
+const GDL_FUNCTIONS = [...new Set([...GEAR_FUNCTIONS, ...PRODUCT_FUNCTIONS, ...FRONTX_FUNCTIONS])].sort();
 
 /**
  * Escape sequences, per `starlark_syntax::lexer::escape`.

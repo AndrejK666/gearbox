@@ -53,3 +53,38 @@ pub struct ProductFrontx {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub entry_points: BTreeMap<String, String>,
 }
+
+/// What a `FrontX` package says about itself in its own `frontx.gdl`.
+///
+/// Only what `package.json` and `mfe.json` cannot say: a package's name,
+/// version and pins stay in `package.json`, a micro-frontend's screens in
+/// `mfe.json`, and what a shell carries is still read from its workspace.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FrontxPackage {
+    /// `shell(...)`: a workspace that mounts micro-frontends.
+    Shell(FrontxShell),
+    /// `mfe(...)`: a micro-frontend.
+    Mfe {
+        /// Backend gears its screens call. Added to what the product's
+        /// `frontx_mfe(requires = ...)` names for it.
+        #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+        requires: BTreeSet<GearId>,
+    },
+    /// `library()`: a package micro-frontends share that is not one itself.
+    Library,
+}
+
+/// What a shell does for a running product beyond mounting screens.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrontxShell {
+    /// Whether it signs users in before it mounts any screen. A shell that
+    /// does not, on a product whose backend wants signed-in callers, mounts
+    /// screens whose calls are refused.
+    pub signs_in: bool,
+    /// The file, relative to the shell, it reads the product's addresses from
+    /// at start (`public/env.js`), so one image serves every environment.
+    /// `None` when it takes them at build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_env: Option<String>,
+}

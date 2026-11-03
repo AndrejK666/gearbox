@@ -24,7 +24,7 @@ use crate::product::{PRODUCT_FILE, eval_product_text};
 
 /// Evaluate `source` as the kind of description `path` names.
 ///
-/// `None` means the name is neither `product.gdl` nor `gear.gdl`, so there is
+/// `None` means the name is not `product.gdl`, `gear.gdl` or `frontx.gdl`, so there is
 /// nothing this can say about the file -- distinct from `Some` with no
 /// diagnostics, which says the description is clean.
 ///
@@ -48,6 +48,7 @@ pub fn check_description(
     match path.file_name()?.to_str()? {
         PRODUCT_FILE => Some(eval_product_text(path, None, source).diagnostics),
         GEAR_FILE => Some(eval_gear_text(path, source_root, source)),
+        gearbox_gdl::FRONTX_FILE => Some(eval_frontx_text(path, source)),
         _ => None,
     }
 }
@@ -94,6 +95,22 @@ fn eval_gear_text(path: &Path, root: Option<&Path>, source: &str) -> Diagnostics
 
     let mut diagnostics = Diagnostics::new();
     diagnostics.extend(GdlEngine::new().eval_gear(&identity, source).diagnostics);
+    diagnostics.finish();
+    diagnostics
+}
+
+/// Evaluate a `frontx.gdl` (GDL 1.6). It has no `load()`: a package describes
+/// itself in one file, so there is no boundary to choose.
+fn eval_frontx_text(path: &Path, source: &str) -> Diagnostics {
+    let identity = FileIdentity {
+        uri: gearbox_ir::file_uri(path),
+        source: SourceId::new("document").unwrap_or_else(|_| unreachable!("`document` is kebab")),
+        gdl_path: RelPath::new(gearbox_gdl::FRONTX_FILE)
+            .unwrap_or_else(|_| unreachable!("`frontx.gdl` is relative")),
+        load_paths: None,
+    };
+    let mut diagnostics = Diagnostics::new();
+    diagnostics.extend(GdlEngine::new().eval_frontx(&identity, source).diagnostics);
     diagnostics.finish();
     diagnostics
 }

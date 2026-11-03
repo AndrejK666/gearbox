@@ -39,6 +39,8 @@ static GEAR: LazyLock<DocModule> =
     LazyLock::new(|| crate::globals::gear_vocabulary().documentation());
 static PRODUCT: LazyLock<DocModule> =
     LazyLock::new(|| crate::product::product_vocabulary().documentation());
+static FRONTX: LazyLock<DocModule> =
+    LazyLock::new(|| crate::frontx::frontx_vocabulary().documentation());
 
 /// Where the caret is, in terms the vocabulary can answer for.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -321,6 +323,7 @@ pub fn vocabulary_for(path: &std::path::Path) -> Option<&'static DocModule> {
     match path.file_name()?.to_str()? {
         crate::PRODUCT_FILE => Some(&PRODUCT),
         crate::GEAR_FILE => Some(&GEAR),
+        crate::FRONTX_FILE => Some(&FRONTX),
         _ => None,
     }
 }
