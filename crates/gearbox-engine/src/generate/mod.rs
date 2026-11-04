@@ -337,7 +337,17 @@ pub fn generate(input: &GenerateInput<'_>) -> Result<Generated, GenerateError> {
     )?;
     insert(&mut files, workspace::toolchain(&input.templates)?)?;
     insert(&mut files, workspace::lock_file(input.lock)?)?;
-    if let Some(cargo_lock) = workspace::cargo_lock(input.source_roots)? {
+    // The lock the registry versions were pinned from, when there is one: the
+    // tree then resolves every transitive crate as the product's own build did.
+    let pinned_lock = input
+        .registry
+        .and_then(|plan| plan.cargo_lock.as_deref())
+        .map(workspace::pinned_cargo_lock)
+        .transpose()?;
+    if let Some(cargo_lock) = pinned_lock.map_or_else(
+        || workspace::cargo_lock(input.source_roots),
+        |lock| Ok(Some(lock)),
+    )? {
         insert(&mut files, cargo_lock)?;
     }
     if let Some(cargo_config) = workspace::cargo_config(input)? {

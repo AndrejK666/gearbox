@@ -1553,6 +1553,29 @@ diagnostic_codes! {
     /// someone merges by hand, or deletes the copy to take the default.
     GenTemplateBehindDefault = "GBX0712", Generator, Warning, false, "a product template did not take the new builtin";
 
+    /// How many of the product's gears the build takes from crates.io at the
+    /// versions the product's `Cargo.lock` pins, and how many from source.
+    ///
+    /// A product whose own code depends on published gear crates has already
+    /// chosen their versions: its `Cargo.lock` names them. Naming the same
+    /// gears by path into a checkout of the platform builds a second, newer
+    /// copy of the platform beside the one the product's code was written
+    /// against, and two versions of one crate in a graph fail to unify. So a
+    /// gear the lock pins from crates.io is named at exactly that version; a
+    /// gear the lock does not name stays a path dependency.
+    GenGearsFromLock = "GBX0713", Generator, Info, false, "gears taken from crates.io at the product's locked versions";
+
+    /// The product's `Cargo.lock` could not pin a crate the build names, or a
+    /// gear still built from source would link a second copy of a crate the
+    /// lock pins.
+    ///
+    /// Reported when `--gears-from registry` finds no lock, when the lock pins
+    /// one crate at several registry versions, or when a gear left on the
+    /// checkout reaches, by path, a crate the build now takes from crates.io:
+    /// two copies of that crate then link, and a type or an inventory entry
+    /// from one is invisible to the other.
+    GenGearsFromLockIncomplete = "GBX0714", Generator, Warning, false, "the product's Cargo.lock does not pin every gear consistently";
+
     /// A UI package or composition cannot be built for this product.
     UiInvalid = "GBX0720", Generator, Error, false, "invalid UI composition or package";
 

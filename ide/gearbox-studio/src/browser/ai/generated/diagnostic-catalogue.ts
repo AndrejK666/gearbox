@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 128, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 130, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -1030,6 +1030,22 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "warning",
     domain: "generator",
     docs: "A product's edited template could not take a new builtin.\n\nGeneration writes every template into the product and remembers the\ndefault each copy came from, so a newer default reaches an edited copy by\na three-way merge. When the new default changes the lines the edit\nchanged, or the copy has no record of its default (it was written by hand\nbefore generation kept one), the copy is left as it is and still renders:\nthe product keeps working, and silently does not get the fix. Reported so\nsomeone merges by hand, or deletes the copy to take the default.",
+    requiresEvidence: false,
+  },
+  GBX0713: {
+    code: "GBX0713",
+    title: "gears taken from crates.io at the product's locked versions",
+    severity: "info",
+    domain: "generator",
+    docs: "How many of the product's gears the build takes from crates.io at the\nversions the product's `Cargo.lock` pins, and how many from source.\n\nA product whose own code depends on published gear crates has already\nchosen their versions: its `Cargo.lock` names them. Naming the same\ngears by path into a checkout of the platform builds a second, newer\ncopy of the platform beside the one the product's code was written\nagainst, and two versions of one crate in a graph fail to unify. So a\ngear the lock pins from crates.io is named at exactly that version; a\ngear the lock does not name stays a path dependency.",
+    requiresEvidence: false,
+  },
+  GBX0714: {
+    code: "GBX0714",
+    title: "the product's Cargo.lock does not pin every gear consistently",
+    severity: "warning",
+    domain: "generator",
+    docs: "The product's `Cargo.lock` could not pin a crate the build names, or a\ngear still built from source would link a second copy of a crate the\nlock pins.\n\nReported when `--gears-from registry` finds no lock, when the lock pins\none crate at several registry versions, or when a gear left on the\ncheckout reaches, by path, a crate the build now takes from crates.io:\ntwo copies of that crate then link, and a type or an inventory entry\nfrom one is invisible to the other.",
     requiresEvidence: false,
   },
   GBX0720: {

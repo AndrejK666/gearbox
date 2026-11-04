@@ -43,6 +43,12 @@ pub struct RegistryPlan {
     /// Every package in the registry's dependency graph of those crates, with
     /// its registry: the crates a `[patch]` entry can meaningfully name.
     pub graph: BTreeMap<String, String>,
+    /// The product's `Cargo.lock` that versions were pinned from
+    /// ([`crate::locked`]), written into the generated tree as its own lock so
+    /// every transitive crate resolves as the product's build resolved it.
+    /// `None` when nothing was pinned from a lock, or when that lock already
+    /// sits in the output root.
+    pub cargo_lock: Option<String>,
 }
 
 /// One crate the build takes from a registry.
@@ -334,6 +340,25 @@ fn close_over_paths(plan: &mut RegistryPlan, starts: &[PathBuf]) {
             queue.push(target);
         }
     }
+}
+
+/// Every crate reachable *by path* from `starts`, with the directory the path
+/// names: the walk [`close_over_paths`] makes, answering what it reaches rather
+/// than patching it.
+pub(crate) fn reachable_by_path(starts: &[PathBuf]) -> Vec<(String, PathBuf)> {
+    let mut queue: Vec<PathBuf> = starts.to_vec();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    while let Some(dir) = queue.pop() {
+        if !seen.insert(dir.clone()) {
+            continue;
+        }
+        for (package, target) in path_dependencies(&dir) {
+            out.push((package, target.clone()));
+            queue.push(target);
+        }
+    }
+    out
 }
 
 /// The version the checkout's `Cargo.toml` declares, following

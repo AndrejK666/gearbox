@@ -12,6 +12,7 @@ use std::process::ExitCode;
 use anyhow::Context as _;
 use gearbox_engine::generate::product_templates::{self, TemplateSync};
 use gearbox_engine::generate::{GenerateInput, TemplateSet, base_root_for, summarize};
+use gearbox_engine::locked::GearsFrom;
 use gearbox_ir::{FileAction, FilePlan, ProductId, ProfileId, TemplateStatus};
 
 use crate::pipeline::{Outcome, Resolution};
@@ -41,6 +42,7 @@ pub fn run(
     profile: Option<&str>,
     out: Option<&Path>,
     dry_run: bool,
+    lock_options: &LockOptions,
     format: Format,
 ) -> anyhow::Result<ExitCode> {
     let resolved = match crate::pipeline::resolve(roots, source_id, product_file, profile)? {
@@ -98,6 +100,33 @@ pub fn run(
             .join(&lock.product.id),
     );
     diagnostics.extend(registry_diagnostics);
+    // The product's own Cargo.lock: every gear it pins from crates.io is named
+    // at that version, so the tree links the platform release the product's
+    // code was written against rather than a second, newer copy from source.
+    let gears_from = lock_options.gears_from()?;
+    let product_lock = if gears_from == GearsFrom::Source {
+        None
+    } else {
+        let explicit = lock_options.cargo_lock();
+        gearbox_engine::locked::find(
+            explicit.as_deref(),
+            &out_root,
+            &intent.sources,
+            &source_roots,
+        )
+        .with_context(|| match &explicit {
+            Some(path) => format!("the Cargo.lock `{}` cannot be read", path.display()),
+            None => "the product's Cargo.lock cannot be read".to_owned(),
+        })?
+    };
+    let (registry, lock_diagnostics) = gearbox_engine::locked::apply(
+        gears_from,
+        product_lock.as_ref(),
+        registry,
+        &lock,
+        &source_roots,
+    );
+    diagnostics.extend(lock_diagnostics);
     let generated = gearbox_engine::generate(&GenerateInput {
         lock: &lock,
         source_roots: &source_roots,
@@ -154,6 +183,38 @@ pub fn run(
     } else {
         ExitCode::SUCCESS
     })
+}
+
+/// `--gears-from` and `--cargo-lock`, each falling back to its environment
+/// variable so a build service can set them without changing its command line.
+#[derive(Default)]
+pub struct LockOptions {
+    pub gears_from: Option<String>,
+    pub cargo_lock: Option<PathBuf>,
+}
+
+impl LockOptions {
+    fn gears_from(&self) -> anyhow::Result<GearsFrom> {
+        let spelled = self
+            .gears_from
+            .clone()
+            .or_else(|| std::env::var("GEARBOX_GEARS_FROM").ok())
+            .filter(|s| !s.is_empty());
+        match spelled {
+            Some(s) => s
+                .parse()
+                .map_err(|e: String| anyhow::anyhow!("--gears-from: {e}")),
+            None => Ok(GearsFrom::default()),
+        }
+    }
+
+    fn cargo_lock(&self) -> Option<PathBuf> {
+        self.cargo_lock.clone().or_else(|| {
+            std::env::var_os("GEARBOX_CARGO_LOCK")
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+        })
+    }
 }
 
 /// Where generation writes when `--out` names nowhere.
@@ -362,6 +423,7 @@ mod tests {
             None,
             Some(&out),
             true,
+            &super::LockOptions::default(),
             Format::Text,
         )
         .expect("the product resolves");
@@ -395,6 +457,7 @@ mod tests {
             None,
             Some(&out),
             false,
+            &super::LockOptions::default(),
             Format::Text,
         )
         .expect_err("a lock carrying errors must not be generated from");

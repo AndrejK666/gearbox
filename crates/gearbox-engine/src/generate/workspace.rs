@@ -174,6 +174,25 @@ pub fn cargo_lock(
     )))
 }
 
+/// The product's own `Cargo.lock`, when the build pinned gear crates from it
+/// ([`crate::locked`]).
+///
+/// Preferred over [`cargo_lock`]: the crates the manifests now name by version
+/// are the ones this lock pins, and seeding the tree with any other lock would
+/// let their transitive dependencies drift from what the product was built
+/// against -- which is the mixed-version graph pinning exists to prevent.
+///
+/// # Errors
+/// Returns [`GenerateError`] if the path is not a valid relative path.
+pub fn pinned_cargo_lock(text: &str) -> Result<FileEntry, GenerateError> {
+    Ok(FileEntry::text(
+        paths::rel(&["Cargo.lock"])?,
+        text.to_owned(),
+        FileKind::Toml,
+        Ownership::Generated,
+    ))
+}
+
 /// The resolved product, beside the tree it produced.
 ///
 /// Writing the lock into the output root rather than next to `product.gdl` is

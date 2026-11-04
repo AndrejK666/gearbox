@@ -20,6 +20,7 @@ pub mod docs;
 pub mod feature_check;
 pub mod features;
 pub mod generate;
+pub mod locked;
 pub mod manifest_check;
 pub mod merge;
 pub mod origin;

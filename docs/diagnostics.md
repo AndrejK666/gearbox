@@ -15,7 +15,7 @@ remedy at the point it is raised
 (`cpt-gearbox-nfr-actionable-diagnostics`), which is per-occurrence and
 so is not listed here.
 
-Codes: **128**.
+Codes: **130**.
 
 ## `GBX01xx` — Parsing and evaluating GDL
 
@@ -1625,6 +1625,8 @@ incomplete, so GBX0124 cannot tell whether the product maps all of it.
 | [GBX0710](#gbx0710) | warning | a crate is not published at the checkout's version |
 | [GBX0711](#gbx0711) | warning | the registry could not be reached |
 | [GBX0712](#gbx0712) | warning | a product template did not take the new builtin |
+| [GBX0713](#gbx0713) | info | gears taken from crates.io at the product's locked versions |
+| [GBX0714](#gbx0714) | warning | the product's Cargo.lock does not pin every gear consistently |
 | [GBX0720](#gbx0720) | error | invalid UI composition or package |
 | [GBX0721](#gbx0721) | warning | the product signs users in and its FrontX shell does not |
 | [GBX0722](#gbx0722) | error | a FrontX package's frontx.gdl disagrees with its package.json or mfe.json |
@@ -1765,6 +1767,35 @@ changed, or the copy has no record of its default (it was written by hand
 before generation kept one), the copy is left as it is and still renders:
 the product keeps working, and silently does not get the fix. Reported so
 someone merges by hand, or deletes the copy to take the default.
+
+### GBX0713
+
+**gears taken from crates.io at the product's locked versions**
+
+How many of the product's gears the build takes from crates.io at the
+versions the product's `Cargo.lock` pins, and how many from source.
+
+A product whose own code depends on published gear crates has already
+chosen their versions: its `Cargo.lock` names them. Naming the same
+gears by path into a checkout of the platform builds a second, newer
+copy of the platform beside the one the product's code was written
+against, and two versions of one crate in a graph fail to unify. So a
+gear the lock pins from crates.io is named at exactly that version; a
+gear the lock does not name stays a path dependency.
+
+### GBX0714
+
+**the product's Cargo.lock does not pin every gear consistently**
+
+The product's `Cargo.lock` could not pin a crate the build names, or a
+gear still built from source would link a second copy of a crate the
+lock pins.
+
+Reported when `--gears-from registry` finds no lock, when the lock pins
+one crate at several registry versions, or when a gear left on the
+checkout reaches, by path, a crate the build now takes from crates.io:
+two copies of that crate then link, and a type or an inventory entry
+from one is invisible to the other.
 
 ### GBX0720
 

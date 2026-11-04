@@ -2726,6 +2726,213 @@ fn a_registry_plan_names_crates_by_version_and_patches_what_differs() {
     );
 }
 
+/// A product lock that pins the gateway and the toolkit from crates.io, and
+/// builds a crate of its own (no `source`): the shape of a product whose own
+/// gears depend on published platform crates.
+const PRODUCT_CARGO_LOCK: &str = r#"version = 4
+
+[[package]]
+name = "product-own-gears"
+version = "0.1.0"
+
+[[package]]
+name = "cf-gears-api-gateway"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "cf-gears-toolkit"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#;
+
+fn product_lock() -> gearbox_engine::locked::ProductLock {
+    gearbox_engine::locked::ProductLock {
+        path: PathBuf::from("product/Cargo.lock"),
+        text: PRODUCT_CARGO_LOCK.to_owned(),
+        in_out_root: false,
+    }
+}
+
+/// The dependency table one key names in an application manifest.
+fn dependency<'a>(manifest: &'a str, key: &str) -> &'a str {
+    manifest
+        .split(&format!("[dependencies.{key}]"))
+        .nth(1)
+        .and_then(|rest| {
+            rest.split(
+                "
+[",
+            )
+            .next()
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "`{key}` is not a dependency:
+{manifest}"
+            )
+        })
+}
+
+fn generate_with(
+    lock: &ResolvedProduct,
+    source_roots: &BTreeMap<SourceId, PathBuf>,
+    plan: Option<&gearbox_engine::published::RegistryPlan>,
+) -> Generated {
+    let out = out_root();
+    generate(&GenerateInput {
+        lock,
+        source_roots,
+        out_root: &out,
+        templates: TemplateSet::new(),
+        product_dir: None,
+        catalogue: None,
+        registry: plan,
+    })
+    .expect("generation succeeds")
+}
+
+/// A gear the product's Cargo.lock pins from crates.io is named at exactly
+/// that version; one it does not pin stays a path dependency; the tree is
+/// seeded with the product's lock.
+#[test]
+fn gears_the_product_lock_pins_come_from_crates_io_at_the_locked_version() {
+    use gearbox_engine::locked::{GearsFrom, apply};
+
+    let Some((lock, source_roots)) = resolve("dev") else {
+        return;
+    };
+    let found = product_lock();
+    let (plan, diagnostics) = apply(GearsFrom::Auto, Some(&found), None, &lock, &source_roots);
+    let plan = plan.expect("the lock pins something");
+    let files = generate_with(&lock, &source_roots, Some(&plan)).files;
+
+    let app = text(&files, "apps/payments-demo/Cargo.toml");
+    let gateway = dependency(app, "api_gateway");
+    assert!(gateway.contains("version = \"=0.5.2\""), "{gateway}");
+    assert!(!gateway.contains("path ="), "{gateway}");
+    assert!(
+        !gateway.contains("registry ="),
+        "crates.io is the default: {gateway}"
+    );
+    let toolkit = dependency(app, "toolkit");
+    assert!(toolkit.contains("version = \"=0.10.0\""), "{toolkit}");
+    assert!(!toolkit.contains("path ="), "{toolkit}");
+
+    // Not in the product's lock: built from source, as before.
+    assert!(
+        dependency(app, "authn_resolver").contains("path ="),
+        "{app}"
+    );
+
+    assert_eq!(text(&files, "Cargo.lock"), PRODUCT_CARGO_LOCK);
+    assert!(!text(&files, "Cargo.toml").contains("[patch"));
+
+    let summary = diagnostics
+        .iter()
+        .find(|d| d.code == DiagnosticCode::GenGearsFromLock)
+        .expect("the build log says where gears came from");
+    assert!(
+        summary
+            .message
+            .starts_with("1 gear(s) taken from crates.io"),
+        "{}",
+        summary.message
+    );
+}
+
+/// Without a lock -- or with `--gears-from source` -- the output is
+/// byte-for-byte what it was before lock pinning existed.
+#[test]
+fn without_a_product_lock_the_output_is_unchanged() {
+    use gearbox_engine::locked::{GearsFrom, apply};
+
+    let Some((lock, source_roots)) = resolve("dev") else {
+        return;
+    };
+    let before = generate_with(&lock, &source_roots, None).files;
+
+    let (plan, diagnostics) = apply(GearsFrom::Auto, None, None, &lock, &source_roots);
+    assert!(plan.is_none() && diagnostics.is_empty());
+
+    let found = product_lock();
+    let (plan, diagnostics) = apply(GearsFrom::Source, Some(&found), None, &lock, &source_roots);
+    assert!(plan.is_none() && diagnostics.is_empty());
+    assert_eq!(
+        generate_with(&lock, &source_roots, plan.as_ref()).files,
+        before
+    );
+
+    // `registry` without a lock says so, and still changes nothing.
+    let (plan, diagnostics) = apply(GearsFrom::Registry, None, None, &lock, &source_roots);
+    assert!(plan.is_none());
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == DiagnosticCode::GenGearsFromLockIncomplete)
+    );
+}
+
+/// The cluster failure, in miniature: `crates = registry(...)` found the
+/// checkout's toolkit changed since its release and patched the checkout in,
+/// while the product's own code links the toolkit release its lock pins. Two
+/// toolkits -- and two `gts` -- in one graph do not unify. The product's lock
+/// wins: the toolkit is named at its locked version and nothing re-points it
+/// at the checkout; a gear left on source that still reaches the checkout's
+/// toolkit by path is reported.
+#[test]
+fn the_product_lock_overrides_a_patch_back_to_the_checkout() {
+    use gearbox_engine::locked::{GearsFrom, apply};
+    use gearbox_engine::published::{RegistryCrate, RegistryPlan};
+
+    let Some((lock, source_roots)) = resolve("dev") else {
+        return;
+    };
+    let toolkit_dir = source_roots
+        .values()
+        .next()
+        .expect("one source")
+        .join("libs/toolkit");
+    let mut published = RegistryPlan::default();
+    published.crates.insert(
+        "cf-gears-toolkit".to_owned(),
+        RegistryCrate {
+            registry: "crates.io".to_owned(),
+            version: "0.12.0".to_owned(),
+            patch: Some(toolkit_dir),
+        },
+    );
+    let found = product_lock();
+    let (plan, diagnostics) = apply(
+        GearsFrom::Auto,
+        Some(&found),
+        Some(published),
+        &lock,
+        &source_roots,
+    );
+    let plan = plan.expect("a plan");
+    let files = generate_with(&lock, &source_roots, Some(&plan)).files;
+
+    let root = text(&files, "Cargo.toml");
+    assert!(
+        !root.contains("cf-gears-toolkit"),
+        "no patch re-points it: {root}"
+    );
+    let app = text(&files, "apps/payments-demo/Cargo.toml");
+    assert!(
+        dependency(app, "toolkit").contains("version = \"=0.10.0\""),
+        "{app}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == DiagnosticCode::GenGearsFromLockIncomplete
+                && d.message.contains("`cf-gears-toolkit`")
+                && d.message.contains("two copies")
+        }),
+        "a source gear reaching the checkout's toolkit is reported: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn ascii_binary_assets_are_written_verbatim_without_a_text_preview() {
     let out = Out::new("ascii-binary");

@@ -181,6 +181,20 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
 
+        /// Where gear crates come from: `auto` takes from crates.io every gear
+        /// the product's Cargo.lock pins there, at that version, and builds the
+        /// rest from source; `registry` does the same and warns about what it
+        /// could not pin; `source` ignores the lock. Defaults to
+        /// `GEARBOX_GEARS_FROM`, else `auto`.
+        #[arg(long, value_name = "auto|registry|source")]
+        gears_from: Option<String>,
+
+        /// The product's Cargo.lock. Defaults to `GEARBOX_CARGO_LOCK`, else the
+        /// output root's `Cargo.lock`, else that of the product's one `path(...)`
+        /// source that has one.
+        #[arg(long, value_name = "FILE")]
+        cargo_lock: Option<PathBuf>,
+
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
     },
@@ -268,6 +282,8 @@ fn run() -> anyhow::Result<ExitCode> {
             profile,
             out,
             dry_run,
+            gears_from,
+            cargo_lock,
             format,
         } => generate::run(
             &root,
@@ -276,6 +292,10 @@ fn run() -> anyhow::Result<ExitCode> {
             profile.as_deref(),
             out.as_deref(),
             dry_run,
+            &generate::LockOptions {
+                gears_from,
+                cargo_lock,
+            },
             format,
         ),
         Command::Lock { query } => lock::run(&query),
