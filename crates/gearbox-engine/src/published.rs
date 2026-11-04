@@ -61,6 +61,17 @@ pub struct RegistryCrate {
     pub version: String,
     /// The checkout to patch in when it differs from what was published.
     pub patch: Option<PathBuf>,
+    /// Taken from this git repository at this commit instead of from
+    /// `registry`: the product's lock pins the crate from git
+    /// ([`crate::locked`]).
+    pub git: Option<GitPin>,
+}
+
+/// A crate as a lock pins it from git: the repository and the commit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitPin {
+    pub url: String,
+    pub rev: String,
 }
 
 impl RegistryPlan {
@@ -190,6 +201,7 @@ pub fn plan(
                 registry: registry.to_owned(),
                 version,
                 patch,
+                git: None,
             },
         );
     }
@@ -332,6 +344,7 @@ fn close_over_paths(plan: &mut RegistryPlan, starts: &[PathBuf]) {
                     registry,
                     version: local_version(&target).unwrap_or_default(),
                     patch: None,
+                    git: None,
                 });
                 if entry.patch.is_none() {
                     entry.patch = Some(target.clone());
@@ -387,13 +400,40 @@ fn read_toml(path: &Path) -> Option<toml::Value> {
     toml::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
+/// `(package name, version requirement)` for each normal and build dependency
+/// of a crate that states one, following `workspace = true` to the workspace's
+/// own table exactly as [`path_dependencies`] does.
+pub(crate) fn dependency_requirements(crate_dir: &Path) -> Vec<(String, String)> {
+    dependency_specs(crate_dir)
+        .into_iter()
+        .filter_map(|(package, _, spec)| {
+            let req = spec
+                .as_str()
+                .or_else(|| spec.get("version").and_then(toml::Value::as_str))?;
+            Some((package, req.to_owned()))
+        })
+        .collect()
+}
+
 /// `(package name, absolute directory)` for each path dependency of a crate.
 fn path_dependencies(crate_dir: &Path) -> Vec<(String, PathBuf)> {
+    dependency_specs(crate_dir)
+        .into_iter()
+        .filter_map(|(package, base, spec)| {
+            let path = spec.get("path").and_then(toml::Value::as_str)?;
+            let target = base.join(path).canonicalize().ok()?;
+            Some((package, target))
+        })
+        .collect()
+}
+
+/// `(package name, directory its relative paths start from, spec)` for each
+/// normal and build dependency of a crate. A `workspace = true` entry is
+/// replaced by the nearest workspace's own entry, relative to that root.
+fn dependency_specs(crate_dir: &Path) -> Vec<(String, PathBuf, toml::Value)> {
     let Some(manifest) = read_toml(&crate_dir.join("Cargo.toml")) else {
         return Vec::new();
     };
-    // `workspace = true` entries are resolved through the nearest workspace
-    // that has a `[workspace.dependencies]` table, relative to that root.
     let workspace = crate_dir.ancestors().skip(1).find_map(|dir| {
         let root = read_toml(&dir.join("Cargo.toml"))?;
         let deps = root
@@ -419,17 +459,12 @@ fn path_dependencies(crate_dir: &Path) -> Vec<(String, PathBuf)> {
             } else {
                 (crate_dir, value)
             };
-            let Some(path) = spec.get("path").and_then(toml::Value::as_str) else {
-                continue;
-            };
             let package = value
                 .get("package")
                 .or_else(|| spec.get("package"))
                 .and_then(toml::Value::as_str)
                 .unwrap_or(key);
-            if let Ok(target) = base.join(path).canonicalize() {
-                out.push((package.to_owned(), target));
-            }
+            out.push((package.to_owned(), base.to_path_buf(), spec.clone()));
         }
     }
     out

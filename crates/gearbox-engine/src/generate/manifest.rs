@@ -91,6 +91,10 @@ struct Dependency {
     registry: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    git: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rev: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     features: Vec<String>,
     #[serde(rename = "default-features", skip_serializing_if = "Option::is_none")]
@@ -105,6 +109,8 @@ impl Dependency {
             version: Some(version.to_owned()),
             registry: None,
             path: None,
+            git: None,
+            rev: None,
             features: features.iter().map(|f| (*f).to_owned()).collect(),
             default_features: None,
         }
@@ -201,7 +207,13 @@ fn dependencies(
     // available that is not a guess about directory names.
     let anchor = gear_of(input, application, &application.anchor)?;
     let anchor_root = source_root(input, anchor)?;
-    let (version, registry, path) = located(
+    let Located {
+        version,
+        registry,
+        path,
+        git,
+        rev,
+    } = located(
         input,
         TOOLKIT_PACKAGE,
         crate_dir,
@@ -222,6 +234,8 @@ fn dependencies(
             version,
             registry,
             path,
+            git,
+            rev,
             features: toolkit_features,
             default_features: None,
         },
@@ -247,7 +261,13 @@ fn dependencies(
         })
         .collect();
     if !database_features.is_empty() {
-        let (version, registry, path) = located(
+        let Located {
+            version,
+            registry,
+            path,
+            git,
+            rev,
+        } = located(
             input,
             "cf-gears-toolkit-db",
             crate_dir,
@@ -260,6 +280,8 @@ fn dependencies(
                 version,
                 registry,
                 path,
+                git,
+                rev,
                 features: database_features.into_iter().collect(),
                 default_features: None,
             },
@@ -273,7 +295,13 @@ fn dependencies(
     for id in &application.gears {
         let gear = gear_of(input, application, id)?;
         let root = source_root(input, gear)?;
-        let (version, registry, path) = located(
+        let Located {
+            version,
+            registry,
+            path,
+            git,
+            rev,
+        } = located(
             input,
             &gear.package.crate_name,
             crate_dir,
@@ -288,6 +316,8 @@ fn dependencies(
             version,
             registry,
             path,
+            git,
+            rev,
             // The union of what the gear declares and what the product asked
             // for. Kept separate in the lock and joined here, which is the one
             // place the distinction stops mattering: cargo takes a set.
@@ -326,7 +356,13 @@ fn dependencies(
     // features, so the consumer gear's own dependency on the SDK gets them too.
     for (sdk, provider) in client_sdks(input, application) {
         let root = source_root(input, provider)?;
-        let (version, registry, path) = located(
+        let Located {
+            version,
+            registry,
+            path,
+            git,
+            rev,
+        } = located(
             input,
             &sdk.crate_name,
             crate_dir,
@@ -350,6 +386,8 @@ fn dependencies(
                 version,
                 registry,
                 path,
+                git,
+                rev,
                 features: features.into_iter().collect(),
                 default_features: (!sdk.default_features).then_some(false),
             },
@@ -389,15 +427,32 @@ fn located(
     crate_name: &str,
     crate_dir: &Path,
     checkout: &Path,
-) -> (Option<String>, Option<String>, Option<String>) {
+) -> Located {
     match input.registry.and_then(|plan| plan.get(crate_name)) {
-        Some(entry) => (
-            Some(format!("={}", entry.version)),
-            (entry.registry != "crates.io").then(|| entry.registry.clone()),
-            None,
-        ),
-        None => (None, None, Some(dep_path(crate_dir, checkout))),
+        Some(entry) => Located {
+            version: Some(format!("={}", entry.version)),
+            registry: (entry.git.is_none() && entry.registry != "crates.io")
+                .then(|| entry.registry.clone()),
+            path: None,
+            git: entry.git.as_ref().map(|g| g.url.clone()),
+            rev: entry.git.as_ref().map(|g| g.rev.clone()),
+        },
+        None => Located {
+            path: Some(dep_path(crate_dir, checkout)),
+            ..Located::default()
+        },
     }
+}
+
+/// Where [`located`] says a crate comes from: the fields of its dependency
+/// entry that name the source.
+#[derive(Default)]
+struct Located {
+    version: Option<String>,
+    registry: Option<String>,
+    path: Option<String>,
+    git: Option<String>,
+    rev: Option<String>,
 }
 
 /// The lock's entry for a gear the process claims to contain.

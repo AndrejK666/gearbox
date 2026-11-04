@@ -2673,6 +2673,7 @@ fn a_registry_plan_names_crates_by_version_and_patches_what_differs() {
             registry: "crates.io".to_owned(),
             version: "0.5.2".to_owned(),
             patch: None,
+            git: None,
         },
     );
     plan.crates.insert(
@@ -2681,6 +2682,7 @@ fn a_registry_plan_names_crates_by_version_and_patches_what_differs() {
             registry: "crates.io".to_owned(),
             version: "0.10.0".to_owned(),
             patch: Some(toolkit_dir),
+            git: None,
         },
     );
     let out = out_root();
@@ -2900,6 +2902,7 @@ fn the_product_lock_overrides_a_patch_back_to_the_checkout() {
             registry: "crates.io".to_owned(),
             version: "0.12.0".to_owned(),
             patch: Some(toolkit_dir),
+            git: None,
         },
     );
     let found = product_lock();

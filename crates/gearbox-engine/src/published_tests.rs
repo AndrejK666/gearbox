@@ -154,6 +154,7 @@ fn a_path_gear_pulls_its_path_dependency_into_the_patch() {
             registry: "crates.io".to_owned(),
             version: "0.10.0".to_owned(),
             patch: None,
+            git: None,
         },
     );
     plan.graph

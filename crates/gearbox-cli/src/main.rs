@@ -191,7 +191,8 @@ enum Command {
 
         /// The product's Cargo.lock. Defaults to `GEARBOX_CARGO_LOCK`, else the
         /// output root's `Cargo.lock`, else that of the product's one `path(...)`
-        /// source that has one.
+        /// source that has one, else the one lock above a gear's crate that pins
+        /// a crate the build names from crates.io or git.
         #[arg(long, value_name = "FILE")]
         cargo_lock: Option<PathBuf>,
 

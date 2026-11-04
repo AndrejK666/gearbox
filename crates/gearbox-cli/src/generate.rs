@@ -113,6 +113,7 @@ pub fn run(
             &out_root,
             &intent.sources,
             &source_roots,
+            &lock,
         )
         .with_context(|| match &explicit {
             Some(path) => format!("the Cargo.lock `{}` cannot be read", path.display()),

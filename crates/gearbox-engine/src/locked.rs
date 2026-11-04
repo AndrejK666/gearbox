@@ -12,7 +12,12 @@
 //! **The rule.** For every crate the generated manifests name -- a gear, the
 //! toolkit, a client SDK -- the product's lock is asked: if it pins that crate
 //! from crates.io at exactly one version, the manifest names `"=<version>"`
-//! from crates.io and no `[patch]` points it anywhere else. Otherwise the crate
+//! from crates.io and no `[patch]` points it anywhere else. If it pins it from
+//! a git repository at one commit (a product taking the platform by
+//! `git = ..., branch = "main"`), the manifest names that repository at that
+//! commit, so the build links the same copy the product's code does. The
+//! checkout the gears were described from is never the build's copy of a
+//! crate the lock pins: it is only where the `gear.gdl` files are read. Otherwise the crate
 //! stays what it was: a path dependency, or whatever `crates = registry(...)`
 //! decided for it. A crate the product builds itself appears in its lock with
 //! no `source`, so the product's own gears stay path dependencies without a
@@ -21,8 +26,27 @@
 //! **Which lock.** In order: one named on the command line or in
 //! `GEARBOX_CARGO_LOCK`; one already in the output root (a build service seeds
 //! it there); the `Cargo.lock` of the product's own `path(...)` source, when
-//! exactly one has one. A `git(...)` source is a fetched copy of somebody
-//! else's repository, and its lock is not the product's decision.
+//! exactly one has one; else the one lock, nearest above a gear's crate in any
+//! source, that pins a crate the build names from crates.io.
+//!
+//! That last step exists because a build service fetches *every* source by
+//! `git(...)`, the product's own code included: Studio's build checks out
+//! `studio-backend` at a commit exactly as it checks out `gears-rust`, so no
+//! source is a `path(...)` one and the product's lock went unfound. The
+//! platform's own lock cannot be mistaken for it: a workspace lock records its
+//! own members with no `source`, so the lock of the repository the gears are
+//! written in pins none of them from crates.io. Only a consumer's lock does,
+//! and that consumer is the product's code. Two such locks are two decisions,
+//! and choosing between them is not this module's call.
+//!
+//! **A gear the lock does not pin, on a checkout that does.** A product can
+//! use a platform gear its own code never depends on (`rg-tr-plugin`), so its
+//! lock does not name it. Built from the checkout, it reaches the toolkit by
+//! path and links a second toolkit beside the pinned one -- the mixed graph
+//! again. When the checkout's requirements on every crate the lock pins are
+//! met by the locked versions, the gear is taken from crates.io at the
+//! checkout's version instead, and cargo resolves it into the lock's graph;
+//! otherwise it stays on the checkout and `GBX0714` names the second copy.
 //!
 //! Like [`crate::published`], this reads the world, so the CLI calls it and
 //! `generate` receives only the resulting [`RegistryPlan`].
@@ -32,7 +56,7 @@ use std::path::{Path, PathBuf};
 
 use gearbox_ir::{Diagnostic, DiagnosticCode, Location, ResolvedProduct, SourceDecl, SourceId};
 
-use crate::published::{RegistryCrate, RegistryPlan};
+use crate::published::{GitPin, RegistryCrate, RegistryPlan};
 
 /// The `source` Cargo writes for a crates.io package in a lock, in either
 /// protocol.
@@ -87,6 +111,7 @@ pub fn find(
     out_root: &Path,
     sources: &BTreeMap<SourceId, SourceDecl>,
     source_roots: &BTreeMap<SourceId, PathBuf>,
+    product: &ResolvedProduct,
 ) -> Result<Option<ProductLock>, std::io::Error> {
     if let Some(path) = explicit {
         let text = std::fs::read_to_string(path)?;
@@ -115,22 +140,108 @@ pub fn find(
         .collect();
     // Two own locks could pin one crate twice; choosing is not this module's
     // decision, exactly as for the source lock the tree is seeded with.
-    let [path] = own.as_slice() else {
-        return Ok(None);
-    };
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Ok(None);
-    };
-    Ok(Some(ProductLock {
-        path: path.clone(),
-        text,
-        in_out_root: false,
-    }))
+    match own.as_slice() {
+        [] => Ok(consumer_lock(product, source_roots)),
+        [path] => Ok(std::fs::read_to_string(path).ok().map(|text| ProductLock {
+            path: path.clone(),
+            text,
+            in_out_root: false,
+        })),
+        _ => Ok(None),
+    }
 }
 
-/// The crates.io versions a lock pins, by package name.
+/// The one lock, nearest above some gear's crate within its source, that pins
+/// a crate this build names from crates.io: the lock of the product's own
+/// code, wherever it was fetched from. `None` when there is none or more than
+/// one.
+fn consumer_lock(
+    product: &ResolvedProduct,
+    source_roots: &BTreeMap<SourceId, PathBuf>,
+) -> Option<ProductLock> {
+    let named = named_crates(product);
+    let nearest: BTreeSet<PathBuf> = product
+        .gears
+        .values()
+        .filter_map(|gear| {
+            let root = source_roots.get(&gear.source)?;
+            let dir = root.join(gear.crate_dir.as_str());
+            dir.ancestors()
+                .take_while(|d| d.starts_with(root))
+                .map(|d| d.join("Cargo.lock"))
+                .find(|lock| lock.is_file())
+        })
+        .collect();
+    let mut pinning = nearest.into_iter().filter_map(|path| {
+        let text = std::fs::read_to_string(&path).ok()?;
+        let locked = LockedVersions::parse(&text).ok()?;
+        named
+            .iter()
+            .any(|name| locked.pins(name))
+            .then_some((path, text))
+    });
+    let (path, text) = pinning.next()?;
+    if pinning.next().is_some() {
+        return None;
+    }
+    Some(ProductLock {
+        path,
+        text,
+        in_out_root: false,
+    })
+}
+
+/// How the gear at `dir` can be named without leaving the lock's graph, when
+/// it can: it states a requirement on at least one crate the lock pins, every
+/// such requirement is met by the one version the lock holds, and those
+/// crates all come from one place. From crates.io, the gear is named at the
+/// checkout's version; from one git repository at one commit, it is named
+/// from that same repository and commit, where cargo finds it by name.
+///
+/// The checkout stands in for the published crate of the same version, whose
+/// requirements release tooling wrote from that same manifest.
+fn follows_lock(dir: &Path, locked: &LockedVersions) -> Option<RegistryCrate> {
+    use cargo_metadata::semver::{Version, VersionReq};
+    let version = crate::published::local_version(dir)?;
+    let mut from: Option<Option<GitPin>> = None;
+    for (package, req) in crate::published::dependency_requirements(dir) {
+        if !locked.pins(&package) {
+            continue;
+        }
+        let (at, git) = match locked.single_git(&package) {
+            Some((at, pin)) => (at, Some(pin)),
+            None => (locked.single(&package)?, None),
+        };
+        if !VersionReq::parse(&req)
+            .ok()?
+            .matches(&Version::parse(at).ok()?)
+        {
+            return None;
+        }
+        match &from {
+            None => from = Some(git),
+            Some(seen) if *seen == git => {}
+            Some(_) => return None,
+        }
+    }
+    Some(RegistryCrate {
+        registry: "crates.io".to_owned(),
+        version,
+        patch: None,
+        git: from?,
+    })
+}
+
+/// The crates.io versions a lock pins, by package name, and the crates it
+/// pins from git.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct LockedVersions(BTreeMap<String, BTreeSet<String>>);
+pub struct LockedVersions {
+    registry: BTreeMap<String, BTreeSet<String>>,
+    git: BTreeMap<String, BTreeSet<LockedGit>>,
+}
+
+/// One git entry of a lock: version, repository, commit.
+type LockedGit = (String, String, String);
 
 impl LockedVersions {
     /// Read the `[[package]]` entries of a `Cargo.lock`.
@@ -139,7 +250,7 @@ impl LockedVersions {
     /// Returns the parse error when the text is not TOML.
     pub fn parse(text: &str) -> Result<Self, String> {
         let value: toml::Value = toml::from_str(text).map_err(|e| e.to_string())?;
-        let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut out = Self::default();
         for package in value
             .get("package")
             .and_then(toml::Value::as_array)
@@ -153,29 +264,79 @@ impl LockedVersions {
                 continue;
             };
             if CRATES_IO_SOURCES.contains(&source) {
-                out.entry(name.to_owned())
+                out.registry
+                    .entry(name.to_owned())
                     .or_default()
                     .insert(version.to_owned());
+            } else if let Some(pin) = git_source(source) {
+                out.git.entry(name.to_owned()).or_default().insert((
+                    version.to_owned(),
+                    pin.url,
+                    pin.rev,
+                ));
             }
         }
-        Ok(Self(out))
+        Ok(out)
     }
 
     /// Every crates.io version the lock holds for `name`.
     #[must_use]
     pub fn versions(&self, name: &str) -> Option<&BTreeSet<String>> {
-        self.0.get(name)
+        self.registry.get(name)
     }
 
     /// The one crates.io version the lock holds for `name`, if exactly one.
     #[must_use]
     pub fn single(&self, name: &str) -> Option<&str> {
-        let versions = self.0.get(name)?;
+        let versions = self.registry.get(name)?;
         match versions.len() {
             1 => versions.iter().next().map(String::as_str),
             _ => None,
         }
     }
+
+    /// The one git pin the lock holds for `name` -- version and commit -- when
+    /// it holds exactly one and no crates.io entry beside it.
+    #[must_use]
+    pub fn single_git(&self, name: &str) -> Option<(&str, GitPin)> {
+        if self.registry.contains_key(name) {
+            return None;
+        }
+        let pins = self.git.get(name)?;
+        let [(version, url, rev)] = <[_; 1]>::try_from(pins.iter().collect::<Vec<_>>()).ok()?;
+        Some((
+            version.as_str(),
+            GitPin {
+                url: url.clone(),
+                rev: rev.clone(),
+            },
+        ))
+    }
+
+    /// Whether the lock pins `name` from anywhere but the product itself.
+    #[must_use]
+    pub fn pins(&self, name: &str) -> bool {
+        self.registry.contains_key(name) || self.git.contains_key(name)
+    }
+
+    /// The one version the lock pins `name` at, from crates.io or from git.
+    #[must_use]
+    pub fn single_any(&self, name: &str) -> Option<&str> {
+        self.single(name)
+            .or_else(|| self.single_git(name).map(|(version, _)| version))
+    }
+}
+
+/// `git+<url>[?branch=..|?rev=..|?tag=..]#<commit>`, the way Cargo writes a
+/// git source in a lock, as the repository and the locked commit.
+fn git_source(source: &str) -> Option<GitPin> {
+    let rest = source.strip_prefix("git+")?;
+    let (head, rev) = rest.rsplit_once('#')?;
+    let url = head.split_once('?').map_or(head, |(url, _)| url);
+    (!url.is_empty() && !rev.is_empty()).then(|| GitPin {
+        url: url.to_owned(),
+        rev: rev.to_owned(),
+    })
 }
 
 /// What [`pin_crates`] decided.
@@ -202,6 +363,19 @@ pub fn pin_crates(
         .chain(plan.crates.keys().cloned())
         .collect();
     for name in everything {
+        if let Some((version, pin)) = locked.single_git(&name) {
+            plan.crates.insert(
+                name.clone(),
+                RegistryCrate {
+                    registry: "crates.io".to_owned(),
+                    version: version.to_owned(),
+                    patch: None,
+                    git: Some(pin),
+                },
+            );
+            out.pinned.insert(name, version.to_owned());
+            continue;
+        }
         let Some(versions) = locked.versions(&name) else {
             continue;
         };
@@ -223,6 +397,7 @@ pub fn pin_crates(
                 registry: "crates.io".to_owned(),
                 version: version.to_owned(),
                 patch: None,
+                git: None,
             },
         );
         out.pinned.insert(name, version.to_owned());
@@ -306,6 +481,46 @@ pub fn apply(
     let mut plan = plan.unwrap_or_default();
     let pinned = pin_crates(&mut plan, &named_crates(product), &locked);
 
+    // A gear the lock does not name that would reach a pinned crate by path
+    // from the checkout: from crates.io when its requirements fit the lock.
+    let mut followed: Vec<(String, String)> = Vec::new();
+    for gear in product.gears.values() {
+        if plan.get(&gear.package.crate_name).is_some() {
+            continue;
+        }
+        let Some(root) = source_roots.get(&gear.source) else {
+            continue;
+        };
+        let dir = root.join(gear.crate_dir.as_str());
+        let reaches_pinned = crate::published::reachable_by_path(std::slice::from_ref(&dir))
+            .iter()
+            .any(|(package, _)| pinned.pinned.contains_key(package));
+        if !reaches_pinned {
+            continue;
+        }
+        if let Some(entry) = follows_lock(&dir, &locked) {
+            let whence = entry.git.as_ref().map_or_else(
+                || format!("crates.io at {}", entry.version),
+                |g| format!("{} at {} ({})", g.url, g.rev, entry.version),
+            );
+            plan.crates.insert(gear.package.crate_name.clone(), entry);
+            followed.push((gear.id.to_string(), whence));
+        }
+    }
+    for (gear, whence) in &followed {
+        diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::GenGearsFromLock,
+                format!(
+                    "`{gear}` is not in the product's Cargo.lock; taken from {whence}, the \
+                     checkout's version, whose requirements the lock meets"
+                ),
+            )
+            .with_help("add the gear to the product's own Cargo.toml to pin it in the lock as well")
+            .at(where_.clone()),
+        );
+    }
+
     for (name, versions) in &pinned.ambiguous {
         diagnostics.push(
             Diagnostic::new(
@@ -325,7 +540,8 @@ pub fn apply(
         .gears
         .values()
         .filter(|g| pinned.pinned.contains_key(&g.package.crate_name))
-        .count();
+        .count()
+        + followed.len();
     // A gear `crates = registry(...)` already named by version is neither.
     let from_source: Vec<_> = product
         .gears
@@ -395,7 +611,7 @@ pub fn apply(
     }
     diagnostics.push(summary);
 
-    if pinned.pinned.is_empty() {
+    if pinned.pinned.is_empty() && followed.is_empty() {
         // Nothing pinned: the output is what it would have been without a lock.
         return (had_plan.then_some(plan), diagnostics);
     }
