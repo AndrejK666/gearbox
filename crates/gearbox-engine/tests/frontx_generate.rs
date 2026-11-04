@@ -478,7 +478,10 @@ fn a_package_description_that_does_not_evaluate_fails_generation() {
         &tmp,
         &["api-gateway"],
         &[],
-        &[(MFE_GDL, "mfe(requires = [\"studio-user\"], screens = [])\n")],
+        &[(
+            MFE_GDL,
+            "mfe(requires = [\"studio-user\"], extensions = [])\n",
+        )],
         false,
     )
     .unwrap_err();
@@ -495,4 +498,313 @@ fn a_package_without_a_description_has_said_nothing() {
     assert_eq!(lock["shell"]["described"], false);
     assert_eq!(lock["mfes"][0]["described"], false);
     assert_eq!(lock["mfes"][0]["requires"], json!(["api-gateway"]));
+}
+
+/// The image a shell with no passport builds: exactly what it was before
+/// passports drove it.
+const DEFAULT_DOCKERFILE: &str = "FROM node:24.21.0-alpine AS build
+WORKDIR /app
+COPY . .
+# `npm install`, not `npm ci`: it starts from the shell's lock and resolves
+# only what the product changed. A FrontX shell builds its own packages, each
+# micro-frontend, the manifests it mounts them from, then the site: `npm run
+# build` does all four.
+RUN npm install --no-audit --no-fund && npm run build
+FROM nginxinc/nginx-unprivileged:1.28-alpine
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/nginx.conf
+USER 65532:65532
+EXPOSE 8080";
+
+#[test]
+fn a_shell_without_a_passport_builds_and_serves_as_before() {
+    let tmp = Tmp::new("default-image");
+    let files = generated(&tmp, &["api-gateway"], &[]).unwrap();
+    assert_eq!(
+        text(&files, "frontend/Dockerfile").trim_end(),
+        DEFAULT_DOCKERFILE
+    );
+    let nginx = text(&files, "frontend/nginx.conf");
+    for line in [
+        "location = /env.js { add_header Cache-Control no-store; }",
+        "location = /runtime-config.json { add_header Cache-Control no-store; }",
+        "# FrontX micro-frontends call the gateway's own paths (`/cf/<gear>/v1`).",
+        "location /cf/ {",
+        "location / { try_files $uri /index.html; }",
+    ] {
+        assert!(nginx.contains(line), "{line}\n{nginx}");
+    }
+    let lock = lock_of(&files);
+    assert_eq!(lock["shell"]["apiPrefix"], "/cf/");
+    assert_eq!(lock["shell"]["output"], "dist");
+    assert_eq!(lock["shell"]["base"], "/");
+}
+
+#[test]
+fn a_shells_passport_drives_how_it_is_built_and_served() {
+    let tmp = Tmp::new("passport-image");
+    let (files, diagnostics) = generate_with(
+        &tmp,
+        &["api-gateway"],
+        &[],
+        &[(
+            SHELL_GDL,
+            r#"gdl_version = "1.5"
+shell(
+    signs_in = False,
+    node = "22",
+    build = "npm run build",
+    output = "site",
+    base = "/portal/",
+    api_prefix = "/api/",
+)
+"#,
+        )],
+        false,
+    )
+    .unwrap();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let dockerfile = text(&files, "frontend/Dockerfile");
+    for line in [
+        "FROM node:22-alpine AS build",
+        "# The shell's own build command, as its frontx.gdl declares it.",
+        "RUN npm install --no-audit --no-fund && npm run build",
+        "COPY --from=build /app/site /usr/share/nginx/html/portal",
+    ] {
+        assert!(dockerfile.contains(line), "{line}\n{dockerfile}");
+    }
+    let nginx = text(&files, "frontend/nginx.conf");
+    for line in [
+        "location = /portal/env.js {",
+        "location /api/ {",
+        "proxy_pass http://api-gateway:8087;",
+        "location / { try_files $uri /portal/index.html; }",
+    ] {
+        assert!(nginx.contains(line), "{line}\n{nginx}");
+    }
+    assert!(!nginx.contains("location /cf/"), "{nginx}");
+    let lock = lock_of(&files);
+    assert_eq!(lock["shell"]["apiPrefix"], "/api/");
+}
+
+#[test]
+fn a_node_range_keeps_the_pinned_image_and_another_manager_installs_its_way() {
+    let tmp = Tmp::new("passport-pm");
+    let (files, _) = generate_with(
+        &tmp,
+        &["api-gateway"],
+        &[],
+        &[(
+            SHELL_GDL,
+            "shell(signs_in = False, node = \">=24\", package_manager = \"pnpm\")\n",
+        )],
+        false,
+    )
+    .unwrap();
+    let dockerfile = text(&files, "frontend/Dockerfile");
+    assert!(
+        dockerfile.contains("FROM node:24.21.0-alpine AS build"),
+        "{dockerfile}"
+    );
+    assert!(
+        dockerfile.contains("RUN corepack enable && pnpm install && pnpm run build"),
+        "{dockerfile}"
+    );
+}
+
+/// A full passport for the fixtures, each fact as their manifests say it.
+const SHELL_PASSPORT: &str = r#"gdl_version = "1.5"
+shell(
+    name = "@gears-frontx/frontx-template-shell",
+    version = "0.1.0-alpha.6",
+    signs_in = False,
+    build = "npm run build",
+    carries = {
+        "@gears-frontx/frontx-template-shell": "0.1.0-alpha.6",
+        "@gears-frontx/mfes": "0.4.0",
+        "@gears-frontx/react": "0.2.0-alpha.15",
+    },
+)
+"#;
+const MFE_PASSPORT: &str = r#"gdl_version = "1.5"
+mfe(
+    name = "@demo/people-mfe",
+    version = "0.2.0",
+    frontx = "0.2.0-alpha.0",
+    screens = [],
+    mounts = ["/people"],
+    preview = ["/people"],
+)
+"#;
+
+fn codes_of(diagnostics: &Diagnostics, code: DiagnosticCode) -> Vec<String> {
+    diagnostics
+        .iter()
+        .filter(|d| d.code == code)
+        .map(|d| d.message.clone())
+        .collect()
+}
+
+#[test]
+fn a_passport_that_agrees_with_its_manifests_says_nothing_more() {
+    let tmp = Tmp::new("passport-agrees");
+    let (_, diagnostics) = generate_with(
+        &tmp,
+        &["api-gateway"],
+        &[],
+        &[(SHELL_GDL, SHELL_PASSPORT), (MFE_GDL, MFE_PASSPORT)],
+        false,
+    )
+    .unwrap();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn a_passport_whose_identity_pins_or_screens_drifted_is_an_error() {
+    let shell = SHELL_PASSPORT
+        .replace(
+            "0.1.0-alpha.6\",\n    signs_in",
+            "0.1.0-alpha.5\",\n    signs_in",
+        )
+        .replace(
+            "\"@gears-frontx/mfes\": \"0.4.0\"",
+            "\"@gears-frontx/mfes\": \"0.3.0\"",
+        );
+    let mfe = MFE_PASSPORT
+        .replace("\"@demo/people-mfe\"", "\"@demo/persons-mfe\"")
+        .replace("frontx = \"0.2.0-alpha.0\"", "frontx = \"0.2.0-alpha.15\"")
+        .replace("screens = []", "screens = [\"People\"]")
+        .replace("mounts = [\"/people\"]", "mounts = [\"/persons\"]")
+        .replace("preview = [\"/people\"]", "preview = [\"/persons\"]");
+    let tmp = Tmp::new("passport-errors");
+    let (_, diagnostics) = generate_with(
+        &tmp,
+        &["api-gateway"],
+        &[],
+        &[(SHELL_GDL, &shell), (MFE_GDL, &mfe)],
+        false,
+    )
+    .unwrap();
+    let errors = codes_of(&diagnostics, DiagnosticCode::GenFrontxPassportMismatch);
+    let all = errors.join("\n");
+    for expected in [
+        "version = \"0.1.0-alpha.5\", its package.json \"0.1.0-alpha.6\"",
+        "@gears-frontx/mfes 0.3.0 (it carries 0.4.0)",
+        "name = \"@demo/persons-mfe\"",
+        "frontx = \"0.2.0-alpha.15\", its package.json pins @gears-frontx/react \"0.2.0-alpha.0\"",
+        "screens = [\"People\"], its mfe.json []",
+        "mounts = [\"/persons\"], its mfe.json [\"/people\"]",
+    ] {
+        assert!(all.contains(expected), "{expected}\n{all}");
+    }
+    assert_eq!(errors.len(), 6, "{all}");
+    assert!(diagnostics.has_errors());
+    // The preview names a route the passport mounts: consistent with itself.
+    assert!(
+        codes_of(&diagnostics, DiagnosticCode::GenFrontxPassportDrift).is_empty(),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn a_shell_that_does_not_list_all_it_carries_is_an_error() {
+    let shell = SHELL_PASSPORT.replace("        \"@gears-frontx/mfes\": \"0.4.0\",\n", "");
+    let tmp = Tmp::new("passport-carries");
+    let (_, diagnostics) =
+        generate_with(&tmp, &["api-gateway"], &[], &[(SHELL_GDL, &shell)], false).unwrap();
+    let errors = codes_of(&diagnostics, DiagnosticCode::GenFrontxPassportMismatch);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].contains("@gears-frontx/mfes 0.4.0 is carried and not listed"),
+        "{}",
+        errors[0]
+    );
+}
+
+#[test]
+fn a_passport_that_drifted_on_a_softer_fact_is_a_warning() {
+    let shell = SHELL_PASSPORT.replace(
+        "build = \"npm run build\"",
+        "build = \"npm run build:site\", description = \"Another\", package_manager = \"yarn\"",
+    );
+    let mfe = MFE_PASSPORT.replace(
+        "preview = [\"/people\"]",
+        "preview = [\"/nobody\"], fixtures = \"preview/fixtures.json\"",
+    );
+    let tmp = Tmp::new("passport-warnings");
+    let (_, diagnostics) = generate_with(
+        &tmp,
+        &["api-gateway"],
+        &[],
+        &[(SHELL_GDL, &shell), (MFE_GDL, &mfe)],
+        false,
+    )
+    .unwrap();
+    assert!(!diagnostics.has_errors(), "{diagnostics:?}");
+    let warnings = codes_of(&diagnostics, DiagnosticCode::GenFrontxPassportDrift).join("\n");
+    for expected in [
+        "has no `build:site` script",
+        "says package_manager = \"yarn\", and the package has no yarn.lock",
+        "previews `/nobody`, which it does not mount",
+        "names fixtures `preview/fixtures.json`, which the package does not have",
+    ] {
+        assert!(warnings.contains(expected), "{expected}\n{warnings}");
+    }
+    // The fixture shell has no description, so there is nothing to disagree with.
+    assert!(!warnings.contains("description"), "{warnings}");
+}
+
+#[test]
+fn a_package_checks_its_own_passport_outside_a_product() {
+    let tmp = Tmp::new("check-package");
+    let dir = tmp.0.join("people-mfe");
+    mfe(&dir);
+    write(
+        &dir.join("frontx.gdl"),
+        MFE_PASSPORT.replace("version = \"0.2.0\"", "version = \"9.9.9\""),
+    );
+    let (package, diagnostics) = gearbox_engine::generate::check_frontx_package(&dir).unwrap();
+    assert!(package.is_some());
+    assert_eq!(
+        codes_of(&diagnostics, DiagnosticCode::GenFrontxPassportMismatch).len(),
+        1,
+        "{diagnostics:?}"
+    );
+}
+
+/// Every `frontx.gdl` in a `FrontX` templates checkout evaluates and agrees
+/// with its manifests. Set `GEARBOX_FRONTX_TEMPLATES` to the checkout to run
+/// it; without one it says so and passes.
+#[test]
+fn the_frontx_templates_passports_agree_with_their_manifests() {
+    let Some(root) = std::env::var_os("GEARBOX_FRONTX_TEMPLATES").map(PathBuf::from) else {
+        eprintln!("skipping: GEARBOX_FRONTX_TEMPLATES is not set");
+        return;
+    };
+    let mut dirs = vec![root.join("template-shell")];
+    let mfes = root.join("template-mfe/src-app/mfe_packages");
+    let mut entries: Vec<_> = std::fs::read_dir(&mfes)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.join("frontx.gdl").is_file())
+        .collect();
+    entries.sort();
+    dirs.extend(entries);
+    for dir in dirs {
+        let (package, diagnostics) = gearbox_engine::generate::check_frontx_package(&dir)
+            .unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+        assert!(package.is_some(), "{}: no frontx.gdl", dir.display());
+        assert!(diagnostics.is_empty(), "{}: {diagnostics:?}", dir.display());
+        eprintln!(
+            "{}: {}",
+            dir.display(),
+            package
+                .unwrap()
+                .identity()
+                .name
+                .as_deref()
+                .unwrap_or("(unnamed)")
+        );
+    }
 }

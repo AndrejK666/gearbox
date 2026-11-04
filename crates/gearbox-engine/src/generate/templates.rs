@@ -40,9 +40,9 @@
 //! | `ui/nginx.conf` | `ui/nginx.conf` (`gateway`, `gateway_port`) |
 //! | `helm/ui/deployment.yaml` | `helm/<product>/templates/ui-deployment.yaml` (`name`, `port`) |
 //! | `helm/ui/service.yaml` | `helm/<product>/templates/ui-service.yaml` (`name`, `port`) |
-//! | `frontx/Dockerfile` | `frontend/Dockerfile` |
+//! | `frontx/Dockerfile` | `frontend/Dockerfile` (`node_image`, `install`, `build`, `default_build`, `output`, `served_dir`) |
 //! | `frontx/dockerignore` | `frontend/.dockerignore` |
-//! | `frontx/nginx.conf` | `frontend/nginx.conf` (`gateway`, `gateway_port`) |
+//! | `frontx/nginx.conf` | `frontend/nginx.conf` (`gateway`, `gateway_port`, `base`, `api_prefix`) |
 //! | `terraform/helm/main.tf` | `terraform/main.tf` (`product`) |
 //! | `terraform/helm/variables.tf` | `terraform/variables.tf` (`product_json`, `namespace_json`) |
 //! | `terraform/helm/outputs.tf` | `terraform/outputs.tf` |

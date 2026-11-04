@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 126, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 128, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -1046,6 +1046,22 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "warning",
     domain: "generator",
     docs: "A product signs its users in, and the `FrontX` shell it mounts its\nscreens in says (`shell(signs_in = False)` in its `frontx.gdl`) that it\ndoes not.\n\nThe frontend still builds and serves, and every call its screens make to\nthe backend comes back 401: nothing obtained a token to send. Pick a shell\nthat signs in, or correct the shell's `frontx.gdl` if it is wrong. A shell\nwith no `frontx.gdl` says nothing, and is not reported.",
+    requiresEvidence: false,
+  },
+  GBX0722: {
+    code: "GBX0722",
+    title: "a FrontX package's frontx.gdl disagrees with its package.json or mfe.json",
+    severity: "error",
+    domain: "generator",
+    docs: "A `FrontX` package's passport (`frontx.gdl`) disagrees with its own\nmanifests on a fact that decides what is built: its name or version\nagainst `package.json`, its `frontx` pin against the\n`@gears-frontx/react` pin there, a shell's `carries` against what its\nworkspace carries, or a micro-frontend's `screens` or `mounts` against\nits `mfe.json`.\n\nThe passport restates those facts so one file says everything about the\npackage; a restated fact that has drifted is a passport that lies.\nCorrect whichever copy is wrong: usually the passport, after a release\nbumped the manifest.",
+    requiresEvidence: false,
+  },
+  GBX0723: {
+    code: "GBX0723",
+    title: "a FrontX package's frontx.gdl drifts from its manifests on a softer fact",
+    severity: "warning",
+    domain: "generator",
+    docs: "A `FrontX` package's passport disagrees with its manifests on a softer\nfact: its description, the Node.js `engines` asks for, the package\nmanager whose lock it keeps, a `build` command naming a script it does\nnot have, a preview route it does not mount, or a fixtures file it\nlacks.\n\nThe package still builds as before; what Studio and the generator read\nfrom the passport is simply not what the package does. Correct the copy\nthat is wrong.",
     requiresEvidence: false,
   },
 };

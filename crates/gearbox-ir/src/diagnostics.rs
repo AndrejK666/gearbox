@@ -1565,6 +1565,30 @@ diagnostic_codes! {
     /// that signs in, or correct the shell's `frontx.gdl` if it is wrong. A shell
     /// with no `frontx.gdl` says nothing, and is not reported.
     GenFrontxShellNoSignIn = "GBX0721", Generator, Warning, false, "the product signs users in and its FrontX shell does not";
+
+    /// A `FrontX` package's passport (`frontx.gdl`) disagrees with its own
+    /// manifests on a fact that decides what is built: its name or version
+    /// against `package.json`, its `frontx` pin against the
+    /// `@gears-frontx/react` pin there, a shell's `carries` against what its
+    /// workspace carries, or a micro-frontend's `screens` or `mounts` against
+    /// its `mfe.json`.
+    ///
+    /// The passport restates those facts so one file says everything about the
+    /// package; a restated fact that has drifted is a passport that lies.
+    /// Correct whichever copy is wrong: usually the passport, after a release
+    /// bumped the manifest.
+    GenFrontxPassportMismatch = "GBX0722", Generator, Error, false, "a FrontX package's frontx.gdl disagrees with its package.json or mfe.json";
+
+    /// A `FrontX` package's passport disagrees with its manifests on a softer
+    /// fact: its description, the Node.js `engines` asks for, the package
+    /// manager whose lock it keeps, a `build` command naming a script it does
+    /// not have, a preview route it does not mount, or a fixtures file it
+    /// lacks.
+    ///
+    /// The package still builds as before; what Studio and the generator read
+    /// from the passport is simply not what the package does. Correct the copy
+    /// that is wrong.
+    GenFrontxPassportDrift = "GBX0723", Generator, Warning, false, "a FrontX package's frontx.gdl drifts from its manifests on a softer fact";
 }
 
 /// A diagnostic code string that this build does not know.

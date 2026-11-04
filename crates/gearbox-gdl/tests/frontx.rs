@@ -1,16 +1,18 @@
-//! Evaluating a `frontx.gdl` (GDL 1.5): a `FrontX` package describing itself.
+//! Evaluating a `frontx.gdl` (GDL 1.5): a `FrontX` package's passport.
 //!
-//! A package declares only what its own manifests cannot say -- whether a
-//! shell signs users in and where it reads its runtime addresses, which
-//! backend gears a micro-frontend calls -- and is exactly one kind.
+//! A package says what it is, exactly one kind, and may say everything a tool
+//! needs about it -- including what its `package.json` and `mfe.json` say;
+//! every argument but a shell's `signs_in` is optional.
 
 #![allow(
     clippy::unwrap_used,
     reason = "clippy.toml's allow-unwrap-in-tests covers #[test] fns but not the helpers here"
 )]
 
+use std::collections::BTreeMap;
+
 use gearbox_gdl::{FileIdentity, GdlEngine};
-use gearbox_ir::frontx::{FrontxPackage, FrontxShell};
+use gearbox_ir::frontx::{FrontxIdentity, FrontxMfePackage, FrontxPackage, FrontxShell};
 use gearbox_ir::{DiagnosticCode, RelPath, SourceId};
 
 fn identity() -> FileIdentity {
@@ -45,10 +47,7 @@ shell(signs_in = True, runtime_env = "public/env.js")
     assert!(codes.is_empty(), "{codes:?} {messages}");
     assert_eq!(
         package.unwrap(),
-        FrontxPackage::Shell(FrontxShell {
-            signs_in: true,
-            runtime_env: Some("public/env.js".to_owned()),
-        })
+        FrontxPackage::Shell(FrontxShell::new(true, Some("public/env.js".to_owned())))
     );
 }
 
@@ -62,10 +61,7 @@ fn a_shell_that_takes_its_addresses_at_build_names_no_file() {
         assert!(codes.is_empty(), "{src}: {codes:?} {messages}");
         assert_eq!(
             package.unwrap(),
-            FrontxPackage::Shell(FrontxShell {
-                signs_in: false,
-                runtime_env: None,
-            }),
+            FrontxPackage::Shell(FrontxShell::new(false, None)),
             "{src}"
         );
     }
@@ -91,12 +87,112 @@ fn a_runtime_env_stays_inside_the_package() {
 }
 
 #[test]
-fn what_a_shell_carries_is_not_declared() {
-    // Read from its workspace and `package.json`; a second copy here would drift.
+fn a_shells_passport_says_everything_about_it() {
+    let (package, codes, messages) = eval(
+        r#"gdl_version = "1.5"
+
+shell(
+    name = "@acme/shell",
+    version = "1.2.0",
+    description = "The Acme portal",
+    node = ">=24",
+    package_manager = "npm",
+    build = "npm run build",
+    output = "dist",
+    base = "/",
+    api_prefix = "/cf/",
+    runtime_env = "public/env.js",
+    env = {"apiBase": "gateway.url", "oidcIssuer": "oidc.issuer"},
+    build_env = ["VITE_API_BASE"],
+    signs_in = True,
+    sign_in_redirect = "/callback",
+    carries = {"@gears-frontx/react": "0.2.0-alpha.15"},
+)
+"#,
+    );
+    assert!(codes.is_empty(), "{codes:?} {messages}");
+    let FrontxPackage::Shell(shell) = package.unwrap() else {
+        panic!("not a shell");
+    };
+    assert_eq!(shell.identity.name.as_deref(), Some("@acme/shell"));
+    assert_eq!(shell.identity.version.as_deref(), Some("1.2.0"));
+    assert_eq!(shell.node.as_deref(), Some(">=24"));
+    assert_eq!(shell.package_manager.as_deref(), Some("npm"));
+    assert_eq!(shell.build.as_deref(), Some("npm run build"));
+    assert_eq!(shell.output.as_deref(), Some("dist"));
+    assert_eq!(shell.base.as_deref(), Some("/"));
+    assert_eq!(shell.api_prefix.as_deref(), Some("/cf/"));
+    assert_eq!(shell.env["apiBase"], "gateway.url");
+    assert_eq!(shell.build_env, ["VITE_API_BASE"]);
+    assert_eq!(shell.sign_in_redirect, ["/callback"]);
+    assert_eq!(
+        shell.carries,
+        Some(BTreeMap::from([(
+            "@gears-frontx/react".to_owned(),
+            "0.2.0-alpha.15".to_owned()
+        )]))
+    );
+}
+
+#[test]
+fn a_shell_may_come_back_to_several_paths() {
     let (package, codes, messages) =
-        eval(r#"shell(signs_in = True, carries = {"@gears-frontx/react": "0.2.0"})"#);
+        eval(r#"shell(signs_in = True, sign_in_redirect = ["/callback", "/silent"])"#);
+    assert!(codes.is_empty(), "{codes:?} {messages}");
+    let FrontxPackage::Shell(shell) = package.unwrap() else {
+        panic!("not a shell");
+    };
+    assert_eq!(shell.sign_in_redirect, ["/callback", "/silent"]);
+}
+
+#[test]
+fn a_shells_passport_is_refused_where_it_could_not_be_true() {
+    for (src, field) in [
+        (r#"shell(signs_in = True, api_prefix = "/")"#, "api_prefix"),
+        (
+            r#"shell(signs_in = True, api_prefix = "cf/")"#,
+            "api_prefix",
+        ),
+        (
+            r#"shell(signs_in = True, api_prefix = "/cf/;deny all;/")"#,
+            "api_prefix",
+        ),
+        (r#"shell(signs_in = True, base = "/app")"#, "base"),
+        (r#"shell(signs_in = True, output = "../dist")"#, "output"),
+        (
+            r#"shell(signs_in = True, build = "npm run build\nRUN true")"#,
+            "build",
+        ),
+        (
+            r#"shell(signs_in = True, package_manager = "bun")"#,
+            "package_manager",
+        ),
+        (
+            r#"shell(signs_in = True, build_env = ["vite_api"])"#,
+            "build_env",
+        ),
+        (
+            r#"shell(signs_in = False, sign_in_redirect = "/callback")"#,
+            "sign_in_redirect",
+        ),
+        (
+            r#"shell(signs_in = True, sign_in_redirect = "callback")"#,
+            "sign_in_redirect",
+        ),
+        (r#"shell(signs_in = True, name = "two words")"#, "name"),
+    ] {
+        let (package, codes, messages) = eval(src);
+        assert!(package.is_none(), "{src}");
+        assert!(!codes.is_empty(), "{src}");
+        assert!(messages.contains(field), "{src}: {messages}");
+    }
+}
+
+#[test]
+fn an_env_is_strings_to_strings() {
+    let (package, codes, _) = eval(r#"shell(signs_in = True, env = {"apiBase": 1})"#);
     assert!(package.is_none());
-    assert_eq!(codes, [DiagnosticCode::GdlUnknownArgument], "{messages}");
+    assert!(!codes.is_empty());
 }
 
 #[test]
@@ -104,11 +200,11 @@ fn a_micro_frontend_names_the_gears_it_calls() {
     let (package, codes, messages) =
         eval(r#"mfe(requires = ["account-management", "studio-user"])"#);
     assert!(codes.is_empty(), "{codes:?} {messages}");
-    let FrontxPackage::Mfe { requires } = package.unwrap() else {
+    let FrontxPackage::Mfe(mfe) = package.unwrap() else {
         panic!("not an mfe");
     };
     assert_eq!(
-        requires
+        mfe.requires
             .iter()
             .map(gearbox_ir::GearId::as_str)
             .collect::<Vec<_>>(),
@@ -123,9 +219,7 @@ fn a_micro_frontend_that_calls_nothing_says_so() {
         assert!(codes.is_empty(), "{src}: {codes:?} {messages}");
         assert_eq!(
             package.unwrap(),
-            FrontxPackage::Mfe {
-                requires: std::collections::BTreeSet::new()
-            }
+            FrontxPackage::Mfe(FrontxMfePackage::default())
         );
     }
 }
@@ -139,17 +233,75 @@ fn a_required_gear_is_a_gear_id() {
 }
 
 #[test]
-fn a_micro_frontends_screens_stay_in_its_mfe_json() {
+fn a_micro_frontends_passport_says_everything_about_it() {
+    let (package, codes, messages) = eval(
+        r#"mfe(
+    name = "@acme/accounts-mfe",
+    version = "0.3.0",
+    description = "Accounts screens",
+    requires = ["accounts"],
+    screens = ["Accounts", "Account"],
+    mounts = ["/accounts", "/accounts/detail"],
+    frontx = "0.2.0-alpha.15",
+    roles = ["accounts.read"],
+    preview = ["/accounts"],
+    fixtures = "preview/fixtures.json",
+)"#,
+    );
+    assert!(codes.is_empty(), "{codes:?} {messages}");
+    let FrontxPackage::Mfe(mfe) = package.unwrap() else {
+        panic!("not an mfe");
+    };
+    assert_eq!(mfe.identity.name.as_deref(), Some("@acme/accounts-mfe"));
+    assert_eq!(
+        mfe.screens,
+        Some(vec!["Accounts".to_owned(), "Account".to_owned()])
+    );
+    assert_eq!(
+        mfe.mounts,
+        Some(vec!["/accounts".to_owned(), "/accounts/detail".to_owned()])
+    );
+    assert_eq!(mfe.frontx.as_deref(), Some("0.2.0-alpha.15"));
+    assert_eq!(mfe.roles, Some(vec!["accounts.read".to_owned()]));
+    assert_eq!(mfe.preview, ["/accounts"]);
+    assert_eq!(mfe.fixtures.as_deref(), Some("preview/fixtures.json"));
+}
+
+#[test]
+fn a_micro_frontends_routes_are_routes() {
+    for src in [
+        r#"mfe(mounts = ["accounts"])"#,
+        r#"mfe(preview = ["accounts"])"#,
+        r#"mfe(fixtures = "/abs.json")"#,
+    ] {
+        let (package, codes, messages) = eval(src);
+        assert!(package.is_none(), "{src}");
+        assert_eq!(codes, [DiagnosticCode::GdlEval], "{src}: {messages}");
+    }
+}
+
+#[test]
+fn an_argument_outside_the_passport_is_refused() {
     let (package, codes, messages) = eval(r#"mfe(extensions = [{"id": "people"}])"#);
     assert!(package.is_none());
     assert_eq!(codes, [DiagnosticCode::GdlUnknownArgument], "{messages}");
 }
 
 #[test]
-fn a_library_declares_nothing_more() {
+fn a_library_says_who_it_is_or_nothing() {
     let (package, codes, messages) = eval("library()");
     assert!(codes.is_empty(), "{codes:?} {messages}");
-    assert_eq!(package.unwrap(), FrontxPackage::Library);
+    assert_eq!(
+        package.unwrap(),
+        FrontxPackage::Library(FrontxIdentity::default())
+    );
+    let (package, codes, messages) =
+        eval(r#"library(name = "@acme/shared", version = "0.1.0", description = "Shared bits")"#);
+    assert!(codes.is_empty(), "{codes:?} {messages}");
+    assert_eq!(
+        package.unwrap().identity().name.as_deref(),
+        Some("@acme/shared")
+    );
 }
 
 #[test]
@@ -211,4 +363,5 @@ fn the_editor_offers_the_package_vocabulary_in_a_frontx_gdl() {
         .collect();
     assert!(params.contains(&"signs_in"), "{params:?}");
     assert!(params.contains(&"runtime_env"), "{params:?}");
+    assert!(params.contains(&"api_prefix"), "{params:?}");
 }

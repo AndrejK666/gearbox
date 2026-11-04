@@ -54,6 +54,9 @@ mod ui;
 mod unit_chart;
 mod workspace;
 
+/// A `FrontX` package's passport checked against its own manifests.
+pub use frontx::check_package as check_frontx_package;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

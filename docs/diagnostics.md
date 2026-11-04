@@ -15,7 +15,7 @@ remedy at the point it is raised
 (`cpt-gearbox-nfr-actionable-diagnostics`), which is per-occurrence and
 so is not listed here.
 
-Codes: **126**.
+Codes: **128**.
 
 ## `GBX01xx` — Parsing and evaluating GDL
 
@@ -1627,6 +1627,8 @@ incomplete, so GBX0124 cannot tell whether the product maps all of it.
 | [GBX0712](#gbx0712) | warning | a product template did not take the new builtin |
 | [GBX0720](#gbx0720) | error | invalid UI composition or package |
 | [GBX0721](#gbx0721) | warning | the product signs users in and its FrontX shell does not |
+| [GBX0722](#gbx0722) | error | a FrontX package's frontx.gdl disagrees with its package.json or mfe.json |
+| [GBX0723](#gbx0723) | warning | a FrontX package's frontx.gdl drifts from its manifests on a softer fact |
 
 ### GBX0701
 
@@ -1782,4 +1784,34 @@ The frontend still builds and serves, and every call its screens make to
 the backend comes back 401: nothing obtained a token to send. Pick a shell
 that signs in, or correct the shell's `frontx.gdl` if it is wrong. A shell
 with no `frontx.gdl` says nothing, and is not reported.
+
+### GBX0722
+
+**a FrontX package's frontx.gdl disagrees with its package.json or mfe.json**
+
+A `FrontX` package's passport (`frontx.gdl`) disagrees with its own
+manifests on a fact that decides what is built: its name or version
+against `package.json`, its `frontx` pin against the
+`@gears-frontx/react` pin there, a shell's `carries` against what its
+workspace carries, or a micro-frontend's `screens` or `mounts` against
+its `mfe.json`.
+
+The passport restates those facts so one file says everything about the
+package; a restated fact that has drifted is a passport that lies.
+Correct whichever copy is wrong: usually the passport, after a release
+bumped the manifest.
+
+### GBX0723
+
+**a FrontX package's frontx.gdl drifts from its manifests on a softer fact**
+
+A `FrontX` package's passport disagrees with its manifests on a softer
+fact: its description, the Node.js `engines` asks for, the package
+manager whose lock it keeps, a `build` command naming a script it does
+not have, a preview route it does not mount, or a fixtures file it
+lacks.
+
+The package still builds as before; what Studio and the generator read
+from the passport is simply not what the package does. Correct the copy
+that is wrong.
 

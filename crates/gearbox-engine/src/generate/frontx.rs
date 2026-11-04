@@ -11,15 +11,18 @@
 //! name the shell's version lacks is explained by the lock, not discovered in
 //! a stack trace.
 //!
-//! A package may describe itself in a `frontx.gdl` (GDL 1.5): a shell whether
-//! it signs users in and where it reads its runtime addresses, a
-//! micro-frontend the backend gears it calls. A package without one is read
-//! as before, and what it would have said is recorded as unknown.
+//! A package may carry a passport, its `frontx.gdl` (GDL 1.5): who it is, how a
+//! shell is built and served, what a micro-frontend calls and mounts. Where it
+//! restates `package.json` or `mfe.json` the two are checked (GBX0722 for
+//! identity, pins and screens, GBX0723 for softer facts), and what only it says
+//! drives the image: the build command, the build output, the Node.js image,
+//! the served path and the API prefix the server proxies. A package without
+//! one is read as before, and what it would have said is recorded as unknown.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use gearbox_gdl::{FRONTX_FILE, FileIdentity, GdlEngine};
-use gearbox_ir::frontx::{FrontxPackage, FrontxShell};
+use gearbox_ir::frontx::{FrontxIdentity, FrontxMfePackage, FrontxPackage, FrontxShell};
 use gearbox_ir::{Diagnostic, DiagnosticCode, Diagnostics, FileEntry, GearId, RelPath, SourceId};
 use serde_json::{Value, json};
 
@@ -97,8 +100,8 @@ fn declared(
 fn spelled(package: &FrontxPackage) -> &'static str {
     match package {
         FrontxPackage::Shell(_) => "`shell(...)`",
-        FrontxPackage::Mfe { .. } => "`mfe(...)`",
-        FrontxPackage::Library => "`library()`",
+        FrontxPackage::Mfe(_) => "`mfe(...)`",
+        FrontxPackage::Library(_) => "`library(...)`",
     }
 }
 
@@ -397,14 +400,8 @@ fn shell_declaration(
             )));
         }
     };
-    if let Some(env) = &shell.runtime_env
-        && !shell_dir.join(env).is_file()
-    {
-        return Err(invalid(format!(
-            "{shell_name}: its {FRONTX_FILE} reads the product's addresses from `{env}`, \
-             which it does not have"
-        )));
-    }
+    let manifest = read_json(&shell_dir.join("package.json"))?;
+    check_shell(shell_dir, &manifest, &shell, shell_name, diagnostics)?;
     if !shell.signs_in
         && let Some(idp) = input.lock.gears.keys().find(|id| signs_users_in(id))
     {
@@ -436,13 +433,19 @@ fn mfe_requires(
     let mut requires = mfe.requires.clone();
     match declared(dir, what, diagnostics)? {
         None => Ok((requires, false)),
-        Some(FrontxPackage::Mfe { requires: own }) => {
-            if let Some(absent) = own.iter().find(|id| !input.lock.gears.contains_key(*id)) {
+        Some(FrontxPackage::Mfe(own)) => {
+            if let Some(absent) = own
+                .requires
+                .iter()
+                .find(|id| !input.lock.gears.contains_key(*id))
+            {
                 return Err(invalid(format!(
                     "{what} requires absent backend {absent} (its {FRONTX_FILE} says so)"
                 )));
             }
-            requires.extend(own);
+            let manifest = read_json(&dir.join("package.json"))?;
+            check_mfe(dir, &manifest, &own, what, diagnostics);
+            requires.extend(own.requires);
             Ok((requires, true))
         }
         Some(other) => Err(invalid(format!(
@@ -465,12 +468,431 @@ fn check_library(
         )));
     }
     match declared(dir, what, diagnostics)? {
-        None | Some(FrontxPackage::Library) => Ok(()),
+        None => Ok(()),
+        Some(FrontxPackage::Library(identity)) => {
+            let manifest = read_json(&dir.join("package.json"))?;
+            check_identity(&identity, &manifest, what, diagnostics);
+            Ok(())
+        }
         Some(other) => Err(invalid(format!(
             "{what}: its {FRONTX_FILE} declares {}, not `library()`",
             spelled(&other)
         ))),
     }
+}
+
+/// A passport fact that disagrees with the manifest it restates.
+fn mismatch(code: DiagnosticCode, what: &str, message: &str) -> Diagnostic {
+    Diagnostic::new(code, format!("{what}: its {FRONTX_FILE} {message}")).with_help(
+        "a passport restates its manifests so one file says everything; correct whichever \
+         copy is wrong",
+    )
+}
+
+/// Who the passport says the package is, against its `package.json`. Name
+/// and version decide what is built and locked (GBX0722); the description
+/// only what is shown (GBX0723).
+fn check_identity(
+    identity: &FrontxIdentity,
+    manifest: &Value,
+    what: &str,
+    diagnostics: &mut Diagnostics,
+) {
+    for (field, declared, code) in [
+        (
+            "name",
+            &identity.name,
+            DiagnosticCode::GenFrontxPassportMismatch,
+        ),
+        (
+            "version",
+            &identity.version,
+            DiagnosticCode::GenFrontxPassportMismatch,
+        ),
+        (
+            "description",
+            &identity.description,
+            DiagnosticCode::GenFrontxPassportDrift,
+        ),
+    ] {
+        let (Some(declared), Some(written)) = (declared, manifest[field].as_str()) else {
+            continue;
+        };
+        if declared != written {
+            diagnostics.push(mismatch(
+                code,
+                what,
+                &format!("says {field} = {declared:?}, its package.json {written:?}"),
+            ));
+        }
+    }
+}
+
+/// The scripts a build command runs: `npm run build`, `pnpm run build`,
+/// `yarn build`, each `&&`-separated step that names one.
+fn scripts_run(command: &str) -> Vec<&str> {
+    command
+        .split("&&")
+        .filter_map(|step| {
+            let words: Vec<&str> = step.split_whitespace().collect();
+            match words.as_slice() {
+                ["npm" | "pnpm" | "yarn", "run", script, ..] => Some(*script),
+                ["yarn", script, ..] if !matches!(*script, "install" | "add") => Some(*script),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// The lock file a package manager keeps.
+fn lock_file(package_manager: &str) -> &'static str {
+    match package_manager {
+        "pnpm" => "pnpm-lock.yaml",
+        "yarn" => "yarn.lock",
+        _ => "package-lock.json",
+    }
+}
+
+/// A shell's passport against its workspace: identity, what it carries, the
+/// file it reads its addresses from, and the softer facts.
+fn check_shell(
+    dir: &Path,
+    manifest: &Value,
+    shell: &FrontxShell,
+    what: &str,
+    diagnostics: &mut Diagnostics,
+) -> Result<(), GenerateError> {
+    if let Some(env) = &shell.runtime_env
+        && !dir.join(env).is_file()
+    {
+        return Err(invalid(format!(
+            "{what}: its {FRONTX_FILE} reads the product's addresses from `{env}`, \
+             which it does not have"
+        )));
+    }
+    check_identity(&shell.identity, manifest, what, diagnostics);
+    if let Some(declared) = &shell.carries {
+        let carries = carried(dir, manifest)?;
+        let mut wrong = Vec::new();
+        for (package, at) in declared {
+            match carries.get(package) {
+                Some(has) if has == at => {}
+                Some(has) => wrong.push(format!("{package} {at} (it carries {has})")),
+                None => wrong.push(format!("{package} {at} (it does not carry it)")),
+            }
+        }
+        for (package, has) in &carries {
+            if !declared.contains_key(package) {
+                wrong.push(format!("{package} {has} is carried and not listed"));
+            }
+        }
+        if !wrong.is_empty() {
+            diagnostics.push(mismatch(
+                DiagnosticCode::GenFrontxPassportMismatch,
+                what,
+                &format!(
+                    "`carries` is not what its workspace carries: {}",
+                    wrong.join("; ")
+                ),
+            ));
+        }
+    }
+    if let (Some(node), Some(engines)) = (&shell.node, manifest["engines"]["node"].as_str())
+        && node != engines
+    {
+        diagnostics.push(mismatch(
+            DiagnosticCode::GenFrontxPassportDrift,
+            what,
+            &format!("says node = {node:?}, its package.json engines.node {engines:?}"),
+        ));
+    }
+    if let Some(pm) = &shell.package_manager {
+        if let Some(field) = manifest["packageManager"].as_str()
+            && field.split('@').next() != Some(pm.as_str())
+        {
+            diagnostics.push(mismatch(
+                DiagnosticCode::GenFrontxPassportDrift,
+                what,
+                &format!(
+                    "says package_manager = {pm:?}, its package.json packageManager {field:?}"
+                ),
+            ));
+        } else if !dir.join(lock_file(pm)).is_file() {
+            diagnostics.push(mismatch(
+                DiagnosticCode::GenFrontxPassportDrift,
+                what,
+                &format!(
+                    "says package_manager = {pm:?}, and the package has no {}",
+                    lock_file(pm)
+                ),
+            ));
+        }
+    }
+    if let Some(build) = &shell.build {
+        for script in scripts_run(build) {
+            if manifest["scripts"][script].as_str().is_none() {
+                diagnostics.push(mismatch(
+                    DiagnosticCode::GenFrontxPassportDrift,
+                    what,
+                    &format!(
+                        "builds with `{build}`, and its package.json has no `{script}` script"
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The exact `@gears-frontx/react` a package pins, as written.
+fn frontx_pin(manifest: &Value) -> Option<&str> {
+    ["dependencies", "devDependencies"]
+        .iter()
+        .find_map(|section| manifest[*section]["@gears-frontx/react"].as_str())
+}
+
+/// A micro-frontend's passport against its `package.json` and `mfe.json`.
+fn check_mfe(
+    dir: &Path,
+    manifest: &Value,
+    mfe: &FrontxMfePackage,
+    what: &str,
+    diagnostics: &mut Diagnostics,
+) {
+    check_identity(&mfe.identity, manifest, what, diagnostics);
+    if let Some(frontx) = &mfe.frontx {
+        match frontx_pin(manifest) {
+            Some(pin) if pin == frontx => {}
+            pin => diagnostics.push(mismatch(
+                DiagnosticCode::GenFrontxPassportMismatch,
+                what,
+                &format!(
+                    "says frontx = {frontx:?}, its package.json pins @gears-frontx/react {}",
+                    pin.map_or_else(|| "nowhere".to_owned(), |p| format!("{p:?}"))
+                ),
+            )),
+        }
+    }
+    let mfe_json = read_json(&dir.join("mfe.json")).ok();
+    let extensions: Vec<Value> = mfe_json
+        .as_ref()
+        .and_then(|m| m["extensions"].as_array().cloned())
+        .unwrap_or_default();
+    let labels: Vec<String> = extensions
+        .iter()
+        .filter_map(|e| e["presentation"]["label"].as_str().map(str::to_owned))
+        .collect();
+    // Two layouts are in use: FrontX's templates put the route on the
+    // extension, Studio's micro-frontends beside the label in `presentation`.
+    let routes: Vec<String> = extensions
+        .iter()
+        .filter_map(|e| {
+            e["presentation"]["route"]
+                .as_str()
+                .or_else(|| e["route"].as_str())
+                .map(str::to_owned)
+        })
+        .collect();
+    for (field, declared, written) in [
+        ("screens", &mfe.screens, &labels),
+        ("mounts", &mfe.mounts, &routes),
+    ] {
+        if let Some(declared) = declared
+            && declared != written
+        {
+            diagnostics.push(mismatch(
+                DiagnosticCode::GenFrontxPassportMismatch,
+                what,
+                &format!("says {field} = {declared:?}, its mfe.json {written:?}"),
+            ));
+        }
+    }
+    let mounts = mfe.mounts.as_ref().unwrap_or(&routes);
+    for route in &mfe.preview {
+        if !mounts.contains(route) {
+            diagnostics.push(mismatch(
+                DiagnosticCode::GenFrontxPassportDrift,
+                what,
+                &format!("previews `{route}`, which it does not mount"),
+            ));
+        }
+    }
+    if let Some(fixtures) = &mfe.fixtures
+        && !dir.join(fixtures).is_file()
+    {
+        diagnostics.push(mismatch(
+            DiagnosticCode::GenFrontxPassportDrift,
+            what,
+            &format!("names fixtures `{fixtures}`, which the package does not have"),
+        ));
+    }
+}
+
+/// Check one `FrontX` package's passport against its own manifests, outside
+/// a product: what generation checks for each package it mounts, less what
+/// needs the product (the gears it requires, sign-in). `None` when the package
+/// has no `frontx.gdl`; `Err` when it does not evaluate.
+///
+/// # Errors
+/// The package has no readable `package.json`, its `frontx.gdl` does not
+/// evaluate, or a shell's `runtime_env` names a file it lacks.
+pub fn check_package(dir: &Path) -> Result<(Option<FrontxPackage>, Diagnostics), GenerateError> {
+    let mut diagnostics = Diagnostics::new();
+    let manifest = read_json(&dir.join("package.json"))?;
+    let what = manifest["name"]
+        .as_str()
+        .map_or_else(|| dir.display().to_string(), str::to_owned);
+    let Some(package) = declared(dir, &what, &mut diagnostics)? else {
+        return Ok((None, diagnostics));
+    };
+    match &package {
+        FrontxPackage::Shell(shell) => check_shell(dir, &manifest, shell, &what, &mut diagnostics)?,
+        FrontxPackage::Mfe(mfe) => check_mfe(dir, &manifest, mfe, &what, &mut diagnostics),
+        FrontxPackage::Library(identity) => {
+            check_identity(identity, &manifest, &what, &mut diagnostics);
+        }
+    }
+    Ok((Some(package), diagnostics))
+}
+
+/// The defaults a shell without a passport, or one silent on a fact, is built
+/// and served with: today's output, unchanged.
+const DEFAULT_NODE_IMAGE: &str = "24.21.0";
+const DEFAULT_OUTPUT: &str = "dist";
+const DEFAULT_BASE: &str = "/";
+const DEFAULT_API_PREFIX: &str = "/cf/";
+
+/// The `node` image tag for what a passport says: an exact or major version
+/// (`24`, `24.21`, `24.21.0`) is the tag; a range (`>=24`) keeps the default.
+fn node_image(node: Option<&str>) -> String {
+    let tag = node.filter(|n| {
+        let parts: Vec<&str> = n.split('.').collect();
+        parts.len() <= 3
+            && parts
+                .iter()
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    });
+    format!("{}-alpine", tag.unwrap_or(DEFAULT_NODE_IMAGE))
+}
+
+/// How the shell's image installs its dependencies, by package manager.
+fn install_command(package_manager: Option<&str>) -> &'static str {
+    match package_manager {
+        Some("pnpm") => "corepack enable && pnpm install",
+        Some("yarn") => "corepack enable && yarn install",
+        _ => "npm install --no-audit --no-fund",
+    }
+}
+
+/// What the image is built and served with: the passport's word where it
+/// gave one, today's defaults where not.
+struct Serving {
+    node_image: String,
+    install: &'static str,
+    build: String,
+    /// Whether `build` is the default: the Dockerfile explains that one.
+    default_build: bool,
+    output: String,
+    base: String,
+    api_prefix: String,
+}
+
+impl Serving {
+    fn of(shell: Option<&FrontxShell>) -> Self {
+        let pm = shell.and_then(|s| s.package_manager.as_deref());
+        let build = shell.and_then(|s| s.build.clone());
+        let default_build = build.is_none();
+        Self {
+            node_image: node_image(shell.and_then(|s| s.node.as_deref())),
+            install: install_command(pm),
+            build: build.unwrap_or_else(|| format!("{} run build", pm.unwrap_or("npm"))),
+            default_build,
+            output: shell
+                .and_then(|s| s.output.clone())
+                .unwrap_or_else(|| DEFAULT_OUTPUT.to_owned()),
+            base: shell
+                .and_then(|s| s.base.clone())
+                .unwrap_or_else(|| DEFAULT_BASE.to_owned()),
+            api_prefix: shell
+                .and_then(|s| s.api_prefix.clone())
+                .unwrap_or_else(|| DEFAULT_API_PREFIX.to_owned()),
+        }
+    }
+}
+
+/// The frontend's image and, under Kubernetes, how it is served: the
+/// Dockerfile and nginx configuration as the shell's passport says, and the
+/// same deployment as `ui`'s.
+fn image(
+    input: &GenerateInput<'_>,
+    serving: &Serving,
+    out: &mut Vec<FileEntry>,
+) -> Result<(), GenerateError> {
+    let render = |key: &str, ctx: minijinja::Value| -> Result<Vec<u8>, GenerateError> {
+        Ok(super::templates::render("FrontX", input.templates.get(key)?, ctx)?.into_bytes())
+    };
+    out.push(super::ui::file(
+        "frontend/Dockerfile",
+        render(
+            "frontx/Dockerfile",
+            minijinja::context! {
+                node_image => serving.node_image,
+                install => serving.install,
+                build => serving.build,
+                default_build => serving.default_build,
+                output => serving.output,
+                // Below the server's root for a base other than `/`.
+                served_dir => serving.base.trim_end_matches('/'),
+            },
+        )?,
+    )?);
+    out.push(super::ui::file(
+        "frontend/.dockerignore",
+        render("frontx/dockerignore", minijinja::context! {})?,
+    )?);
+    if input.lock.kubernetes.is_none() {
+        return Ok(());
+    }
+    let gateway = input
+        .lock
+        .applications
+        .iter()
+        .find(|a| a.gears.iter().any(|id| id.as_str() == "api-gateway"))
+        .ok_or_else(|| invalid("a FrontX frontend needs an API Gateway application"))?;
+    let port = gateway
+        .service_port
+        .ok_or_else(|| invalid("the API Gateway application has no service port"))?;
+    out.push(super::ui::file(
+        "frontend/nginx.conf",
+        render(
+            "frontx/nginx.conf",
+            minijinja::context! {
+                gateway => gateway.name.as_str(),
+                gateway_port => port,
+                base => serving.base,
+                api_prefix => serving.api_prefix,
+            },
+        )?,
+    )?);
+    // The same deployment as `ui`'s: one UI image per product, under `ui` values.
+    let product = input.lock.product.id.as_str();
+    let helm_ctx =
+        minijinja::context! { name => format!("{product}-frontend"), port => super::ui::UI_PORT };
+    for (key, name) in [
+        ("helm/ui/deployment.yaml", "frontend-deployment.yaml"),
+        ("helm/ui/service.yaml", "frontend-service.yaml"),
+    ] {
+        let body = super::templates::render_helm(
+            "FrontX chart",
+            input.templates.get(key)?,
+            helm_ctx.clone(),
+        )?;
+        out.push(super::ui::file(
+            &format!("helm/{product}/templates/{name}"),
+            body.into_bytes(),
+        )?);
+    }
+    Ok(())
 }
 
 pub(super) fn files(
@@ -510,6 +932,7 @@ pub(super) fn files(
     }
     let carries = carried(&shell_dir, &shell_manifest)?;
     let shell_declares = shell_declaration(input, &shell_dir, &shell_name, diagnostics)?;
+    let serving = Serving::of(shell_declares.as_ref());
     // The shell's npm lock is kept: `npm install` starts from it, so what the
     // shell resolved stays resolved, and only what the product changed (its
     // micro-frontends, the pins aligned) is resolved anew. Without it a range
@@ -628,6 +1051,10 @@ pub(super) fn files(
             "signsIn": shell_declares.as_ref().map(|s| s.signs_in),
             "runtimeEnv": shell_declares.as_ref().and_then(|s| s.runtime_env.clone()),
             "described": shell_declares.is_some(),
+            // How the image builds and serves it: the passport's word, or the default.
+            "output": serving.output,
+            "base": serving.base,
+            "apiPrefix": serving.api_prefix,
         },
         "mfes": mounted,
         "libraries": libraries.iter().map(|l| json!({
@@ -646,54 +1073,7 @@ pub(super) fn files(
     lock_bytes.push(b'\n');
     out.push(super::ui::file("frontend/frontx.lock.json", lock_bytes)?);
 
-    let render = |key: &str, ctx: minijinja::Value| -> Result<Vec<u8>, GenerateError> {
-        Ok(super::templates::render("FrontX", input.templates.get(key)?, ctx)?.into_bytes())
-    };
-    out.push(super::ui::file(
-        "frontend/Dockerfile",
-        render("frontx/Dockerfile", minijinja::context! {})?,
-    )?);
-    out.push(super::ui::file(
-        "frontend/.dockerignore",
-        render("frontx/dockerignore", minijinja::context! {})?,
-    )?);
-    if input.lock.kubernetes.is_none() {
-        return Ok(out);
-    }
-    let gateway = input
-        .lock
-        .applications
-        .iter()
-        .find(|a| a.gears.iter().any(|id| id.as_str() == "api-gateway"))
-        .ok_or_else(|| invalid("a FrontX frontend needs an API Gateway application"))?;
-    let port = gateway
-        .service_port
-        .ok_or_else(|| invalid("the API Gateway application has no service port"))?;
-    out.push(super::ui::file(
-        "frontend/nginx.conf",
-        render(
-            "frontx/nginx.conf",
-            minijinja::context! { gateway => gateway.name.as_str(), gateway_port => port },
-        )?,
-    )?);
-    // The same deployment as `ui`'s: one UI image per product, under `ui` values.
-    let product = input.lock.product.id.as_str();
-    let helm_ctx =
-        minijinja::context! { name => format!("{product}-frontend"), port => super::ui::UI_PORT };
-    for (key, name) in [
-        ("helm/ui/deployment.yaml", "frontend-deployment.yaml"),
-        ("helm/ui/service.yaml", "frontend-service.yaml"),
-    ] {
-        let body = super::templates::render_helm(
-            "FrontX chart",
-            input.templates.get(key)?,
-            helm_ctx.clone(),
-        )?;
-        out.push(super::ui::file(
-            &format!("helm/{product}/templates/{name}"),
-            body.into_bytes(),
-        )?);
-    }
+    image(input, &serving, &mut out)?;
     Ok(out)
 }
 

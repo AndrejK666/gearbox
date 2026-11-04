@@ -13,10 +13,10 @@ http {
     listen 8080;
     root /usr/share/nginx/html;
     # Where the product is, written at start: read fresh on every load.
-    location = /env.js { add_header Cache-Control no-store; }
-    location = /runtime-config.json { add_header Cache-Control no-store; }
-    # FrontX micro-frontends call the gateway's own paths (`/cf/<gear>/v1`).
-    location /cf/ {
+    location = {{ base }}env.js { add_header Cache-Control no-store; }
+    location = {{ base }}runtime-config.json { add_header Cache-Control no-store; }
+    # FrontX micro-frontends call the gateway's own paths (`{{ api_prefix }}<gear>/v1`).
+    location {{ api_prefix }} {
       proxy_pass http://{{ gateway }}:{{ gateway_port }};
       proxy_http_version 1.1;
       proxy_buffering off;
@@ -25,6 +25,6 @@ http {
       proxy_set_header Connection '';
       add_header X-Accel-Buffering no always;
     }
-    location / { try_files $uri /index.html; }
+    location / { try_files $uri {{ base }}index.html; }
   }
 }

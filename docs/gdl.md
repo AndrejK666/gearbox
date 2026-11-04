@@ -8,7 +8,7 @@ Three file kinds, three vocabularies. `gear()` is not callable in a product file
 |---|---|---|
 | `gear.gdl` | one gear: facts Rust does not already own | exactly one `gear(...)` |
 | `product.gdl` | one product: operator intent | exactly one `product(...)` |
-| `frontx.gdl` | one FrontX package: facts its `package.json` and `mfe.json` do not own (GDL 1.5) | exactly one `shell(...)`, `mfe(...)` or `library()` |
+| `frontx.gdl` | one FrontX package's passport: everything about it, its `package.json` and `mfe.json` facts included and checked against them (GDL 1.5) | exactly one `shell(...)`, `mfe(...)` or `library()` |
 
 Zero or two top-level declarations is **GBX0105**. Profile-specific behaviour is a `profiles = [...]` list on the declaration, not a branch.
 
@@ -177,27 +177,43 @@ and what its `frontx.gdl` says: `signsIn`, `runtimeEnv`, `described`; each
 micro-frontend's name, version, extensions, required gears, whether it has a
 `frontx.gdl`, aligned pins and content hash; each library's name, version,
 aligned pins and content hash), a `Dockerfile` and `.dockerignore`. A kubernetes profile adds
-`frontend/nginx.conf`, which proxies `/cf/` to the API Gateway application
-unchanged and serves `/env.js` uncached, and the deployment and service under
+`frontend/nginx.conf`, which proxies the shell's `api_prefix` (`/cf/` by
+default) to the API Gateway application unchanged and serves `env.js` uncached, and the deployment and service under
 the umbrella chart's `ui` values, image `gbx-<product>-frontend:<version>`.
 Templates: `frontx/Dockerfile`, `frontx/dockerignore`, `frontx/nginx.conf`.
 
-### A package's own description: `frontx.gdl`
+### A package's passport: `frontx.gdl`
 
-A FrontX package may describe itself in a `frontx.gdl` at its root, beside its
-`package.json`, the way a gear has its `gear.gdl`. It states only what the
-package's manifests cannot: its name, version and pins stay in `package.json`,
-a micro-frontend's screens and extensions in `mfe.json`, and what a shell
-carries is still read from its workspace. Restating any of them is GBX0106.
-One call says what the package is:
+A FrontX package may carry a passport, a `frontx.gdl` at its root beside its
+`package.json`, the way a gear has its `gear.gdl`. It is the one file to read
+the package from: who it is, how a shell is built and served, what it reads at
+start, what a micro-frontend calls and mounts. It deliberately restates what
+`package.json` and `mfe.json` already say, and generation checks each restated
+fact against the manifest it restates (below), so the copies cannot drift
+unnoticed. Every argument but a shell's `signs_in` is optional; one left out is
+read from the manifests, as without a passport. One call says what the package
+is:
 
 ```python
 # template-shell/frontx.gdl
 gdl_version = "1.5"
 
 shell(
-    signs_in = False,              # required: does it sign users in before mounting a screen?
-    runtime_env = None,            # or "public/env.js": read at start, so one image serves every environment
+    name = "@acme/shell",            # = package.json name
+    version = "1.2.0",               # = package.json version
+    description = "The Acme portal", # = package.json description
+    node = ">=24",                   # = engines.node; "24" or "24.21.0" picks the build image
+    package_manager = "npm",         # "npm", "pnpm" or "yarn": the one whose lock it keeps
+    build = "npm run build",         # the build step, after the install its package manager does
+    output = "dist",                 # the directory the build writes the site to
+    base = "/",                      # the path it is served under
+    api_prefix = "/cf/",             # the path its screens call the backend under, proxied to the gateway
+    signs_in = True,                 # required: does it sign users in before mounting a screen?
+    sign_in_redirect = "/callback",  # or a list; only with signs_in = True
+    runtime_env = "public/env.js",   # or None: addresses fixed at build
+    env = {"apiBase": "gateway.url", "oidcIssuer": "oidc.issuer"},  # keys it reads -> what fills them
+    build_env = ["VITE_API_BASE"],   # variables needed at build when runtime_env is None
+    carries = {"@gears-frontx/react": "0.2.0-alpha.15"},  # every FrontX package it gives what it mounts
 )
 ```
 
@@ -205,22 +221,49 @@ shell(
 # src-app/mfe_packages/people-mfe/frontx.gdl
 gdl_version = "1.5"
 
-mfe(requires = ["account-management", "studio-user"])   # the backend gears its screens call; [] calls none
+mfe(
+    name = "@acme/people-mfe", version = "0.3.0", description = "People screens",
+    requires = ["account-management", "studio-user"],   # backend gears its screens call; [] calls none
+    screens = ["People"],               # = mfe.json extensions' presentation.label, in order
+    mounts = ["/people"],               # = mfe.json extensions' route, in order
+    frontx = "0.2.0-alpha.15",          # = its @gears-frontx/react pin
+    roles = ["people.read"],            # permissions its screens need, when known
+    preview = ["/people"],              # routes worth a screenshot
+    fixtures = "preview/fixtures.json", # mock data for them
+)
 ```
 
 ```python
 # src-app/mfe_packages/shared/frontx.gdl
 gdl_version = "1.5"
 
-library()
+library(name = "@acme/shared", version = "0.1.0", description = "Shared components")
 ```
 
 The calls are not the product's `frontx_mfe(...)` and `frontx_library(...)`:
 those locate a package (`package = path(...)`); here the file is the locator.
-`runtime_env` is a path inside the package. `requires` takes gear ids. A file
-with two calls, or none, is **GBX0105**.
+`runtime_env`, `output` and `fixtures` are paths inside the package; `base` and
+`api_prefix` start and end with `/` (and `api_prefix` is not `/` alone);
+`mounts`, `preview` and `sign_in_redirect` are routes; `build_env` holds
+variable names; `requires` takes gear ids. A file with two calls, or none, is
+**GBX0105**; an argument outside the passport is **GBX0106**.
 
-At generation, for each package the product mounts:
+**What the generator uses.** The shell's passport drives its image; with the
+argument left out, the output is what it was before passports:
+
+| Argument | Drives | Default |
+|---|---|---|
+| `node` | the build image `node:<v>-alpine`, when it is an exact or major version; a range keeps the default | `node:24.21.0-alpine` |
+| `package_manager` | the install step: `npm install --no-audit --no-fund`, or `corepack enable && pnpm install` / `yarn install` | npm |
+| `build` | the build step, run after the install | `npm run build` |
+| `output` | the directory copied into the server | `dist` |
+| `base` | where the site is copied under the server's root, and where `env.js` and the fallback `index.html` are | `/` |
+| `api_prefix` | the nginx location proxied to the API Gateway, unchanged | `/cf/` |
+
+`frontx.lock.json` records the effective `output`, `base` and `apiPrefix`.
+
+**The consistency check.** At generation, for each package the product mounts
+(and for one package alone through `gearbox_engine::generate::check_frontx_package`):
 
 | The package's `frontx.gdl` | Result |
 |---|---|
@@ -230,6 +273,11 @@ At generation, for each package the product mounts:
 | `mfe(requires = [...])` | added to the product's `frontx_mfe(requires = ...)` (the union: either may know of a call the other does not); a gear the product lacks is **GBX0720** |
 | `shell(runtime_env = "...")` naming a file the shell lacks | **GBX0720** |
 | `shell(signs_in = False)`, on a product with a gear that signs users in (`oidc-authn`, `keycloak` or `idp` among its id's words) | **GBX0721**, a warning: the screens' calls will be refused |
+| `name` or `version` other than `package.json`'s; `frontx` other than its `@gears-frontx/react` pin; `carries` other than what the shell's workspace carries (a missing, extra or different entry); `screens` or `mounts` other than `mfe.json`'s | **GBX0722**, an error |
+| `description` other than `package.json`'s; `node` other than its `engines.node`; `package_manager` other than its `packageManager`, or without that manager's lock file; a `build` running a script `package.json` lacks; a `preview` route it does not mount; a `fixtures` file it lacks | **GBX0723**, a warning |
+
+A fact the manifest does not state (no `description`, no `engines`) has nothing
+to disagree with and is not reported.
 
 ## External database (GDL 1.1)
 
@@ -1113,6 +1161,8 @@ This table is the authoring subset, curated and hand-written, because the stage 
 | GBX0318 | a gear's roles cannot all be deployed (warning) | resolve |
 | GBX0602 | sharding and per-instance addressing are not generated (warning) | resolve |
 | GBX0706 | a generated crate directory the product no longer builds (warning) | generate |
+| GBX0722 | a FrontX package's `frontx.gdl` disagrees with its `package.json` or `mfe.json` on identity, pins or screens | generate |
+| GBX0723 | a FrontX package's `frontx.gdl` drifts from its manifests on a softer fact (warning) | generate |
 
 ---
 

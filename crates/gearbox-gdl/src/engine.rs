@@ -168,12 +168,12 @@ impl GdlEngine {
 }
 
 impl GdlEngine {
-    /// Evaluate one `frontx.gdl` into what the `FrontX` package declares about
-    /// itself (GDL 1.5).
+    /// Evaluate one `frontx.gdl` into the `FrontX` package's passport (GDL 1.5).
     ///
-    /// Nothing here reads the package: whether `runtime_env` exists, or the
-    /// package is mounted as the kind it says, is asked where the package is
-    /// read, at generation.
+    /// Nothing here reads the package: whether `runtime_env` exists, whether
+    /// the passport agrees with `package.json` and `mfe.json`, or the package
+    /// is mounted as the kind it says, is asked where the package is read, at
+    /// generation.
     #[must_use]
     #[expect(
         clippy::unused_self,
