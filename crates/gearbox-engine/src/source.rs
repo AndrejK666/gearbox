@@ -231,6 +231,69 @@ pub fn owning_source_root<'a>(roots: &'a [SourceRoot], path: &Path) -> Option<&'
     roots.iter().find(|root| path.starts_with(&root.root))
 }
 
+/// The roots a product description reaches, named the way it names them.
+///
+/// **A `path(...)` source is the description's own statement of where a source
+/// is**, relative to the description, so the roots it is resolved against have
+/// to carry it under the id it was declared with. They did not: a root's
+/// default id is its directory's own name after canonicalizing, so a product
+/// that declares `source(id = "studio-web", at = path("../.."))` and is
+/// generated from a checkout called `repo` -- or through a link named
+/// `studio-web` that resolves to `repo` -- had its gears scanned under `repo`.
+/// Gears are found by name, so the backend side never noticed; the frontend
+/// looks its packages up by source id, and refused (`GBX0720 source studio-web
+/// is unavailable`) a source the description had located exactly.
+///
+/// Two rules, one per case:
+///
+/// * a root already given **at the same canonical directory** takes the
+///   declared id, unless the operator named it explicitly (`explicit_ids`);
+/// * a declared path given as no root at all is **opened from the description**,
+///   so `gearbox generate --product product.gdl` reaches a product's own path
+///   sources without a `--root` that only repeats what the description says.
+///
+/// Left alone: a declared path inside or around a root that was given (its
+/// gears would be scanned twice), a declared id another root already carries (the roots the
+/// operator gave win, and the catalogue keeps reporting what it finds), a path
+/// that does not exist (the source is simply not there, as before), and every
+/// non-path source (fetching is not this tool's job; its root arrives as a
+/// `--root`).
+#[must_use]
+pub fn with_declared_paths(
+    mut roots: Vec<SourceRoot>,
+    sources: &std::collections::BTreeMap<gearbox_ir::SourceId, gearbox_ir::SourceDecl>,
+    product_file: &Path,
+    explicit_ids: bool,
+) -> Vec<SourceRoot> {
+    let base = product_file.parent().unwrap_or(Path::new("."));
+    for (id, decl) in sources {
+        let gearbox_ir::SourceDecl::Path { at, .. } = decl else {
+            continue;
+        };
+        let Ok(dir) = base.join(at).canonicalize() else {
+            continue;
+        };
+        if roots.iter().any(|r| &r.id == id) {
+            continue;
+        }
+        if let Some(root) = roots.iter_mut().find(|r| r.root == dir) {
+            if !explicit_ids {
+                root.id = id.clone();
+            }
+            continue;
+        }
+        // Overlapping a root that was given would scan its gears twice
+        // (`GBX0203`): the operator's roots say where those gears are.
+        let overlaps = roots
+            .iter()
+            .any(|r| r.root.starts_with(&dir) || dir.starts_with(&r.root));
+        if !overlaps && let Ok(root) = SourceRoot::open(id.clone(), &dir) {
+            roots.push(root);
+        }
+    }
+    roots
+}
+
 /// The `sources` map a lock records.
 ///
 /// Two differences from what a catalogue carries, and both exist so that the same

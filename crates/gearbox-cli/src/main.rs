@@ -814,7 +814,7 @@ fn validate(
     product_file: Option<&std::path::Path>,
     format: Format,
 ) -> anyhow::Result<ExitCode> {
-    let opened = open_roots(roots, source_id)?;
+    let mut opened = open_roots(roots, source_id)?;
 
     // The product is evaluated first so its own GBX01xx are reported even when
     // it cannot be used for the join. A product that does not evaluate is a
@@ -826,6 +826,12 @@ fn validate(
         let scan = gearbox_engine::product::load_product(path, None);
         product_diagnostics.extend(scan.diagnostics.as_slice().iter().cloned());
         intent = scan.intent;
+    }
+    // Its `path(...)` sources under the ids it declares them with, as
+    // `resolve` and `generate` see them.
+    if let (Some(path), Some(intent)) = (product_file, &intent) {
+        opened =
+            gearbox_engine::with_declared_paths(opened, &intent.sources, path, source_id.is_some());
     }
 
     let checked = gearbox_engine::validate::validate_at(&opened, intent.as_ref(), product_file);

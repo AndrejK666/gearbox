@@ -51,5 +51,5 @@ pub use product::{ProductScan, eval_product_text, load_product};
 pub use scans::CrateScans;
 pub use source::{
     DIGEST_UNREAD, SourceRoot, SourceRootError, content_digest, default_source_ids, lock_sources,
-    owning_source_root,
+    owning_source_root, with_declared_paths,
 };

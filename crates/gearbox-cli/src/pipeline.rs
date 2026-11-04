@@ -56,19 +56,31 @@ pub fn resolve(
     product_file: &Path,
     profile: Option<&str>,
 ) -> anyhow::Result<Outcome> {
-    let opened = open_roots(roots, source_id)?;
-    let scan = gearbox_engine::load_catalogue(&opened);
-    if let Some(code) = refuse_catalogue_errors(&scan.catalogue) {
-        return Ok(Outcome::Refused(code));
-    }
-
     let product_file = product_file.canonicalize().with_context(|| {
         format!(
             "cannot read product description `{}`",
             product_file.display()
         )
     })?;
+    // Read before the roots are scanned, because the description says what its
+    // `path(...)` sources are called and where they are: a root at one of them
+    // is scanned under the declared id, and one not given at all is opened from
+    // the description. Its failure is still reported after the catalogue's.
     let product_scan = gearbox_engine::load_product(&product_file, None);
+    let mut opened = open_roots(roots, source_id)?;
+    if let Some(intent) = &product_scan.intent {
+        opened = gearbox_engine::with_declared_paths(
+            opened,
+            &intent.sources,
+            &product_file,
+            source_id.is_some(),
+        );
+    }
+    let scan = gearbox_engine::load_catalogue(&opened);
+    if let Some(code) = refuse_catalogue_errors(&scan.catalogue) {
+        return Ok(Outcome::Refused(code));
+    }
+
     let mut diagnostics: Vec<Diagnostic> = product_scan.diagnostics.as_slice().to_vec();
     let Some(intent) = product_scan.intent else {
         report(&diagnostics);

@@ -899,7 +899,7 @@ registry("crates.io", prefix?) -> source-at         # the registry, not one pack
 source(id, at, crates?) -> source                   # id is kebab-case
 ```
 
-A product source is a full repository, and Gearbox builds a lock from it. Thus `source(at = git(...))` must have a pin, and it must not have `path`. A gear's `source = git(...)` has different rules, see [`source = git(...)` on a gear](#source--git-on-a-gear).
+A product source is a full repository, and Gearbox builds a lock from it. Thus `source(at = git(...))` must have a pin, and it must not have `path`. A `path(...)` source is found from the description: `resolve`, `generate` and `validate --product` scan a `--root` at that directory under the declared id (not its directory's name, unless `--source-id` named it), and open the directory themselves when no `--root` is at it, inside it or around it. A `git(...)` source still arrives as a `--root`. A gear's `source = git(...)` has different rules, see [`source = git(...)` on a gear](#source--git-on-a-gear).
 
 `crates = registry("crates.io")` on a `path(...)` source says its gears are also published. Descriptions still come from the checkout (a published crate carries no `gear.gdl`), and the generated build names each crate by its exact version instead of a path. Generation checks every crate against the commit its release was cut from (`.cargo_vcs_info.json`):
 
