@@ -103,6 +103,9 @@ path = "<gears-rust>/gears/system/grpc-hub"
 package = "cf-gears-oidc-authn-plugin"
 path = "<gears-rust>/gears/system/authn-resolver/plugins/oidc-authn-plugin"
 
+[dependencies.serde_json]
+version = "1.0"
+
 [dependencies.service_discovery]
 package = "cf-gears-service-discovery"
 path = "<gears-rust>/gears/system/service-discovery"

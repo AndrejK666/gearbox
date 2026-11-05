@@ -2,17 +2,18 @@
 
 GDL (Gears Description Language) is a declarative DSL. A file states facts. The resolver decides.
 
-Three file kinds, three vocabularies. `gear()` is not callable in a product file; `product()` is not callable in a gear file; neither is callable in a `frontx.gdl`.
+Four file kinds, four vocabularies. `gear()` is not callable in a product file; `product()` is not callable in a gear file; neither is callable in a `frontx.gdl` or a `service.gdl`.
 
 | File | Declares | Required call |
 |---|---|---|
 | `gear.gdl` | one gear: facts Rust does not already own | exactly one `gear(...)` |
 | `product.gdl` | one product: operator intent | exactly one `product(...)` |
 | `frontx.gdl` | one FrontX package's passport: everything about it, its `package.json` and `mfe.json` facts included and checked against them (GDL 1.5) | exactly one `shell(...)`, `mfe(...)` or `library()` |
+| `service.gdl` | one service that is not a gear: an own service, or an infra service a product runs beside its gears (GDL 1.6) | exactly one `service(...)` |
 
 Zero or two top-level declarations is **GBX0105**. Profile-specific behaviour is a `profiles = [...]` list on the declaration, not a branch.
 
-Arguments are keyword-only, with these exceptions. In a `gear.gdl`, the first argument of `extension_point`, `feature`, `scenario`, `path` and `fail` is positional. In a `product.gdl`, the first argument of `path`, `registry`, `plugin`, `use_gear`, `application` and `provider` is positional. An unknown **named** argument is **GBX0106**. A stray positional argument is **GBX0102**, because it does not get to an argument name. Records returned by constructors (`cargo(...)`, `provide(...)`, …) are opaque: pass them on, do not inspect them.
+Arguments are keyword-only, with these exceptions. In a `gear.gdl`, the first argument of `extension_point`, `feature`, `scenario`, `path` and `fail` is positional. In a `product.gdl`, the first argument of `path`, `registry`, `plugin`, `use_gear`, `use_service`, `application` and `provider` is positional. An unknown **named** argument is **GBX0106**. A stray positional argument is **GBX0102**, because it does not get to an argument name. Records returned by constructors (`cargo(...)`, `provide(...)`, …) are opaque: pass them on, do not inspect them.
 
 ---
 
@@ -54,7 +55,7 @@ Not refused, but outside the grammar above: arithmetic (`"a" + "b"`, `8000 + 80`
 
 **Kebab-case ids** (string values: gear, source, profile, application): lowercase letters, digits, single interior hyphens; start with a letter; no trailing hyphen; no `_`; no `--`. Example: `api-gateway`, `gears-rust`.
 
-**Strings.** `"..."` or `'...'`. Triple quotes `"""..."""` / `'''...'''` for multi-line. Prefix `r` for raw (backslashes are not escapes). Escapes in non-raw strings: `\\ \` \' \a \b \f \n \r \t \v`, octal, `\xHH`, `\uHHHH`, `\UHHHHHHHH`. No f-strings. `${NAME}` inside a string is not interpolation. GDL copies it through as text. What reads it later is a contract, not a coincidence: a config field Rust declares secret may carry nothing else (**GBX0116**).
+**Strings.** `"..."` or `'...'`. Triple quotes `"""..."""` / `'''...'''` for multi-line. Prefix `r` for raw (backslashes are not escapes). Escapes in non-raw strings: `\\ \` \' \a \b \f \n \r \t \v`, octal, `\xHH`, `\uHHHH`, `\UHHHHHHHH`. No f-strings. `${NAME}` inside a string is not interpolation. GDL copies it through as text. What reads it later is a contract, not a coincidence: a config field Rust declares secret may carry nothing else (**GBX0116**), and a gear's configuration reads it as a variable the generated process substitutes when it starts (GDL 1.6, see [Infra services and variables](#infra-services-and-variables-gdl-16)).
 
 **Numbers.** Decimal integers, `0x` / `0o` / `0b`, floats.
 
@@ -279,6 +280,224 @@ argument left out, the output is what it was before passports:
 A fact the manifest does not state (no `description`, no `engines`) has nothing
 to disagree with and is not reported.
 
+## Infra services and variables (GDL 1.6)
+
+A product's infrastructure services -- its own Keycloak, its PostgreSQL -- are
+third-party services it runs beside its gears. Each is described by a passport,
+a `service.gdl` with `kind = "infra"`, in one of the product's sources; the
+product chooses them with `product(infra = [use_service(...)])`. A gear's
+configuration reads what they provide as environment variables:
+`"${OIDC_ISSUER}"`.
+
+**Gearbox installs none of them.** It reads the passports, checks the product's
+choice against them, binds each capability to a variable, records it all in the
+lock, and makes each generated process substitute the variables when it starts.
+The deployment (Studio's) installs the services and sets the variables. What a
+product says is *what* it runs; *where* -- with the product, or in the
+organization's shared place -- its public address, the values of a ready
+chart, and the copy of an image an environment's registry holds belong to the
+environment, so one revision of the description deploys the same way to both.
+
+### A service's passport: `service.gdl`
+
+One `service(...)` call, in a file beside the service (one per directory, like
+`gear.gdl`). The catalogue finds every `service.gdl` under a source root; a
+second passport of the same `name` in one source is **GBX0105**. It is the
+vocabulary Studio's catalogue reads too.
+
+```python
+# infra/keycloak/service.gdl
+gdl_version = "1.6"
+
+service(
+    name = "keycloak",                       # required: kebab-case
+    kind = "infra",                          # "own" (the default) or "infra"
+    version = "26.0.7",
+    description = "Keycloak: the product's own OIDC identity provider",
+    image = "quay.io/keycloak/keycloak:26.0.7",   # the publisher's, with a tag or a digest
+    args = ["start-dev"],
+    ports = {"http": 8080, "management": 9000},
+    health = "/health/ready",
+    config = {"KC_HEALTH_ENABLED": "true", "KC_BOOTSTRAP_ADMIN_USERNAME": "admin"},
+    secrets = ["KC_BOOTSTRAP_ADMIN_PASSWORD"],    # the deployment makes and keeps them
+    provides = {
+        "oidc.issuer": "{public_url}/realms/product",
+        "keycloak.admin_url": "http://{host}:{port.http}",
+    },
+    stateful = False,                        # True: needs data_path; storage defaults to 10Gi
+    chart = "oci://registry-1.docker.io/bitnamicharts/keycloak",
+    chart_version = "24.4.0",
+)
+```
+
+- An **infra** service is pulled, never built: `dockerfile` and `context` are
+  refused, and so is `env`. It names an `image`, a ready `chart`, or both;
+  `chart_version` goes with `chart`, which is `oci://...` or `https://...`.
+- `config` holds literal variables, `secrets` the variables the deployment makes;
+  a name is in one or the other.
+- `provides` is a dict of capability (`oidc.issuer`: lowercase, dotted) to the
+  template of its value, resolved at deploy: `{host}`, `{namespace}`,
+  `{public_url}`, `{port.<name>}`, `{config.<KEY>}`, `{secret.<KEY>}`. Every name
+  a template uses is declared by the passport (`{public_url}` needs a port). A
+  list of keys is read too: values the shared place or the project gives.
+- `stateful = True` needs `data_path`, an absolute path; `storage` is a size
+  (`10Gi`, `512Mi`) and both go with `stateful`.
+- An **own** service (`kind` left out) is built from its `dockerfile` and
+  `context`, reads `env` (variable to what fills it), and lists `provides` as
+  capability keys. The infra-only arguments are refused on it. A product does not
+  run an own service through `infra`.
+
+A wrong passport is reported when the catalogue loads, with the usual
+evaluation codes (**GBX0102**, **GBX0106**).
+
+### `use_service(...)` and `secrets`
+
+```
+use_service("name", source, image?, chart?, chart_version?, config = {}, profile_config = {})
+product(..., infra = [use_service(...)], secrets = ["NAME", ...])
+```
+
+```python
+gdl_version = "1.6"
+
+product(
+    id = "studioweb", version = "0.4.0",
+    sources = [
+        source(id = "gears-rust", at = git(url = "https://github.com/constructorfabric/gears-rust", tag = "v0.12.0")),
+        source(id = "studio-web", at = path("..")),
+    ],
+    infra = [
+        use_service("keycloak", source = "studio-web",
+            image = "quay.io/keycloak/keycloak:26.0.7@sha256:4f3c...",   # optional: else the passport's
+            config = {"KC_PROXY_HEADERS": "xforwarded"},
+            profile_config = {"dev": {"KC_HEALTH_ENABLED": "false"}}),
+        use_service("postgresql", source = "studio-web"),
+    ],
+    secrets = ["SMTP_PASSWORD"],
+    gears = [
+        use_gear("authn-resolver", source = "gears-rust", plugins = [
+            plugin("oidc-authn-plugin", config = {
+                "jwt": {"trusted_issuers": [{"issuer": "${OIDC_ISSUER}"}]},
+                "s2s_oauth": {"discovery_url": "${OIDC_ISSUER}/.well-known/openid-configuration"},
+            }),
+        ]),
+        use_gear("mailer", source = "studio-web", config = {"smtp_password": "${SMTP_PASSWORD}"}),
+    ],
+    profiles = [kubernetes(id = "dev", discovery = "static", development = True)],
+    default_profile = "dev",
+)
+```
+
+- `name` is the passport's, found in the named `source`. None there, or one that
+  is not `kind = "infra"`, is **GBX0127**. The same name twice is **GBX0110**.
+- `image` is the publisher's reference -- a version choice, not an environment's
+  mirror. A digest in it (`...@sha256:...`) is recorded in the lock. `chart` and
+  `chart_version` choose a ready chart instead of the passport's. Each is
+  optional; left out, the passport's is used.
+- `config` sets keys of the passport's `config`, each to a string literal;
+  `profile_config` maps a declared profile to values merged over `config` for it.
+  A key the passport's `config` does not declare, one of its `secrets`, or a
+  `${...}` value is **GBX0129**.
+- Two services that provide the same capability are **GBX0128**.
+- `secrets` lists the variables the product's configuration reads that no infra
+  service provides; the deployment sets them.
+
+### Variables in a gear's configuration
+
+Any string in a `use_gear` or `plugin` `config` or `profile_config` may read a
+variable, whole (`"${OIDC_ISSUER}"`) or inside a string
+(`"${OIDC_ISSUER}/protocol"`). A capability is read as its name upper-cased with
+every other character `_`: `oidc.issuer` is `OIDC_ISSUER`, `keycloak.admin_url`
+is `KEYCLOAK_ADMIN_URL`.
+
+A product that declares `infra` or `secrets` names every variable its
+configuration reads; one it does not declare is **GBX0130**. Declared are: each
+capability of its infra services, each profile's database password
+(`postgres(password = "${...}")`), and each of `secrets`. A product that
+declares neither keeps the rule it had before 1.6 and is not checked.
+`${VAR:-default}` is not a variable here and stays refused where GBX0116 applies:
+the default half is a live value.
+
+A `${VAR}` is substituted as text, so it fits a string field and an enum field
+(the gear checks the variant it reads at start). In a boolean or number field it
+stays **GBX0113**.
+
+**Substituted when the process starts.** A generated application whose gears'
+configuration reads a variable gets `src/config_env.rs` (template
+`config_env.rs`) and a `serde_json` dependency, and its entry point substitutes
+every `${NAME}` in each `gears.<id>.config` section from the process
+environment before the runtime reads it, in one pass (a value is not expanded
+again). The runtime's own `database` section is left to it. A variable that is
+not set stops the process with an error naming each missing variable, where it
+is read (`gears.oidc-authn-plugin.config.jwt.trusted_issuers[0].issuer`) and the
+configuration file; a value is never logged. A host substitutes in memory, after
+`--print-config` and the dump flags, so those never show a value. A worker, whose
+runtime loads the file itself, writes the substituted sections under
+`server.home_dir/.gearbox-rendered-gears/` (readable by its user alone) and hands
+them to the runtime as `APP__GEARS_DIR` before its runtime starts. Being in the
+binary, it works the same in every profile. An application whose gears read no
+variable is generated as before.
+
+**On Kubernetes** every `${NAME}` in a process's generated configuration is
+already in its subchart's `secretKeys`, injected from the Secret its
+`existingSecret` names: the deployment writes each capability's value and each
+of `secrets` into that Secret under the variable's name.
+
+### What the lock and the JSON say
+
+`gearbox product --format json` (evaluation only) carries the choice:
+
+```json
+"infra": [{"name": "keycloak", "source": "studio-web",
+           "image": "quay.io/keycloak/keycloak:26.0.7@sha256:4f3c...",
+           "config": {"KC_PROXY_HEADERS": "xforwarded"},
+           "profile_config": {"dev": {"KC_HEALTH_ENABLED": "false"}}}],
+"secrets": ["SMTP_PASSWORD"]
+```
+
+`gearbox resolve --format json` (and `product.lock`) carries it resolved for the
+profile, with each passport:
+
+```json
+"infra": {
+  "services": [{
+    "name": "keycloak", "source": "studio-web",
+    "gdl_path": "infra/keycloak/service.gdl", "passport_hash": "<blake3 of the file>",
+    "passport": {"name": "keycloak", "kind": "infra", "ports": {...}, "provides": {...}, ...},
+    "image": {"reference": "quay.io/keycloak/keycloak:26.0.7@sha256:4f3c...", "digest": "sha256:4f3c..."},
+    "chart": "oci://...", "chart_version": "24.4.0",
+    "config": {"KC_HEALTH_ENABLED": "false", "KC_PROXY_HEADERS": "xforwarded", ...},
+    "overridden": ["KC_HEALTH_ENABLED", "KC_PROXY_HEADERS"]
+  }],
+  "capabilities": {
+    "oidc.issuer": {"service": "keycloak", "env": "OIDC_ISSUER", "template": "{public_url}/realms/product"}
+  },
+  "needs": [
+    {"need": "oidc", "capability": "oidc.issuer", "gears": ["oidc-authn-plugin"], "met_by": "keycloak"},
+    {"need": "postgres", "capability": "postgres", "gears": ["settings-service"], "met_by": "postgresql"}
+  ]
+},
+"secrets": ["SMTP_PASSWORD"]
+```
+
+- `image.digest` is the digest the reference names. Gearbox reaches no registry,
+  so a reference without one is locked without a digest; the deployment that
+  pulls the image records it.
+- `passport_hash` and `gdl_path` say which passport the lock was resolved
+  against.
+- `needs` says what the profile's gears need running beside them and which
+  declared service meets each: a gear that keeps data needs `postgres`; the
+  plugins `*oidc-authn-plugin`, `*keycloak-idp-plugin`,
+  `*clickhouse-usage-collector-plugin` and `*timescaledb-usage-collector-plugin`
+  need `oidc.issuer`, `keycloak.admin_url`, `clickhouse.url` and
+  `timescaledb.url`. An unmet need has no `met_by` and is not an error: it may be
+  met outside the product.
+- A product without `infra` has no `infra` section, and its lock is what it was.
+
+The lock diff (`gearbox_lock::diff`) names a change by service: `infra.keycloak.image`,
+`infra.keycloak.image.digest`, `infra.keycloak.config.<KEY>`,
+`infra.capabilities.<capability>`, `infra.needs.<need>`, and `secrets`.
+
 ## External database (GDL 1.1)
 
 Each `embedded`, `self_hosted` and `kubernetes` profile accepts an optional
@@ -405,7 +624,7 @@ gdl_version = "1.2"
 gear(...)  # or product(...)
 ```
 
-The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.5. The legacy `gear(gdl_version=...)` and `product(gdl_version=...)` arguments remain accepted; conflicting declarations are rejected.
+The value is `"MAJOR.MINOR"`. If a file does not declare a version, the version is `1.0`. This Gearbox reads GDL 1.6: 1.5 added the FrontX frontend and `frontx.gdl`; 1.6 adds `service.gdl`, `product(infra = ..., secrets = ...)` and variables in a gear's configuration. The legacy `gear(gdl_version=...)` and `product(gdl_version=...)` arguments remain accepted; conflicting declarations are rejected.
 
 - A minor version only adds: optional fields, constructors and values. A file for an older minor version reads with no change.
 - A major version can remove a field, rename a field or change what a field means.
@@ -888,7 +1107,7 @@ A design gear uses `implementation = "design"`, an `id`, and no `maturity` and n
 
 Every deployment profile is data. Resolve chooses one with `--profile`. Scope a `bind` / `cluster_profile` / `application` / `plugin` with `profiles = ["dev", "prod"]`. Empty `profiles` means all declared profiles. Two declarations that cover the same subject in the same profile are **GBX0110**. A `profiles` entry naming an id the file does not declare is **GBX0102**; **GBX0111** is the other direction: `--profile` asking for a profile this product has none of.
 
-Positional constructors in a product file: `path`, `registry`, `plugin`, `use_gear`, `application`, `provider`. Everything else is keyword-only. (`gear.gdl` adds `feature` and `fail`.)
+Positional constructors in a product file: `path`, `registry`, `plugin`, `use_gear`, `use_service`, `application`, `provider`. Everything else is keyword-only. (`gear.gdl` adds `feature` and `fail`.)
 
 ### Sources
 
@@ -967,7 +1186,7 @@ plugin("gear-id", config = {}, profiles = [])
 use_gear("gear-id", source, version?, package?, features = [], config = {}, profile_config = {}, plugins = [])
 ```
 
-Only the gear id is positional: `use_gear("api-gateway", source = "gears-rust")`. `source` names a `source(id = ...)`. `version` and `package` are registry-only; on `path`/`git` they are an error. `config` is a map of JSON-shaped values (string, number, bool, list, map; no `None`, no records; nesting ≤ 32). Keys must be fields the gear actually declares (**GBX0115**) and types must match (**GBX0113**). Both are checked against `config_schema`, so a gear that declares none has no field list to check against. A field Rust declares secret (`secrecy::SecretString`) may hold only `"${UPPER_NAME}"`, naming an environment variable the generator reads; a literal is **GBX0116**, and so is `"${VAR:-default}"`, because the default half is a live value.
+Only the gear id is positional: `use_gear("api-gateway", source = "gears-rust")`. `source` names a `source(id = ...)`. `version` and `package` are registry-only; on `path`/`git` they are an error. `config` is a map of JSON-shaped values (string, number, bool, list, map; no `None`, no records; nesting ≤ 32). Keys must be fields the gear actually declares (**GBX0115**) and types must match (**GBX0113**). Both are checked against `config_schema`, so a gear that declares none has no field list to check against. A field Rust declares secret (`secrecy::SecretString`) may hold only `"${UPPER_NAME}"`, naming an environment variable the generator reads; a literal is **GBX0116**, and so is `"${VAR:-default}"`, because the default half is a live value. Any other string may read a variable too, substituted when the process starts (GDL 1.6, [Variables in a gear's configuration](#variables-in-a-gears-configuration)).
 
 `profile_config` (GDL 1.3) maps a declared profile id to configuration merged over `config` when that profile is resolved: maps merge key by key, any other value (a list included) replaces. `use_gear("api-gateway", config = {"public": {...}}, profile_config = {"prod": {"internal_auth": {"audiences": ["payments"]}}})`. The merged result is what the production rules, the config checks and the lock see; an id that is not a declared profile is reported like any other undeclared profile.
 
@@ -1040,6 +1259,8 @@ product(
   applications = [],
   preferences = [],
   permissions = {},                 # GDL 1.4: permission -> scopes that grant it
+  infra = [],                       # GDL 1.6: use_service(...), infra services beside the gears
+  secrets = [],                     # GDL 1.6: variables the configuration reads that no service provides
 )
 ```
 
@@ -1156,6 +1377,10 @@ This table is the authoring subset, curated and hand-written, because the stage 
 | GBX0114 | `config` key is derived from topology (warning) | validate / resolve |
 | GBX0115 | `config` key the gear does not declare | validate / resolve |
 | GBX0116 | a credential is written into the file | validate / resolve |
+| GBX0127 | `use_service` names no `kind = "infra"` passport in its source | resolve |
+| GBX0128 | two infra services provide the same capability | resolve |
+| GBX0129 | an infra service's `config` sets a key its passport does not declare, a secret, or a `${...}` | resolve |
+| GBX0130 | a gear's configuration reads a `${NAME}` the product does not declare (once it declares `infra` or `secrets`) | validate / resolve |
 | GBX0111 | `--profile` asked for a profile the file does not declare | resolve |
 | GBX0316 | a selected feature belongs to another deployment kind | resolve |
 | GBX0506 | a provider needs a credential and the scope names no source | resolve |
@@ -1317,6 +1542,8 @@ vocabulary it describes lives in code beside it:
 |---|---|
 | `crates/gearbox-gdl/src/globals.rs` | the `gear.gdl` vocabulary |
 | `crates/gearbox-gdl/src/product.rs` | the `product.gdl` vocabulary |
+| `crates/gearbox-gdl/src/frontx.rs` | the `frontx.gdl` vocabulary |
+| `crates/gearbox-gdl/src/service.rs` | the `service.gdl` vocabulary |
 | `crates/gearbox-gdl/src/vocabulary.rs` | the closed value sets |
 | `crates/gearbox-gdl/src/declarative.rs` | the locked-down Starlark dialect and the refused keywords |
 

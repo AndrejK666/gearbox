@@ -1,0 +1,217 @@
+// The variables a gear's configuration reads (`${OIDC_ISSUER}`), substituted
+// from the environment when the process starts.
+//
+// The deployment sets each one: a capability of an infra service the product
+// runs beside its gears (`oidc.issuer` is `OIDC_ISSUER`), or a variable the
+// product declares in `product(secrets = [...])`. The runtime itself expands
+// variables only in its `database` section, so the gears' sections are done
+// here, before it reads them; `database` is left to it.
+//
+// A `${NAME:-default}` is left as written, as is anything that is not an
+// uppercase name. A value is never logged or printed: a missing variable is
+// reported by its name and by where it is read.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::Path;
+
+/// Substitute `${NAME}` in every gear's `config` section from the process
+/// environment. `true` when anything was substituted.
+///
+/// # Errors
+/// Names every variable that is not set, where each is read, and the
+/// configuration file.
+pub fn render_gears(
+    gears: &mut HashMap<String, serde_json::Value>,
+    config_path: Option<&Path>,
+) -> Result<bool, String> {
+    render_gears_with(gears, config_path, &|name| std::env::var(name).ok())
+}
+
+/// [`render_gears`], reading variables through `lookup`.
+///
+/// # Errors
+/// As [`render_gears`].
+pub fn render_gears_with(
+    gears: &mut HashMap<String, serde_json::Value>,
+    config_path: Option<&Path>,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> Result<bool, String> {
+    let mut missing: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut changed = false;
+    let mut names: Vec<&String> = gears.keys().collect();
+    names.sort();
+    let names: Vec<String> = names.into_iter().cloned().collect();
+    for gear in names {
+        let Some(config) = gears.get_mut(&gear).and_then(|entry| entry.get_mut("config")) else {
+            continue;
+        };
+        changed |= render_value(
+            config,
+            &format!("gears.{gear}.config"),
+            lookup,
+            &mut missing,
+        );
+    }
+    if missing.is_empty() {
+        return Ok(changed);
+    }
+    let file = config_path.map_or_else(
+        || "the default configuration".to_owned(),
+        |p| format!("configuration `{}`", p.display()),
+    );
+    let mut message = format!(
+        "{file} reads environment variables that are not set: {}",
+        missing.keys().cloned().collect::<Vec<_>>().join(", ")
+    );
+    for (name, places) in &missing {
+        for place in places {
+            message.push_str("\n  ");
+            message.push_str(place);
+            message.push_str(" reads ${");
+            message.push_str(name);
+            message.push('}');
+        }
+    }
+    message.push_str(
+        "\nset them in the process environment; on Kubernetes, in the Secret the chart's \
+         `existingSecret` names, listed in `secretKeys`",
+    );
+    Err(message)
+}
+
+/// Substitute in one value, recording each variable that is not set under the
+/// path it is read at. `true` when anything was substituted.
+fn render_value(
+    value: &mut serde_json::Value,
+    at: &str,
+    lookup: &dyn Fn(&str) -> Option<String>,
+    missing: &mut BTreeMap<String, BTreeSet<String>>,
+) -> bool {
+    match value {
+        serde_json::Value::String(text) => match render_str(text, lookup) {
+            Ok(Some(rendered)) => {
+                *text = rendered;
+                true
+            }
+            Ok(None) => false,
+            Err(names) => {
+                for name in names {
+                    missing.entry(name).or_default().insert(at.to_owned());
+                }
+                false
+            }
+        },
+        serde_json::Value::Array(items) => {
+            let mut changed = false;
+            for (index, item) in items.iter_mut().enumerate() {
+                changed |= render_value(item, &format!("{at}[{index}]"), lookup, missing);
+            }
+            changed
+        }
+        serde_json::Value::Object(map) => {
+            let mut changed = false;
+            for (key, item) in map.iter_mut() {
+                changed |= render_value(item, &format!("{at}.{key}"), lookup, missing);
+            }
+            changed
+        }
+        _ => false,
+    }
+}
+
+/// `text` with each `${NAME}` replaced by its value, in one pass: a value that
+/// itself holds `${...}` is not expanded again. `None` when it reads no
+/// variable; `Err` with the names that are not set.
+///
+/// # Errors
+/// The names of the variables `lookup` does not answer.
+pub fn render_str(
+    text: &str,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> Result<Option<String>, Vec<String>> {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut substituted = false;
+    let mut missing = Vec::new();
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let Some(end) = after.find('}') else {
+            out.push_str(&rest[start..]);
+            rest = "";
+            break;
+        };
+        let name = &after[..end];
+        if is_variable(name) {
+            match lookup(name) {
+                Some(value) => out.push_str(&value),
+                None => missing.push(name.to_owned()),
+            }
+            substituted = true;
+        } else {
+            out.push_str(&rest[start..=start + 2 + end]);
+        }
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    if !missing.is_empty() {
+        missing.sort();
+        missing.dedup();
+        return Err(missing);
+    }
+    Ok(substituted.then_some(out))
+}
+
+/// `NAME` in `${NAME}`: uppercase letters, digits and `_`, not a digit first.
+fn is_variable(name: &str) -> bool {
+    name.starts_with(|c: char| c.is_ascii_uppercase() || c == '_')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Write each gear's section as `<dir>/<gear>.yaml` (JSON, which YAML reads),
+/// readable by this user alone, replacing what an earlier start left there.
+///
+/// A worker hands its configuration to the runtime as a path, so the rendered
+/// sections reach it as a gears directory instead: `APP__GEARS_DIR`, which the
+/// runtime reads after the file and which replaces each gear's section whole.
+///
+/// # Errors
+/// The directory or a file cannot be written.
+pub fn write_gears_dir(
+    dir: &Path,
+    gears: &HashMap<String, serde_json::Value>,
+) -> Result<(), String> {
+    let fail = |what: &str, path: &Path, e: &dyn std::fmt::Display| {
+        format!("cannot {what} `{}`: {e}", path.display())
+    };
+    std::fs::create_dir_all(dir).map_err(|e| fail("create", dir, &e))?;
+    restrict(dir, 0o700).map_err(|e| fail("restrict", dir, &e))?;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "yaml") {
+                std::fs::remove_file(&path).map_err(|e| fail("remove", &path, &e))?;
+            }
+        }
+    }
+    for (gear, section) in gears {
+        let path = dir.join(format!("{gear}.yaml"));
+        let body = serde_json::to_string(section).map_err(|e| fail("write", &path, &e))?;
+        std::fs::write(&path, body).map_err(|e| fail("write", &path, &e))?;
+        restrict(&path, 0o600).map_err(|e| fail("restrict", &path, &e))?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn restrict(path: &Path, mode: u32) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+}
+
+#[cfg(not(unix))]
+fn restrict(_path: &Path, _mode: u32) -> std::io::Result<()> {
+    Ok(())
+}

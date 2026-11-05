@@ -3949,3 +3949,96 @@ fn the_permission_mapping_reaches_every_process() {
         );
     }
 }
+
+/// GDL 1.6: a gear's configuration reads a variable the product declares, and
+/// every process whose gears read one substitutes it when it starts. The
+/// chart takes it from the configuration Secret like any other `${VAR}`.
+#[test]
+fn a_variable_in_gear_config_is_rendered_at_start_and_wired_from_the_secret() {
+    let Some(root) = gears_rust() else {
+        eprintln!("skipping: ../gears-rust not present");
+        return;
+    };
+    let opened = vec![SourceRoot::open(SourceId::new("gears-rust").unwrap(), &root).unwrap()];
+    let scan = load_catalogue(&opened);
+
+    let path = product_gdl();
+    let mut intent = load_product(&path, None)
+        .intent
+        .expect("the product evaluates");
+    intent.secrets.insert("API_PREFIX".to_owned());
+    intent
+        .selected_gears
+        .iter_mut()
+        .find(|s| s.gear.as_str() == "api-gateway")
+        .expect("the demo product names api-gateway")
+        .config
+        .insert(
+            "prefix_path".to_owned(),
+            serde_json::Value::String("${API_PREFIX}".to_owned()),
+        );
+
+    for profile in ["dev", "prod"] {
+        let profile = ProfileId::new(profile).unwrap();
+        let resolution =
+            gearbox_engine::resolve::resolve_at(&scan.catalogue, &intent, &profile, Some(&path));
+        assert!(
+            !resolution
+                .diagnostics
+                .iter()
+                .any(|d| d.code == DiagnosticCode::GdlUnknownVariable),
+            "{:?}",
+            resolution.diagnostics
+        );
+        let sources = opened
+            .iter()
+            .map(|r| (r.id.clone(), r.to_resolved()))
+            .collect();
+        let lock = gearbox_engine::resolve::product::assemble(
+            &scan.catalogue,
+            &intent,
+            &resolution,
+            sources,
+        );
+        assert!(lock.secrets.contains("API_PREFIX"));
+        let roots = opened
+            .iter()
+            .map(|r| (r.id.clone(), r.root.clone()))
+            .collect();
+        let files = generate_tree(&lock, &roots, &out_root()).files;
+
+        let gateway = lock
+            .applications
+            .iter()
+            .find(|a| a.gears.iter().any(|g| g.as_str() == "api-gateway"))
+            .expect("an application runs api-gateway");
+        let dir = format!("apps/{}", gateway.name);
+        let main = text(&files, &format!("{dir}/src/main.rs"));
+        assert!(main.contains("mod config_env;"), "{main}");
+        assert!(main.contains("config_env::render_gears"), "{main}");
+        assert!(
+            text(&files, &format!("{dir}/src/config_env.rs")).contains("pub fn render_gears"),
+            "{profile}"
+        );
+        assert!(
+            text(&files, &format!("{dir}/Cargo.toml")).contains("serde_json"),
+            "{profile}"
+        );
+        // A process none of whose gears read a variable is what it was.
+        for other in lock.applications.iter().filter(|a| a.name != gateway.name) {
+            assert!(
+                files
+                    .get(&RelPath::new(format!("apps/{}/src/config_env.rs", other.name)).unwrap())
+                    .is_none(),
+                "{}",
+                other.name
+            );
+        }
+
+        if profile.as_str() == "prod" {
+            let product = lock.product.id.as_str();
+            let values = text(&files, &format!("helm/{product}/values.yaml"));
+            assert!(values.contains("API_PREFIX"), "{values}");
+        }
+    }
+}

@@ -291,6 +291,10 @@ fn dependencies(
     for (name, dependency) in runtime_deps() {
         dependencies.insert(name.to_owned(), dependency);
     }
+    // `config_env.rs` walks the gears' configuration as the runtime holds it.
+    if super::rust::renders_env(input, application) {
+        dependencies.insert("serde_json".to_owned(), Dependency::version("1.0", &[]));
+    }
 
     for id in &application.gears {
         let gear = gear_of(input, application, id)?;

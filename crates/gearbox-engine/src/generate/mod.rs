@@ -368,6 +368,9 @@ pub fn generate(input: &GenerateInput<'_>) -> Result<Generated, GenerateError> {
         };
         insert(&mut files, entry)?;
         insert(&mut files, rust::registered_gears(input, application)?)?;
+        if let Some(config_env) = rust::config_env(input, application)? {
+            insert(&mut files, config_env)?;
+        }
     }
     // The configuration of every process, shipped as a unit chart or not: for
     // a unit chart it is what the description decided, and the chart's

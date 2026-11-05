@@ -1,6 +1,9 @@
 {{ header }}
 
 mod registered_gears;
+{%- if render_env %}
+mod config_env;
+{%- endif %}
 
 use std::path::PathBuf;
 
@@ -111,6 +114,14 @@ async fn main() -> Result<()> {
         println!("{}", dump_effective_gears_config_json(&config)?);
         return Ok(());
     }
+{%- if render_env %}
+
+    // The gears' configuration reads variables the deployment sets
+    // (`${OIDC_ISSUER}`). Substituted here, after the flags above that print
+    // the configuration, so none of them shows a value.
+    config_env::render_gears(&mut config.gears, cli.config.as_deref())
+        .map_err(anyhow::Error::msg)?;
+{%- endif %}
 
     match cli.command.unwrap_or(Commands::Run) {
         Commands::Run => run_server(config).await,

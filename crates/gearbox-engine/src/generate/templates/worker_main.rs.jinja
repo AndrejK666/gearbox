@@ -1,12 +1,18 @@
 {{ header }}
 
 mod registered_gears;
+{%- if render_env %}
+mod config_env;
+{%- endif %}
 
 use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
 use toolkit::bootstrap::oop::{OopRunOptions, run_oop_with_options};
+{%- if render_env %}
+use toolkit::bootstrap::AppConfig;
+{%- endif %}
 use toolkit::registry::GearRegistry;
 
 /// The out-of-process worker for `{{ application }}`.
@@ -101,6 +107,41 @@ fn list_registered_gears() -> Result<()> {
     Ok(())
 }
 
+{% if render_env -%}
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    // Before anything reads configuration, as in the host: the oracle has to be
+    // answerable for a binary whose configuration is the thing under suspicion.
+    if cli.list_registered_gears {
+        return list_registered_gears();
+    }
+
+    // The gears' configuration reads variables the deployment sets
+    // (`${OIDC_ISSUER}`), and the runtime loads the file itself. So the
+    // substituted gear sections are written under the home directory and
+    // handed to it as its gears directory, before the runtime starts.
+    if let Some(path) = cli.config.as_ref() {
+        let config = AppConfig::load_or_default(Some(path))?;
+        let mut gears = config.gears;
+        if config_env::render_gears(&mut gears, Some(path)).map_err(anyhow::Error::msg)? {
+            let dir = config.server.home_dir.join(".gearbox-rendered-gears");
+            config_env::write_gears_dir(&dir, &gears).map_err(anyhow::Error::msg)?;
+            // SAFETY: no other thread exists yet -- the runtime is built below --
+            // so nothing can read the environment while it is written.
+            unsafe { std::env::set_var("APP__GEARS_DIR", &dir) };
+        }
+    }
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run(cli))
+}
+
+/// The worker, on the runtime `main` built.
+async fn run(cli: Cli) -> Result<()> {
+{% else -%}
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -111,7 +152,7 @@ async fn main() -> Result<()> {
         return list_registered_gears();
     }
 
-    // `..Default::default()` is load-bearing, not tidiness. It is where
+{% endif %}    // `..Default::default()` is load-bearing, not tidiness. It is where
     // `TOOLKIT_DIRECTORY_ENDPOINT` is read, and the host sets that variable when
     // it spawns this process -- so listing every field explicitly would silently
     // lose the directory and leave every remote binding unresolvable.
