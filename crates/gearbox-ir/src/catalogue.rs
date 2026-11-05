@@ -1241,6 +1241,12 @@ pub struct Catalogue {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub designs: BTreeMap<GearId, DesignGear>,
 
+    /// Every `service.gdl` found under the roots (GDL 1.6), sorted by source
+    /// then name. A product chooses an infra service among them with
+    /// `use_service(...)`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<crate::infra::ServiceDescriptor>,
+
     /// Problems found while building the catalogue.
     #[serde(default)]
     pub diagnostics: Diagnostics,
@@ -1250,6 +1256,18 @@ impl Catalogue {
     #[must_use]
     pub fn gear(&self, id: &GearId) -> Option<&GearDescriptor> {
         self.gears.get(id)
+    }
+
+    /// The `service.gdl` named `name` in `source`.
+    #[must_use]
+    pub fn service(
+        &self,
+        source: &SourceId,
+        name: &str,
+    ) -> Option<&crate::infra::ServiceDescriptor> {
+        self.services
+            .iter()
+            .find(|s| &s.source == source && s.passport.name == name)
     }
 
     #[must_use]

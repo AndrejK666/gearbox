@@ -20,7 +20,7 @@ export interface DiagnosticCodeDoc {
   readonly prevents?: string;
 }
 
-/** Every code the engine can emit: 130, ordered as the catalogue declares them. */
+/** Every code the engine can emit: 134, ordered as the catalogue declares them. */
 export const DIAGNOSTIC_CATALOGUE: {
   readonly [code: string]: DiagnosticCodeDoc;
 } = {
@@ -232,6 +232,38 @@ export const DIAGNOSTIC_CATALOGUE: {
     severity: "warning",
     domain: "gdl",
     docs: "A gear's `deploy = helm_chart(path = ...)` names a directory with no\n`Chart.yaml`.\n\nA warning: the chart is not used, and a process that is exactly the\nunit gets a generated chart instead, as if none were declared. Without\nthis, generation would stop at the missing file.",
+    requiresEvidence: false,
+  },
+  GBX0127: {
+    code: "GBX0127",
+    title: "an infra service names no infra passport in its source",
+    severity: "error",
+    domain: "gdl",
+    docs: "`use_service(\"name\", source = ...)` names no `service.gdl` with that\n`name` in that source, or one that is not `kind = \"infra\"`.\n\nA product runs beside its gears only what a passport describes: the\ndeployment reads the image, ports, health and what the service provides\nfrom it, and an own service is built, not run beside the product.",
+    requiresEvidence: false,
+  },
+  GBX0128: {
+    code: "GBX0128",
+    title: "two infra services provide the same capability",
+    severity: "error",
+    domain: "gdl",
+    docs: "Two infra services of one product provide the same capability.\n\nA capability reaches the gears as one variable (`oidc.issuer` is\n`OIDC_ISSUER`), so two providers would leave which value a gear reads\nto the order the deployment writes them in.",
+    requiresEvidence: false,
+  },
+  GBX0129: {
+    code: "GBX0129",
+    title: "an infra service's config is not one its passport declares",
+    severity: "error",
+    domain: "gdl",
+    docs: "An infra service's `config` sets a key its passport's `config` does not\ndeclare, a key the passport lists under `secrets`, or a value that is a\nsecret or a `${VAR}` reference.\n\n`config` changes the passport's literal variables. A secret is the\ndeployment's to make and keep, never the description's (GBX0116's rule).",
+    requiresEvidence: false,
+  },
+  GBX0130: {
+    code: "GBX0130",
+    title: "configuration reads a variable the product does not declare",
+    severity: "error",
+    domain: "gdl",
+    docs: "A `${NAME}` in a gear's or a plugin's configuration names a variable the\nproduct does not declare.\n\nA product that declares `infra` or `secrets` (GDL 1.6) names every\nvariable its configuration reads: a capability one of its infra\nservices provides (`${OIDC_ISSUER}` for `oidc.issuer`), a profile's\ndatabase password, or one of `product(secrets = [...])`. The generated\nprocess substitutes them when it starts and refuses to start without\none, so a misspelt name would be found at deploy rather than here.",
     requiresEvidence: false,
   },
   GBX0206: {

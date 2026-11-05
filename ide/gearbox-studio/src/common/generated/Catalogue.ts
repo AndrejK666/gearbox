@@ -6,6 +6,7 @@ import type { Diagnostics } from "./Diagnostics";
 import type { GearDescriptor } from "./GearDescriptor";
 import type { GearId } from "./GearId";
 import type { ResolvedSource } from "./ResolvedSource";
+import type { ServiceDescriptor } from "./ServiceDescriptor";
 import type { SourceId } from "./SourceId";
 
 /**
@@ -20,6 +21,12 @@ export type Catalogue = { gears: { [key in GearId]: GearDescriptor }, contracts:
  * [`DesignGear`].
  */
 designs?: { [key in GearId]: DesignGear }, 
+/**
+ * Every `service.gdl` found under the roots (GDL 1.6), sorted by source
+ * then name. A product chooses an infra service among them with
+ * `use_service(...)`.
+ */
+services?: Array<ServiceDescriptor>, 
 /**
  * Problems found while building the catalogue.
  */

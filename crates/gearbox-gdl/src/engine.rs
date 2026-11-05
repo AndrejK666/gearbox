@@ -207,6 +207,44 @@ impl GdlEngine {
     }
 }
 
+impl GdlEngine {
+    /// Evaluate one `service.gdl` into a service's passport (GDL 1.6).
+    ///
+    /// Whether a product may run it beside its gears is asked where a product
+    /// names it, at resolution.
+    #[must_use]
+    #[expect(
+        clippy::unused_self,
+        reason = "symmetry with eval_gear; cached Globals will live on the engine"
+    )]
+    pub fn eval_service(
+        &self,
+        identity: &FileIdentity,
+        source: &str,
+    ) -> EvalOutcome<gearbox_ir::infra::ServicePassport> {
+        match evaluate(
+            identity,
+            source,
+            &crate::service::service_globals(),
+            &Declares::SERVICE,
+            GdlSink::take_service,
+        ) {
+            Ok((passport, mut diagnostics)) => {
+                diagnostics.finish();
+                if diagnostics.has_errors() {
+                    EvalOutcome::failed(diagnostics)
+                } else {
+                    EvalOutcome {
+                        value: Some(passport),
+                        diagnostics,
+                    }
+                }
+            }
+            Err(diagnostics) => EvalOutcome::failed(diagnostics),
+        }
+    }
+}
+
 /// The top-level declaration a kind of file makes, for the cardinality
 /// diagnostics: `gear()` in a `gear.gdl`, one of three in a `frontx.gdl`.
 struct Declares {
@@ -237,6 +275,12 @@ impl Declares {
         add: "`shell(...)`, `mfe(...)` or `library(...)`",
         file: crate::FRONTX_FILE,
         one: "FrontX package",
+    };
+    const SERVICE: Self = Self {
+        call: "`service()`",
+        add: "`service(...)`",
+        file: crate::SERVICE_FILE,
+        one: "service",
     };
 }
 

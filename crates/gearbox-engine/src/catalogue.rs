@@ -183,7 +183,8 @@ pub fn load_catalogue_staged(
     }
 
     // ---- S0: discover -------------------------------------------------------
-    let discovered = discover_all(roots, &mut diagnostics);
+    let mut service_files = Vec::new();
+    let discovered = discover_all(roots, &mut service_files, &mut diagnostics);
 
     // The digest of each source, now that discovery knows what is under it.
     //
@@ -411,6 +412,8 @@ pub fn load_catalogue_staged(
         }
     }
 
+    load_services(&gdl, &service_files, &mut catalogue, &mut diagnostics);
+
     diagnostics.finish();
     catalogue.diagnostics = diagnostics;
     CatalogueScan {
@@ -444,12 +447,14 @@ fn declared_twice(
 /// Every description under every root, each with the root it was found in.
 fn discover_all<'r>(
     roots: &'r [SourceRoot],
+    services: &mut Vec<(&'r SourceRoot, PathBuf)>,
     diagnostics: &mut Diagnostics,
 ) -> Vec<(&'r SourceRoot, PathBuf)> {
     let mut discovered = Vec::new();
     for root in roots {
-        let (found, failures) = discover(&root.root);
+        let (found, passports, failures) = discover_files(&root.root);
         discovered.extend(found.into_iter().map(|p| (root, p)));
+        services.extend(passports.into_iter().map(|p| (root, p)));
         for failure in failures {
             diagnostics.push(
                 Diagnostic::error(
@@ -1322,8 +1327,17 @@ fn identity_for(
 /// cannot read looks exactly like a directory with no gears in it, and "this
 /// tree declares nothing" is not a conclusion a permission error should be
 /// allowed to reach.
+#[cfg(test)]
 fn discover(root: &Path) -> (Vec<PathBuf>, Vec<String>) {
+    let (found, _, failures) = discover_files(root);
+    (found, failures)
+}
+
+/// Every `gear.gdl` and every `service.gdl` under `root`, each sorted, plus the
+/// directories that could not be walked. One walk for both kinds.
+fn discover_files(root: &Path) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<String>) {
     let mut found: Vec<PathBuf> = Vec::new();
+    let mut services: Vec<PathBuf> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
 
     for entry in walkdir::WalkDir::new(root)
@@ -1335,6 +1349,10 @@ fn discover(root: &Path) -> (Vec<PathBuf>, Vec<String>) {
             Ok(entry) => {
                 if entry.file_type().is_file() && entry.file_name() == GEAR_FILE {
                     found.push(entry.into_path());
+                } else if entry.file_type().is_file()
+                    && entry.file_name() == gearbox_gdl::SERVICE_FILE
+                {
+                    services.push(entry.into_path());
                 }
             }
             Err(e) => {
@@ -1345,8 +1363,63 @@ fn discover(root: &Path) -> (Vec<PathBuf>, Vec<String>) {
     }
 
     found.sort();
+    services.sort();
     failures.sort();
-    (found, failures)
+    (found, services, failures)
+}
+
+/// Evaluate every `service.gdl` found (GDL 1.6) into `catalogue.services`.
+///
+/// A passport that does not evaluate contributes its diagnostics and is
+/// skipped. Two passports of one name in one source are GBX0105: a product
+/// names a service by source and name, so the second could never be chosen.
+fn load_services(
+    gdl: &GdlEngine,
+    files: &[(&SourceRoot, PathBuf)],
+    catalogue: &mut Catalogue,
+    diagnostics: &mut Diagnostics,
+) {
+    for (root, path) in files {
+        let Some(mut identity) = identity_for(root, path, diagnostics) else {
+            continue;
+        };
+        // A passport has no `load()`.
+        identity.load_paths = None;
+        let Some(text) = read_description(path, &identity, diagnostics) else {
+            continue;
+        };
+        let outcome = gdl.eval_service(&identity, &text);
+        diagnostics.extend(outcome.diagnostics);
+        let Some(passport) = outcome.value else {
+            continue;
+        };
+        if let Some(previous) = catalogue.service(&root.id, &passport.name) {
+            diagnostics.push(
+                Diagnostic::error(
+                    DiagnosticCode::GdlCardinality,
+                    format!(
+                        "service `{}` is described twice in source `{}`: `{}` and `{}`; the \
+                         first is the one in the catalogue",
+                        passport.name, root.id, previous.gdl_path, identity.gdl_path
+                    ),
+                    "give one of them another `name`, or delete the copy",
+                )
+                .at(Location::file(identity.uri.clone())),
+            );
+            continue;
+        }
+        catalogue
+            .services
+            .push(gearbox_ir::infra::ServiceDescriptor {
+                source: root.id.clone(),
+                gdl_path: identity.gdl_path.clone(),
+                passport_hash: blake3::hash(text.as_bytes()).to_hex().to_string(),
+                passport,
+            });
+    }
+    catalogue
+        .services
+        .sort_by(|a, b| (&a.source, &a.passport.name).cmp(&(&b.source, &b.passport.name)));
 }
 
 #[cfg(test)]

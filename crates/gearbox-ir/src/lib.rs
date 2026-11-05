@@ -14,6 +14,7 @@ pub mod explain;
 pub mod fileset;
 pub mod frontx;
 pub mod ids;
+pub mod infra;
 pub mod intent;
 pub mod requirement;
 pub mod resolved;

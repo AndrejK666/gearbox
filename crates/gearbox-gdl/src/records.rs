@@ -132,6 +132,21 @@ gdl_record! {
 }
 
 gdl_record! {
+    /// `use_service("name", source = "...", image = "...", config = {...})`
+    UseServiceRecord as "gdl_use_service" {
+        pub name: String,
+        pub source: String,
+        pub image: Option<String>,
+        pub chart: Option<String>,
+        pub chart_version: Option<String>,
+        pub config: Vec<(String, String)>,
+        pub profile_config: Vec<(String, Vec<(String, String)>)>,
+        #[allocative(skip)]
+        pub declared_at: Option<gearbox_ir::Location>,
+    }
+}
+
+gdl_record! {
     /// `cargo(crate = ..., lib = ..., path = ..., features = [...], link = [...])`
     ///
     /// `lib` is mandatory rather than derived from `crate`: a crate with no

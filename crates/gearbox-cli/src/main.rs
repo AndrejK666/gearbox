@@ -545,6 +545,22 @@ fn print_intent(intent: &gearbox_ir::ProductIntent) {
         }
     }
 
+    if !intent.infra.is_empty() {
+        println!("\n  infra");
+        for service in &intent.infra {
+            let image = service
+                .image
+                .as_deref()
+                .map(|i| format!(", image {i}"))
+                .unwrap_or_default();
+            println!("    {} from {}{image}", service.name, service.source);
+        }
+    }
+    if !intent.secrets.is_empty() {
+        let names: Vec<&str> = intent.secrets.iter().map(String::as_str).collect();
+        println!("\n  secrets: {}", names.join(", "));
+    }
+
     // Profile-scoped declarations are printed per profile, because that is the
     // only way to see what a given `--profile` will actually resolve.
     for id in intent.profiles.keys() {
@@ -763,6 +779,33 @@ fn print_resolution(resolved: &gearbox_ir::ResolvedProduct) {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+    }
+    if let Some(infra) = &resolved.infra {
+        println!("  infra:");
+        for service in &infra.services {
+            let image = service
+                .image
+                .as_ref()
+                .map(|i| format!(" {}", i.reference))
+                .unwrap_or_default();
+            println!("    {}{image}", service.name);
+        }
+        for (capability, provided) in &infra.capabilities {
+            println!(
+                "    {capability} -> ${{{}}} from {}",
+                provided.env, provided.service
+            );
+        }
+        for need in &infra.needs {
+            println!(
+                "    needs {} ({}): {}",
+                need.need,
+                need.capability,
+                need.met_by
+                    .as_deref()
+                    .unwrap_or("not met by a declared service")
+            );
+        }
     }
     if !resolved.bindings.is_empty() {
         println!("  bindings:");

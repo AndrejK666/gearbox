@@ -16,6 +16,8 @@
 //! a file the runtime refuses at startup. A field the gear reads belongs in
 //! the schema; a typo must not reach the file.
 
+use std::collections::BTreeMap;
+
 use gearbox_ir::{
     Catalogue, ConfigFieldType, Diagnostic, DiagnosticCode, Diagnostics, GearSelection, Location,
     ProductIntent,
@@ -74,6 +76,7 @@ pub fn check(
     uri: &str,
     diagnostics: &mut Diagnostics,
 ) {
+    check_variables(catalogue, intent, uri, diagnostics);
     for selection in &intent.selected_gears {
         let Some(gear) = catalogue.gears.get(&selection.gear) else {
             continue;
@@ -152,7 +155,7 @@ pub fn check(
                 &location(selection, uri),
                 diagnostics,
             );
-            let Some(expected) = mismatch(&field.ty, value) else {
+            let Some(expected) = typed_mismatch(&field.ty, value) else {
                 continue;
             };
             diagnostics.push(
@@ -164,7 +167,7 @@ pub fn check(
                         actual(value),
                         schema.rust
                     ),
-                    format!("write `{key}` as {expected}"),
+                    type_help(key, &expected, value),
                 )
                 .at(location(selection, uri)),
             );
@@ -363,7 +366,7 @@ fn check_nested(
         let path = format!("{}.{}", field.name, nested.name);
         match set.get(&nested.name) {
             Some(value) => {
-                if let Some(expected) = mismatch(&nested.ty, value) {
+                if let Some(expected) = typed_mismatch(&nested.ty, value) {
                     diagnostics.push(
                         Diagnostic::error(
                             DiagnosticCode::GdlConfigTypeMismatch,
@@ -372,7 +375,7 @@ fn check_nested(
                                  {expected}",
                                 actual(value)
                             ),
-                            format!("write `{path}` as {expected}"),
+                            type_help(&path, &expected, value),
                         )
                         .at(at.clone())
                         .about_config(field.name.clone()),
@@ -397,6 +400,175 @@ fn check_nested(
                 .about_config(field.name.clone()),
             ),
             None => {}
+        }
+    }
+}
+
+/// [`mismatch`], except that a string carrying a `${VAR}` fits an enum field:
+/// the variable is substituted when the process starts, and the gear's own
+/// loader checks the variant it then reads. A boolean or a number never holds
+/// one -- the substitution yields a string -- so that is still GBX0113.
+fn typed_mismatch(ty: &ConfigFieldType, value: &serde_json::Value) -> Option<String> {
+    if matches!(ty, ConfigFieldType::Enum { .. })
+        && value.as_str().is_some_and(|s| !variables_in(s).is_empty())
+    {
+        return None;
+    }
+    mismatch(ty, value)
+}
+
+fn type_help(key: &str, expected: &str, value: &serde_json::Value) -> String {
+    if value.as_str().is_some_and(|s| !variables_in(s).is_empty()) {
+        format!(
+            "write `{key}` as {expected}; a `${{VAR}}` is substituted as text when the process \
+             starts, so only a string or an enum field can read one"
+        )
+    } else {
+        format!("write `{key}` as {expected}")
+    }
+}
+
+/// Every `${NAME}` in `text`, in order: `NAME` uppercase letters, digits and
+/// `_`, not starting with a digit. `${NAME:-default}` is not one -- a default
+/// is a live value (GBX0116) -- and `${lower}` is not a variable either.
+#[must_use]
+pub fn variables_in(text: &str) -> Vec<&str> {
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("${") {
+        rest = &rest[start + 2..];
+        let Some(end) = rest.find('}') else {
+            break;
+        };
+        let name = &rest[..end];
+        if gearbox_gdl::service::is_env_name(name) {
+            found.push(name);
+        }
+        rest = &rest[end + 1..];
+    }
+    found
+}
+
+/// Every `${NAME}` anywhere in a configuration value.
+fn variables_of<'a>(value: &'a serde_json::Value, out: &mut Vec<&'a str>) {
+    match value {
+        serde_json::Value::String(s) => out.extend(variables_in(s)),
+        serde_json::Value::Array(items) => items.iter().for_each(|v| variables_of(v, out)),
+        serde_json::Value::Object(map) => map.values().for_each(|v| variables_of(v, out)),
+        _ => {}
+    }
+}
+
+/// The variables a product's configuration may read, by name, each with
+/// where it comes from; `None` when the product declares neither `infra` nor
+/// `secrets` and keeps the rule it had before GDL 1.6 (any name).
+#[must_use]
+pub fn declared_variables(
+    catalogue: &Catalogue,
+    intent: &ProductIntent,
+) -> Option<BTreeMap<String, String>> {
+    if intent.infra.is_empty() && intent.secrets.is_empty() {
+        return None;
+    }
+    let mut known = BTreeMap::new();
+    for selection in &intent.infra {
+        let Some(service) = catalogue.service(&selection.source, &selection.name) else {
+            continue;
+        };
+        for capability in service.passport.provides.keys() {
+            known.insert(
+                gearbox_ir::infra::capability_variable(capability),
+                format!("`{capability}` of infra service `{}`", selection.name),
+            );
+        }
+    }
+    for profile in intent.profiles.values() {
+        if let Some(name) = profile.database().and_then(|db| db.password_env()) {
+            known.insert(
+                name.to_owned(),
+                format!("profile `{}`'s database password", profile.id()),
+            );
+        }
+    }
+    for name in &intent.secrets {
+        known.insert(name.clone(), "`product(secrets = [...])`".to_owned());
+    }
+    Some(known)
+}
+
+/// GBX0130: every `${NAME}` a gear's or a plugin's configuration reads is a
+/// variable the product declares (GDL 1.6, once it declares `infra` or
+/// `secrets`).
+fn check_variables(
+    catalogue: &Catalogue,
+    intent: &ProductIntent,
+    uri: &str,
+    diagnostics: &mut Diagnostics,
+) {
+    let Some(known) = declared_variables(catalogue, intent) else {
+        return;
+    };
+    for selection in &intent.selected_gears {
+        unknown_variables(
+            &known,
+            &format!("`{}`", selection.gear),
+            &location(selection, uri),
+            &selection.config,
+            diagnostics,
+        );
+        for plugin in &selection.plugins {
+            unknown_variables(
+                &known,
+                &format!("plugin `{}`", plugin.gear),
+                &Location::or_file(plugin.declared_at.as_ref(), uri),
+                &plugin.config,
+                diagnostics,
+            );
+        }
+    }
+}
+
+fn unknown_variables(
+    known: &BTreeMap<String, String>,
+    owner: &str,
+    at: &Location,
+    config: &BTreeMap<String, serde_json::Value>,
+    diagnostics: &mut Diagnostics,
+) {
+    for (key, value) in config {
+        let mut names = Vec::new();
+        variables_of(value, &mut names);
+        for name in names {
+            if known.contains_key(name) {
+                continue;
+            }
+            let declared = if known.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; declared: {}",
+                    known
+                        .keys()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            diagnostics.push(
+                Diagnostic::error(
+                    DiagnosticCode::GdlUnknownVariable,
+                    format!(
+                        "{owner} config key `{key}` reads `${{{name}}}`, which this product does \
+                         not declare"
+                    ),
+                    format!(
+                        "add \"{name}\" to `product(secrets = [...])` for the deployment to set, \
+                         or read a capability of one of its infra services{declared}"
+                    ),
+                )
+                .at(at.clone())
+                .about_config(key.clone()),
+            );
         }
     }
 }

@@ -78,6 +78,8 @@ pub fn assemble(
         diagnostics: resolution.diagnostics.clone(),
         ui: resolution.ui.clone(),
         frontend: resolution.frontend.clone(),
+        infra: resolution.infra.clone(),
+        secrets: intent.secrets.clone(),
         permissions: intent.permissions.clone(),
     };
 

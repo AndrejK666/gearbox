@@ -304,6 +304,8 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
     let gearbox_ir::ResolvedProduct {
         ui: before_ui,
         frontend: before_frontend,
+        infra: before_infra,
+        secrets: before_secrets,
         sqlite_databases: before_sqlite,
         database: before_db,
         schema_version: before_schema,
@@ -323,6 +325,8 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
     let gearbox_ir::ResolvedProduct {
         ui: after_ui,
         frontend: after_frontend,
+        infra: after_infra,
+        secrets: after_secrets,
         sqlite_databases: after_sqlite,
         database: after_db,
         schema_version: after_schema,
@@ -368,6 +372,28 @@ fn scalar_fields(before: &ResolvedProduct, after: &ResolvedProduct) -> Vec<Field
         "frontend",
         format!("{before_frontend:?}"),
         format!("{after_frontend:?}"),
+    );
+    // One line per infra fact, so a changed image names the service it moved.
+    let before_infra = infra_fields(before_infra.as_ref());
+    let after_infra = infra_fields(after_infra.as_ref());
+    let mut infra_keys = std::collections::BTreeSet::new();
+    infra_keys.extend(before_infra.keys());
+    infra_keys.extend(after_infra.keys());
+    for key in infra_keys {
+        compare(
+            key,
+            before_infra.get(key).cloned().unwrap_or_default(),
+            after_infra.get(key).cloned().unwrap_or_default(),
+        );
+    }
+    compare(
+        "secrets",
+        before_secrets
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", "),
+        after_secrets.iter().cloned().collect::<Vec<_>>().join(", "),
     );
     // One line per permission: a changed grant names what it grants.
     let mut permission_keys = std::collections::BTreeSet::new();
@@ -768,4 +794,51 @@ pub fn diff(before: &ResolvedProduct, after: &ResolvedProduct) -> LockDiff {
         provenance_changed,
         diagnostics_changed,
     }
+}
+
+/// The infra section as `infra.<service>.<field>` lines: what a reader of a
+/// diff asks of it is which service changed and how.
+fn infra_fields(
+    infra: Option<&gearbox_ir::infra::ResolvedInfra>,
+) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    let Some(infra) = infra else {
+        return out;
+    };
+    for service in &infra.services {
+        let name = &service.name;
+        let mut put = |field: &str, value: String| {
+            out.insert(format!("infra.{name}.{field}"), value);
+        };
+        put("source", service.source.to_string());
+        put(
+            "passport",
+            format!("{} {}", service.gdl_path, service.passport_hash),
+        );
+        if let Some(image) = &service.image {
+            put("image", image.reference.clone());
+            put("image.digest", image.digest.clone().unwrap_or_default());
+        }
+        put("chart", service.chart.clone().unwrap_or_default());
+        put(
+            "chart_version",
+            service.chart_version.clone().unwrap_or_default(),
+        );
+        for (key, value) in &service.config {
+            put(&format!("config.{key}"), value.clone());
+        }
+    }
+    for (capability, provided) in &infra.capabilities {
+        out.insert(
+            format!("infra.capabilities.{capability}"),
+            format!("{} as ${{{}}}", provided.service, provided.env),
+        );
+    }
+    for need in &infra.needs {
+        out.insert(
+            format!("infra.needs.{}", need.need),
+            need.met_by.clone().unwrap_or_else(|| "unmet".to_owned()),
+        );
+    }
+    out
 }

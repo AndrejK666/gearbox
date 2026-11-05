@@ -569,6 +569,40 @@ diagnostic_codes! {
     /// this, generation would stop at the missing file.
     GdlUnitChartMissing = "GBX0126", Gdl, Warning, false, "a declared unit chart is not on disk";
 
+    /// `use_service("name", source = ...)` names no `service.gdl` with that
+    /// `name` in that source, or one that is not `kind = "infra"`.
+    ///
+    /// A product runs beside its gears only what a passport describes: the
+    /// deployment reads the image, ports, health and what the service provides
+    /// from it, and an own service is built, not run beside the product.
+    GdlInfraServiceUnknown = "GBX0127", Gdl, Error, false, "an infra service names no infra passport in its source";
+
+    /// Two infra services of one product provide the same capability.
+    ///
+    /// A capability reaches the gears as one variable (`oidc.issuer` is
+    /// `OIDC_ISSUER`), so two providers would leave which value a gear reads
+    /// to the order the deployment writes them in.
+    GdlInfraCapabilityConflict = "GBX0128", Gdl, Error, false, "two infra services provide the same capability";
+
+    /// An infra service's `config` sets a key its passport's `config` does not
+    /// declare, a key the passport lists under `secrets`, or a value that is a
+    /// secret or a `${VAR}` reference.
+    ///
+    /// `config` changes the passport's literal variables. A secret is the
+    /// deployment's to make and keep, never the description's (GBX0116's rule).
+    GdlInfraConfigInvalid = "GBX0129", Gdl, Error, false, "an infra service's config is not one its passport declares";
+
+    /// A `${NAME}` in a gear's or a plugin's configuration names a variable the
+    /// product does not declare.
+    ///
+    /// A product that declares `infra` or `secrets` (GDL 1.6) names every
+    /// variable its configuration reads: a capability one of its infra
+    /// services provides (`${OIDC_ISSUER}` for `oidc.issuer`), a profile's
+    /// database password, or one of `product(secrets = [...])`. The generated
+    /// process substitutes them when it starts and refuses to start without
+    /// one, so a misspelt name would be found at deploy rather than here.
+    GdlUnknownVariable = "GBX0130", Gdl, Error, false, "configuration reads a variable the product does not declare";
+
     // ---------------------------------------------------------------- GBX02xx
     // GBX0201-GBX0205 are deliberately absent. They compared a `gear.gdl`
     // restatement of the gear id, co-location dependencies, runtime

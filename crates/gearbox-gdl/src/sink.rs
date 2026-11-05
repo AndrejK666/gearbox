@@ -154,6 +154,10 @@ pub struct ProductDecl {
     pub preferences: Vec<crate::records::PreferenceRecord>,
     /// `permissions = {...}`: permission -> the scopes that grant it.
     pub permissions: std::collections::BTreeMap<String, Vec<String>>,
+    /// `infra = [use_service(...)]` (GDL 1.6).
+    pub infra: Vec<crate::records::UseServiceRecord>,
+    /// `secrets = ["NAME", ...]` (GDL 1.6).
+    pub secrets: Vec<String>,
 }
 
 /// Collects one file's declaration and any diagnostics raised while evaluating it.
@@ -162,6 +166,7 @@ pub struct GdlSink {
     gear: RefCell<Option<GearDecl>>,
     product: RefCell<Option<ProductDecl>>,
     frontx: RefCell<Option<gearbox_ir::frontx::FrontxPackage>>,
+    service: RefCell<Option<gearbox_ir::infra::ServicePassport>>,
     diagnostics: RefCell<Diagnostics>,
     /// Set when a second `gear()`/`product()` call is seen, so the engine can
     /// report GBX0105 without the host function needing to fail the evaluation.
@@ -209,6 +214,16 @@ impl GdlSink {
         }
     }
 
+    /// Record what a `service.gdl` declares. Same write-once rule.
+    pub fn set_service(&self, passport: gearbox_ir::infra::ServicePassport) {
+        let mut slot = self.service.borrow_mut();
+        if slot.is_some() {
+            *self.duplicate.borrow_mut() = true;
+        } else {
+            *slot = Some(passport);
+        }
+    }
+
     #[must_use]
     pub fn saw_duplicate(&self) -> bool {
         *self.duplicate.borrow()
@@ -230,6 +245,12 @@ impl GdlSink {
     #[must_use]
     pub fn take_frontx(&self) -> Option<gearbox_ir::frontx::FrontxPackage> {
         self.frontx.borrow_mut().take()
+    }
+
+    /// Take the recorded service passport, leaving the sink empty.
+    #[must_use]
+    pub fn take_service(&self) -> Option<gearbox_ir::infra::ServicePassport> {
+        self.service.borrow_mut().take()
     }
 
     /// Take the collected diagnostics, leaving the sink empty.

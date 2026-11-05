@@ -9,6 +9,7 @@ import type { ProductFrontx } from "./ProductFrontx";
 import type { ProductUi } from "./ProductUi";
 import type { ProfileId } from "./ProfileId";
 import type { RelPath } from "./RelPath";
+import type { ServiceSelection } from "./ServiceSelection";
 import type { SourceDecl } from "./SourceDecl";
 import type { SourceId } from "./SourceId";
 
@@ -55,6 +56,17 @@ selected_gears: Array<GearSelection>, bindings?: Array<BindingIntent>, cluster_s
  * A `FrontX` frontend (GDL 1.5), the alternative to `ui`.
  */
 frontend?: ProductFrontx | null, 
+/**
+ * The infra services the product runs beside its gears (GDL 1.6), in
+ * the order it lists them.
+ */
+infra?: Array<ServiceSelection>, 
+/**
+ * Variables the product's configuration reads that no infra service
+ * provides: `product(secrets = ["SMTP_PASSWORD"])` (GDL 1.6). The
+ * deployment sets them, from its configuration secret.
+ */
+secrets?: Array<string>, 
 /**
  * Permission -> the token scopes that grant it, any of them
  * (`product(permissions = {...})`, gears-rust

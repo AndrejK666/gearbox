@@ -795,6 +795,17 @@ pub struct ProductIntent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frontend: Option<crate::frontx::ProductFrontx>,
 
+    /// The infra services the product runs beside its gears (GDL 1.6), in
+    /// the order it lists them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub infra: Vec<crate::infra::ServiceSelection>,
+
+    /// Variables the product's configuration reads that no infra service
+    /// provides: `product(secrets = ["SMTP_PASSWORD"])` (GDL 1.6). The
+    /// deployment sets them, from its configuration secret.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub secrets: BTreeSet<String>,
+
     /// Permission -> the token scopes that grant it, any of them
     /// (`product(permissions = {...})`, gears-rust
     /// `cpt-cf-adr-operation-permissions` section 2).

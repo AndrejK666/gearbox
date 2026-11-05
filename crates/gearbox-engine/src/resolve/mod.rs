@@ -16,6 +16,7 @@ pub mod cluster;
 pub mod cluster_options;
 pub mod cuts;
 pub mod database;
+mod infra;
 pub mod partition;
 pub mod product;
 pub mod production;
@@ -53,6 +54,7 @@ fn unknown_profile(intent: &ProductIntent, profile: &ProfileId, uri: &str) -> Di
 pub struct Resolution {
     pub ui: Option<gearbox_ir::ui::ResolvedUi>,
     pub frontend: Option<gearbox_ir::frontx::ProductFrontx>,
+    pub infra: Option<gearbox_ir::infra::ResolvedInfra>,
     pub database: Option<gearbox_ir::PostgresDatabase>,
     pub sqlite_databases:
         std::collections::BTreeMap<gearbox_ir::GearId, gearbox_ir::SqliteDatabase>,
@@ -309,10 +311,24 @@ pub fn resolve_at(
 
     let ui = ui::resolve(catalogue, intent, &closure, &uri, &mut diagnostics);
     let frontend = ui::resolve_frontx(intent, &closure, &uri, &mut diagnostics);
+    // Every gear the product links in this profile, its plugins included.
+    let linked: BTreeSet<GearId> = closure
+        .members
+        .keys()
+        .cloned()
+        .chain(
+            partition
+                .applications
+                .iter()
+                .flat_map(|a| a.gears.iter().cloned()),
+        )
+        .collect();
+    let infra = infra::resolve(catalogue, intent, profile, &linked, &uri, &mut diagnostics);
     diagnostics.finish();
     Resolution {
         ui,
         frontend,
+        infra,
         database,
         sqlite_databases: intent
             .profiles

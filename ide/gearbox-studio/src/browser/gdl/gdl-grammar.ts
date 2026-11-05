@@ -22,6 +22,7 @@ import {
   FORBIDDEN_KEYWORDS,
   FUNCTION_NAMESPACES,
   FRONTX_FUNCTIONS,
+  SERVICE_FUNCTIONS,
   GEAR_FUNCTIONS,
   IMPORT_KEYWORD,
   PRODUCT_FUNCTIONS,
@@ -44,7 +45,7 @@ const IDENT = String.raw`[A-Za-z_][A-Za-z0-9_]*`;
  * A union rather than two rules: `path()` is a product function and `cargo()` a
  * gear one, but a reader opening a `load()` fragment should see both coloured.
  */
-const GDL_FUNCTIONS = [...new Set([...GEAR_FUNCTIONS, ...PRODUCT_FUNCTIONS, ...FRONTX_FUNCTIONS])].sort();
+const GDL_FUNCTIONS = [...new Set([...GEAR_FUNCTIONS, ...PRODUCT_FUNCTIONS, ...FRONTX_FUNCTIONS, ...SERVICE_FUNCTIONS])].sort();
 
 /**
  * Escape sequences, per `starlark_syntax::lexer::escape`.

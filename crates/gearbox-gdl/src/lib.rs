@@ -22,7 +22,7 @@
 // starlark `Globals` stay internal: a `pub fn` returning one would hand a
 // pre-1.0 host type to a crate the boundary test forbids from naming it.
 //
-// `globals`, `product` and `frontx` are the exception, and only for their `#[starlark_module]`
+// `globals`, `product`, `frontx` and `service` are the exception, and only for their `#[starlark_module]`
 // vocabularies, which `tests/export_grammar.rs` reads to generate the editor's
 // syntax highlighting. That test lives in this crate, so the containment holds.
 /// The name a product description must have.
@@ -41,6 +41,9 @@ pub const GEAR_FILE: &str = "gear.gdl";
 /// [`PRODUCT_FILE`].
 pub const FRONTX_FILE: &str = "frontx.gdl";
 
+/// The name a service's passport must have (GDL 1.6). See [`PRODUCT_FILE`].
+pub const SERVICE_FILE: &str = "service.gdl";
+
 pub mod assist;
 pub mod declarative;
 pub mod edit;
@@ -51,6 +54,7 @@ pub(crate) mod loader;
 pub mod product;
 pub(crate) mod product_intent;
 pub mod records;
+pub mod service;
 pub(crate) mod sink;
 pub(crate) mod values;
 pub mod version;

@@ -187,6 +187,7 @@ pub fn build(
             "keep the one the product's screens are written for",
         ));
     }
+    let infra = build_infra(uri, decl, &sources, &profiles, diagnostics);
     Some(ProductIntent {
         id: decl.id.clone(),
         display_name: decl.display_name.clone(),
@@ -204,8 +205,110 @@ pub fn build(
         default_profile,
         ui,
         frontend,
+        infra,
+        secrets: build_secrets(uri, decl, diagnostics),
         permissions: decl.permissions.clone(),
     })
+}
+
+/// `infra = [use_service(...)]`: each a kebab name in a declared source, once.
+/// Whether its passport exists, is infra and declares the `config` keys set is
+/// the catalogue's question, asked at resolution.
+fn build_infra(
+    uri: &str,
+    decl: &ProductDecl,
+    sources: &BTreeMap<SourceId, SourceDecl>,
+    profiles: &Profiles,
+    diagnostics: &mut Diagnostics,
+) -> Vec<gearbox_ir::infra::ServiceSelection> {
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for record in &decl.infra {
+        let at = Location::or_file(record.declared_at.as_ref(), uri);
+        if GearId::new(record.name.clone()).is_err() {
+            diagnostics.push(invalid(
+                at,
+                format!(
+                    "use_service(\"{}\") is not a kebab-case service name",
+                    record.name
+                ),
+                "name the service as its passport's `name` says",
+            ));
+            continue;
+        }
+        let source = match SourceId::new(record.source.clone()) {
+            Ok(id) if sources.contains_key(&id) => id,
+            _ => {
+                diagnostics.push(invalid(
+                    at,
+                    format!(
+                        "use_service(\"{}\") names source `{}`, which is not declared",
+                        record.name, record.source
+                    ),
+                    format!(
+                        "declared sources: {}",
+                        joined(sources.keys().map(SourceId::as_str))
+                    ),
+                ));
+                continue;
+            }
+        };
+        if !seen.insert(record.name.clone()) {
+            diagnostics.push(collision(
+                at,
+                format!("infra service `{}` is listed twice", record.name),
+                "list each service once; per-profile values belong in its `profile_config`",
+            ));
+            continue;
+        }
+        let profile_config = record
+            .profile_config
+            .iter()
+            .filter_map(|(name, config)| {
+                let scoped = scoped_profiles_at(
+                    &at,
+                    std::slice::from_ref(name),
+                    &format!("use_service(\"{}\", profile_config = ...)", record.name),
+                    profiles,
+                    diagnostics,
+                );
+                let profile = scoped.into_iter().next()?;
+                Some((profile, config.iter().cloned().collect()))
+            })
+            .collect();
+        out.push(gearbox_ir::infra::ServiceSelection {
+            name: record.name.clone(),
+            source,
+            image: record.image.clone(),
+            chart: record.chart.clone(),
+            chart_version: record.chart_version.clone(),
+            config: record.config.iter().cloned().collect(),
+            profile_config,
+            declared_at: record.declared_at.clone(),
+        });
+    }
+    out
+}
+
+/// `secrets = [...]`: variable names, each once.
+fn build_secrets(uri: &str, decl: &ProductDecl, diagnostics: &mut Diagnostics) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for name in &decl.secrets {
+        if !crate::service::is_env_name(name) {
+            diagnostics.push(invalid(
+                Location::file(uri.to_owned()),
+                format!("secrets: `{name}` is not a variable name"),
+                "name it in uppercase letters, digits and `_`: `SMTP_PASSWORD`",
+            ));
+        } else if !out.insert(name.clone()) {
+            diagnostics.push(invalid(
+                Location::file(uri.to_owned()),
+                format!("secrets: `{name}` is listed twice"),
+                "list each variable once",
+            ));
+        }
+    }
+    out
 }
 
 fn build_profiles(uri: &str, decl: &ProductDecl, diagnostics: &mut Diagnostics) -> Profiles {

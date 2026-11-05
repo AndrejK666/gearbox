@@ -55,10 +55,14 @@ export const PRODUCT_FUNCTIONS: readonly string[] = [
   "source",
   "ui_product",
   "use_gear",
+  "use_service",
 ];
 
 /** The callable vocabulary of a `frontx.gdl` (GDL 1.5). */
 export const FRONTX_FUNCTIONS: readonly string[] = ["library", "mfe", "shell"];
+
+/** The callable vocabulary of a `service.gdl` (GDL 1.6). */
+export const SERVICE_FUNCTIONS: readonly string[] = ["service"];
 
 /** Starlark standard callables GDL keeps. Legal, but not GDL's own -- coloured
  * differently so a typo'd `use_gears(` stays visibly plain next to a `use_gear(`. */

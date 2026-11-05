@@ -1102,3 +1102,78 @@ fn a_malformed_permission_mapping_is_refused() {
         assert!(messages.contains(named), "{extra}: {messages}");
     }
 }
+
+#[test]
+fn infra_services_and_secrets_are_declared_on_the_product() {
+    let (intent, codes, messages) = eval(&product(
+        r#"infra = [
+            use_service("keycloak", source = "gears-rust",
+                image = "quay.io/keycloak/keycloak:26.0.7@sha256:abc",
+                config = {"KC_HEALTH_ENABLED": "false"},
+                profile_config = {"prod": {"KC_PROXY_HEADERS": "forwarded"}}),
+            use_service("postgresql", source = "gears-rust"),
+        ],
+        secrets = ["SMTP_PASSWORD"],"#,
+    ));
+    assert!(codes.is_empty(), "{codes:?} {messages}");
+    let intent = intent.unwrap();
+    assert_eq!(intent.infra.len(), 2);
+    let keycloak = &intent.infra[0];
+    assert_eq!(keycloak.name, "keycloak");
+    assert_eq!(keycloak.source.as_str(), "gears-rust");
+    assert_eq!(keycloak.config["KC_HEALTH_ENABLED"], "false");
+    assert_eq!(
+        keycloak.profile_config[&ProfileId::new("prod").unwrap()]["KC_PROXY_HEADERS"],
+        "forwarded"
+    );
+    assert!(keycloak.declared_at.is_some());
+    assert!(intent.secrets.contains("SMTP_PASSWORD"));
+}
+
+#[test]
+fn an_infra_service_is_listed_once_from_a_declared_source() {
+    let (_, codes, _) = eval(&product(
+        r#"infra = [use_service("keycloak", source = "gears-rust"),
+                    use_service("keycloak", source = "gears-rust")],"#,
+    ));
+    assert!(
+        codes.contains(&DiagnosticCode::GdlDuplicateProfileScoped),
+        "{codes:?}"
+    );
+
+    let (_, codes, messages) = eval(&product(
+        r#"infra = [use_service("keycloak", source = "elsewhere")],"#,
+    ));
+    assert!(!codes.is_empty());
+    assert!(messages.contains("not declared"), "{messages}");
+}
+
+#[test]
+fn an_infra_service_config_is_strings_and_its_profiles_are_declared() {
+    let (_, codes, _) = eval(&product(
+        r#"infra = [use_service("keycloak", source = "gears-rust", config = {"A": 1})],"#,
+    ));
+    assert!(!codes.is_empty());
+
+    let (_, codes, messages) = eval(&product(
+        r#"infra = [use_service("keycloak", source = "gears-rust",
+            profile_config = {"staging": {"A": "b"}})],"#,
+    ));
+    assert!(!codes.is_empty(), "{messages}");
+}
+
+#[test]
+fn a_secret_is_a_variable_name() {
+    let (_, codes, messages) = eval(&product(r#"secrets = ["smtp-password"],"#));
+    assert!(!codes.is_empty());
+    assert!(messages.contains("not a variable name"), "{messages}");
+}
+
+#[test]
+fn where_a_service_runs_is_not_the_products_to_say() {
+    // `public_url` and `chart_values` are the environment's.
+    let (_, codes, _) = eval(&product(
+        r#"infra = [use_service("keycloak", source = "gears-rust", public_url = "https://x")],"#,
+    ));
+    assert!(!codes.is_empty());
+}

@@ -15,7 +15,7 @@ remedy at the point it is raised
 (`cpt-gearbox-nfr-actionable-diagnostics`), which is per-occurrence and
 so is not listed here.
 
-Codes: **130**.
+Codes: **134**.
 
 ## `GBX01xx` — Parsing and evaluating GDL
 
@@ -47,6 +47,10 @@ Codes: **130**.
 | [GBX0124](#gbx0124) | error | a gear declares a permission the product does not map |
 | [GBX0125](#gbx0125) | warning | the product maps a permission no gear declares |
 | [GBX0126](#gbx0126) | warning | a declared unit chart is not on disk |
+| [GBX0127](#gbx0127) | error | an infra service names no infra passport in its source |
+| [GBX0128](#gbx0128) | error | two infra services provide the same capability |
+| [GBX0129](#gbx0129) | error | an infra service's config is not one its passport declares |
+| [GBX0130](#gbx0130) | error | configuration reads a variable the product does not declare |
 
 ### GBX0101
 
@@ -364,6 +368,52 @@ A gear's `deploy = helm_chart(path = ...)` names a directory with no
 A warning: the chart is not used, and a process that is exactly the
 unit gets a generated chart instead, as if none were declared. Without
 this, generation would stop at the missing file.
+
+### GBX0127
+
+**an infra service names no infra passport in its source**
+
+`use_service("name", source = ...)` names no `service.gdl` with that
+`name` in that source, or one that is not `kind = "infra"`.
+
+A product runs beside its gears only what a passport describes: the
+deployment reads the image, ports, health and what the service provides
+from it, and an own service is built, not run beside the product.
+
+### GBX0128
+
+**two infra services provide the same capability**
+
+Two infra services of one product provide the same capability.
+
+A capability reaches the gears as one variable (`oidc.issuer` is
+`OIDC_ISSUER`), so two providers would leave which value a gear reads
+to the order the deployment writes them in.
+
+### GBX0129
+
+**an infra service's config is not one its passport declares**
+
+An infra service's `config` sets a key its passport's `config` does not
+declare, a key the passport lists under `secrets`, or a value that is a
+secret or a `${VAR}` reference.
+
+`config` changes the passport's literal variables. A secret is the
+deployment's to make and keep, never the description's (GBX0116's rule).
+
+### GBX0130
+
+**configuration reads a variable the product does not declare**
+
+A `${NAME}` in a gear's or a plugin's configuration names a variable the
+product does not declare.
+
+A product that declares `infra` or `secrets` (GDL 1.6) names every
+variable its configuration reads: a capability one of its infra
+services provides (`${OIDC_ISSUER}` for `oidc.issuer`), a profile's
+database password, or one of `product(secrets = [...])`. The generated
+process substitutes them when it starts and refuses to start without
+one, so a misspelt name would be found at deploy rather than here.
 
 ## `GBX02xx` — Cross-checking a description against Rust
 

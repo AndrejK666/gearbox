@@ -1010,6 +1010,12 @@ pub struct ResolvedProduct {
     /// The `FrontX` frontend, its required backends checked against the gears.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frontend: Option<crate::frontx::ProductFrontx>,
+    /// The infra services, their capabilities and the gears' needs (GDL 1.6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub infra: Option<crate::infra::ResolvedInfra>,
+    /// `product(secrets = [...])`: variables the deployment sets.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub secrets: BTreeSet<String>,
 }
 
 impl ResolvedProduct {

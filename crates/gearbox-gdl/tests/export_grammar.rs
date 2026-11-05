@@ -42,6 +42,7 @@ use gearbox_gdl::declarative::{KeywordVerdict, keyword_verdicts};
 use gearbox_gdl::frontx::frontx_vocabulary;
 use gearbox_gdl::globals::gear_vocabulary;
 use gearbox_gdl::product::product_vocabulary;
+use gearbox_gdl::service::service_vocabulary;
 use starlark::environment::{Globals, GlobalsBuilder};
 
 /// Where the editor expects to find it.
@@ -147,6 +148,7 @@ fn render() -> String {
     let gear = surface_of(&gear_vocabulary());
     let product = surface_of(&product_vocabulary());
     let frontx = surface_of(&frontx_vocabulary());
+    let service = surface_of(&service_vocabulary());
 
     // The value namespaces are registered into both, and identically -- both
     // loops walk `vocabulary::ALL_NAMESPACES`. Merging rather than emitting two
@@ -167,7 +169,7 @@ fn render() -> String {
          // cannot colour a function the engine does not have, nor miss one it does.\n\n",
     );
 
-    let sections: [(&str, &str, String); 9] = [
+    let sections: [(&str, &str, String); 10] = [
         (
             "The callable vocabulary of a `gear.gdl`.",
             "GEAR_FUNCTIONS: readonly string[]",
@@ -182,6 +184,11 @@ fn render() -> String {
             "The callable vocabulary of a `frontx.gdl` (GDL 1.5).",
             "FRONTX_FUNCTIONS: readonly string[]",
             array(&frontx.functions),
+        ),
+        (
+            "The callable vocabulary of a `service.gdl` (GDL 1.6).",
+            "SERVICE_FUNCTIONS: readonly string[]",
+            array(&service.functions),
         ),
         (
             "Starlark standard callables GDL keeps. Legal, but not GDL's own -- coloured\n\

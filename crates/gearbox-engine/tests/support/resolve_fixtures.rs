@@ -90,6 +90,8 @@ pub fn intent(gears: &[&str]) -> ProductIntent {
     ProductIntent {
         ui: None,
         frontend: None,
+        infra: Vec::new(),
+        secrets: std::collections::BTreeSet::new(),
         templates: None,
         layout: None,
         id: "fixture".to_owned(),

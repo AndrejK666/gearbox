@@ -258,6 +258,8 @@ mod tests {
         ResolvedProduct {
             ui: None,
             frontend: None,
+            infra: None,
+            secrets: std::collections::BTreeSet::new(),
             database: None,
             sqlite_databases: BTreeMap::new(),
             schema_version: LOCK_SCHEMA_VERSION,

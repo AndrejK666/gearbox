@@ -10,6 +10,7 @@ import type { ResolvedApplication } from "./ResolvedApplication";
 import type { ResolvedBinding } from "./ResolvedBinding";
 import type { ResolvedClusterBinding } from "./ResolvedClusterBinding";
 import type { ResolvedGear } from "./ResolvedGear";
+import type { ResolvedInfra } from "./ResolvedInfra";
 import type { ResolvedProductHeader } from "./ResolvedProductHeader";
 import type { ResolvedSource } from "./ResolvedSource";
 import type { ResolvedUi } from "./ResolvedUi";
@@ -65,4 +66,12 @@ permissions?: { [key in string]: Array<string> }, diagnostics?: Diagnostics, ui?
 /**
  * The `FrontX` frontend, its required backends checked against the gears.
  */
-frontend?: ProductFrontx | null, };
+frontend?: ProductFrontx | null, 
+/**
+ * The infra services, their capabilities and the gears' needs (GDL 1.6).
+ */
+infra?: ResolvedInfra | null, 
+/**
+ * `product(secrets = [...])`: variables the deployment sets.
+ */
+secrets?: Array<string>, };

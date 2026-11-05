@@ -759,6 +759,88 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
         })
     }
 
+    /// `use_service("keycloak", source = ..., ...)` -- an infra service the product runs
+    /// beside its gears (GDL 1.6): a `service.gdl` with `kind = "infra"` in the named source.
+    ///
+    /// What the product is, not where it runs: where the service runs, its public
+    /// address and the copy of its image an environment's registry holds are the
+    /// environment's.
+    ///
+    /// # Arguments
+    /// * `source`: The id of the `source(...)` its passport is found in.
+    /// * `image`: The publisher's image, instead of the passport's. A digest
+    ///   (`...@sha256:...`) is recorded in the lock.
+    /// * `chart`: A ready chart, instead of the passport's (`oci://...`).
+    /// * `chart_version`: That chart's version.
+    /// * `config`: Values for keys of the passport's `config`, as strings.
+    /// * `profile_config`: Profile ids mapped to `config` values merged over `config` when
+    ///   that profile is resolved.
+    fn use_service<'v>(
+        #[starlark(require = pos)] name: &str,
+        #[starlark(require = named)] source: &str,
+        #[starlark(require = named)] image: Option<&str>,
+        #[starlark(require = named)] chart: Option<&str>,
+        #[starlark(require = named)] chart_version: Option<&str>,
+        #[starlark(require = named)] config: Option<Value<'v>>,
+        #[starlark(require = named)] profile_config: Option<Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<crate::records::UseServiceRecord> {
+        for (field, value) in [
+            ("image", image),
+            ("chart", chart),
+            ("chart_version", chart_version),
+        ] {
+            if let Some(value) = value
+                && (value.is_empty() || value.chars().any(char::is_whitespace))
+            {
+                return Err(anyhow::anyhow!(
+                    "use_service(\"{name}\", {field} = {value:?}) is empty or has spaces"
+                ));
+            }
+        }
+        if let Some(chart) = chart
+            && !(chart.starts_with("oci://") || chart.starts_with("https://"))
+        {
+            return Err(anyhow::anyhow!(
+                "use_service(\"{name}\", chart = {chart:?}) is not where a chart is published \
+                 (oci://... or https://...)"
+            ));
+        }
+        let profile_config = config_map("profile_config", profile_config)?
+            .into_iter()
+            .map(|(profile, value)| {
+                let map = match value {
+                    serde_json::Value::Object(map) => map,
+                    other => {
+                        return Err(anyhow::anyhow!(
+                            "`profile_config[\"{profile}\"]` must be a map, got `{other}`"
+                        ));
+                    }
+                };
+                let values = map
+                    .into_iter()
+                    .map(|(key, value)| match value {
+                        serde_json::Value::String(s) => Ok((key, s)),
+                        other => Err(anyhow::anyhow!(
+                            "`profile_config[\"{profile}\"][\"{key}\"]` must be a string, got `{other}`"
+                        )),
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                Ok((profile, values))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(crate::records::UseServiceRecord {
+            name: name.to_owned(),
+            source: source.to_owned(),
+            image: image.map(str::to_owned),
+            chart: chart.map(str::to_owned),
+            chart_version: chart_version.map(str::to_owned),
+            config: string_map("config", config)?.into_iter().collect(),
+            profile_config,
+            declared_at: call_location(eval),
+        })
+    }
+
     /// `product(...)` -- the single top-level declaration of a `product.gdl`.
     ///
     /// # Arguments
@@ -784,6 +866,9 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
     /// * `permissions`: Permission -> the token scopes that grant it, any of them
     ///   (`{"settings.values.write": ["operator"]}`). `["*"]` grants it to every
     ///   authenticated caller, `[]` to nobody. GDL 1.4.
+    /// * `infra`: The infra services it runs beside its gears, as `use_service(...)`. GDL 1.6.
+    /// * `secrets`: The variables its configuration reads as `${NAME}` that no infra service
+    ///   provides; the deployment sets them. GDL 1.6.
 
     fn product<'v>(
         // `"MAJOR.MINOR"`; read before evaluation by `version.rs`, accepted
@@ -805,6 +890,10 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] applications: Option<UnpackList<&'v ApplicationRecord>>,
         #[starlark(require = named)] preferences: Option<UnpackList<&'v PreferenceRecord>>,
         #[starlark(require = named)] permissions: Option<Value<'v>>,
+        #[starlark(require = named)] infra: Option<
+            UnpackList<&'v crate::records::UseServiceRecord>,
+        >,
+        #[starlark(require = named)] secrets: Option<UnpackList<String>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
         // Checked before evaluation; see `version.rs`.
@@ -847,6 +936,10 @@ fn gdl_product_vocabulary(builder: &mut GlobalsBuilder) {
                 .map(|l| l.items.into_iter().cloned().collect())
                 .unwrap_or_default(),
             permissions,
+            infra: infra
+                .map(|l| l.items.into_iter().cloned().collect())
+                .unwrap_or_default(),
+            secrets: strings(secrets),
         });
         Ok(NoneType)
     }
