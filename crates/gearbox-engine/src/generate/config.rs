@@ -375,7 +375,10 @@ pub fn app_config(
                 listen_addr: serve.listen_addr.clone(),
                 public: PublicSection { exposed_only: true },
             }),
-        internal_auth: internal_auth.filter(|_| !application.is_worker()),
+        // Only a product of more than one process has a contract another
+        // process serves; a single process's runtime has no such field to read.
+        internal_auth: internal_auth
+            .filter(|_| !application.is_worker() && input.lock.applications.len() > 1),
         permissions: input.lock.permissions.clone(),
         gears,
     };
@@ -454,20 +457,23 @@ fn write_public_listener(
         .get_mut(REST_HOST_GEAR)
         .filter(|_| embedded || production)
     {
-        let public = gateway
-            .config
-            .entry("public")
-            .or_insert_with(|| Value::Object(Map::new()));
-        if let Value::Object(public) = public {
-            public.entry("exposed_only").or_insert(Value::Bool(true));
+        if gear_reads(input, REST_HOST_GEAR, "public") {
+            let public = gateway
+                .config
+                .entry("public")
+                .or_insert_with(|| Value::Object(Map::new()));
+            if let Value::Object(public) = public {
+                public.entry("exposed_only").or_insert(Value::Bool(true));
+            }
         }
         // The internal listener's advertised address (`internal_bind_addr`
         // itself is the endpoint's config key, written with the others).
-        if let Some(uri) = application
-            .listens
-            .iter()
-            .find(|e| e.name == "internal" && e.gear.as_str() == REST_HOST_GEAR)
-            .and_then(|e| e.advertise_uri.clone())
+        if gear_reads(input, REST_HOST_GEAR, "internal_advertise_uri")
+            && let Some(uri) = application
+                .listens
+                .iter()
+                .find(|e| e.name == "internal" && e.gear.as_str() == REST_HOST_GEAR)
+                .and_then(|e| e.advertise_uri.clone())
         {
             gateway
                 .config
@@ -582,6 +588,25 @@ fn to_json(value: &impl Serialize) -> Result<Value, GenerateError> {
         what: "a unit chart's configuration overlay",
         source,
     })
+}
+
+/// Whether `gear` reads `key`: false only when its description projects a
+/// configuration schema that does not name it. A gear built from an older
+/// release than the one this generator knows refuses a key it lacks
+/// (`deny_unknown_fields`), so a generated setting is written only where the
+/// gear says it takes it; without a schema there is nothing to go by.
+fn gear_reads(input: &GenerateInput<'_>, gear: &str, key: &str) -> bool {
+    let Some(catalogue) = input.catalogue else {
+        return true;
+    };
+    let Some(schema) = GearId::new(gear)
+        .ok()
+        .and_then(|id| catalogue.gear(&id))
+        .and_then(|g| g.config_schema.as_ref())
+    else {
+        return true;
+    };
+    schema.fields.iter().any(|f| f.name == key)
 }
 
 /// Drop keys the projected schema does not name.
