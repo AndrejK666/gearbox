@@ -49,6 +49,11 @@ pub struct RegistryPlan {
     /// `None` when nothing was pinned from a lock, or when that lock already
     /// sits in the output root.
     pub cargo_lock: Option<String>,
+    /// A gear crate the build takes under another package name, by the name
+    /// its description gives: the product's own manifest depends on the gear's
+    /// library under that package ([`crate::locked`]). The entry in `crates`
+    /// stays keyed by the description's name.
+    pub published_as: BTreeMap<String, String>,
 }
 
 /// One crate the build takes from a registry.

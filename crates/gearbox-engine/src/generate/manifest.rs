@@ -311,12 +311,19 @@ fn dependencies(
             crate_dir,
             &root.join(gear.package.path.as_str()),
         );
+        // The package the build takes: the description's crate, unless the
+        // product's lock pins the gear under the name it was published as.
+        let package_name = input
+            .registry
+            .and_then(|plan| plan.published_as.get(&gear.package.crate_name))
+            .unwrap_or(&gear.package.crate_name)
+            .clone();
         let dependency = Dependency {
             // Always spelled out, even where it matches the key: the key is the
             // library identifier and this is the package name, and
             // `cf-api-contracts` linking as `cf_api_contracts` rather than as
             // `api_contracts` is precisely the mistake GBX0209 exists for.
-            package: Some(gear.package.crate_name.clone()),
+            package: Some(package_name.clone()),
             version,
             registry,
             path,
@@ -345,12 +352,12 @@ fn dependencies(
         // them, and the `use x as _;` line that survived would register the
         // wrong gear -- or fail to compile, if we were lucky.
         if let Some(existing) = dependencies.insert(gear.package.lib_ident.clone(), dependency)
-            && existing.package.as_deref() != Some(gear.package.crate_name.as_str())
+            && existing.package.as_deref() != Some(package_name.as_str())
         {
             return Err(GenerateError::LibIdentCollision {
                 ident: gear.package.lib_ident.clone(),
                 first: existing.package.unwrap_or_default(),
-                second: gear.package.crate_name.clone(),
+                second: package_name,
             });
         }
     }

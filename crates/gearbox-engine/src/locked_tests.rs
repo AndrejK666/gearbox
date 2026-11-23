@@ -253,3 +253,47 @@ source = "git+https://github.com/constructorfabric/gears-rust?branch=main#0123ab
     );
     drop(std::fs::remove_dir_all(root));
 }
+
+/// `graph-storage` is described as `cf-gears-graph-storage` and published as
+/// `weftgraph`; Studio's manifest links `graph_storage` as `weftgraph`, and only
+/// that rename -- of a package the lock pins -- is read as a published name.
+#[test]
+fn the_products_manifest_names_a_gear_published_under_another_name() {
+    let dir = std::env::temp_dir().join(format!("gbx-published-names-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        r#"
+[package]
+name = "studio-backend"
+version = "0.1.0"
+
+[dependencies]
+graph_storage = { package = "weftgraph", version = "=0.4.0-rc.3", optional = true }
+toolkit = { package = "cf-gears-toolkit", version = "=0.10.0" }
+local-only = { package = "not-in-the-lock", path = "../x" }
+serde = "1"
+
+[target.'cfg(unix)'.dependencies]
+api-gateway = { package = "cf-gears-api-gateway", version = "=0.5.2" }
+"#,
+    )
+    .unwrap();
+    let lock = format!(
+        "{LOCK}\n[[package]]\nname = \"weftgraph\"\nversion = \"0.4.0-rc.3\"\n\
+         source = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+    );
+    let locked = LockedVersions::parse(&lock).unwrap();
+    let names = published_names(&dir.join("Cargo.lock"), &locked);
+    std::fs::remove_dir_all(&dir).ok();
+    assert_eq!(
+        names.get("graph_storage").map(String::as_str),
+        Some("weftgraph")
+    );
+    assert_eq!(
+        names.get("api_gateway").map(String::as_str),
+        Some("cf-gears-api-gateway")
+    );
+    assert!(!names.contains_key("local_only"), "{names:?}");
+    assert!(!names.contains_key("serde"), "{names:?}");
+}

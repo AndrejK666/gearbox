@@ -327,6 +327,45 @@ impl LockedVersions {
     }
 }
 
+/// The packages the product's own manifest -- the `Cargo.toml` beside its lock
+/// -- links under another name, by that name as a library identifier: `graph_storage
+/// = { package = "weftgraph", ... }` is `graph_storage -> weftgraph`. Only
+/// packages the lock pins from outside the product count. Read from
+/// `[dependencies]`, `[workspace.dependencies]` and every
+/// `[target.*.dependencies]`; a manifest that cannot be read names nothing.
+#[must_use]
+pub fn published_names(lock: &Path, locked: &LockedVersions) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let Some(manifest) = lock
+        .parent()
+        .and_then(|dir| std::fs::read_to_string(dir.join("Cargo.toml")).ok())
+        .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+    else {
+        return out;
+    };
+    let mut tables: Vec<&toml::Value> = Vec::new();
+    tables.extend(manifest.get("dependencies"));
+    tables.extend(
+        manifest
+            .get("workspace")
+            .and_then(|w| w.get("dependencies")),
+    );
+    if let Some(targets) = manifest.get("target").and_then(toml::Value::as_table) {
+        tables.extend(targets.values().filter_map(|t| t.get("dependencies")));
+    }
+    for table in tables.iter().filter_map(|t| t.as_table()) {
+        for (key, spec) in table {
+            let Some(package) = spec.get("package").and_then(toml::Value::as_str) else {
+                continue;
+            };
+            if locked.pins(package) {
+                out.insert(key.replace('-', "_"), package.to_owned());
+            }
+        }
+    }
+    out
+}
+
 /// `git+<url>[?branch=..|?rev=..|?tag=..]#<commit>`, the way Cargo writes a
 /// git source in a lock, as the repository and the locked commit.
 fn git_source(source: &str) -> Option<GitPin> {
@@ -427,6 +466,75 @@ pub fn named_crates(product: &ResolvedProduct) -> BTreeSet<String> {
     names
 }
 
+/// A gear the lock pins under the name it was published as, which is not
+/// the name its description gives (`weftgraph` for `cf-gears-graph-storage`).
+/// The product's own manifest says which: it depends on the gear's library
+/// under that package. Taken from where the lock takes that package, never
+/// from the checkout, which would link a second copy of everything it
+/// reaches by path.
+fn take_published_names(
+    plan: &mut RegistryPlan,
+    pinned: &mut Pinned,
+    product: &ResolvedProduct,
+    lock: &Path,
+    locked: &LockedVersions,
+    where_: &Location,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let renamed = published_names(lock, locked);
+    let mut aliased: Vec<(String, String, String)> = Vec::new();
+    for gear in product.gears.values() {
+        let crate_name = &gear.package.crate_name;
+        if plan.get(crate_name).is_some() {
+            continue;
+        }
+        let Some(package) = renamed.get(&gear.package.lib_ident) else {
+            continue;
+        };
+        if package == crate_name {
+            continue;
+        }
+        let entry = if let Some((version, pin)) = locked.single_git(package) {
+            RegistryCrate {
+                registry: "crates.io".to_owned(),
+                version: version.to_owned(),
+                patch: None,
+                git: Some(pin),
+            }
+        } else if let Some(version) = locked.single(package) {
+            RegistryCrate {
+                registry: "crates.io".to_owned(),
+                version: version.to_owned(),
+                patch: None,
+                git: None,
+            }
+        } else {
+            continue;
+        };
+        aliased.push((gear.id.to_string(), package.clone(), entry.version.clone()));
+        pinned
+            .pinned
+            .insert(crate_name.clone(), entry.version.clone());
+        plan.crates.insert(crate_name.clone(), entry);
+        plan.published_as
+            .insert(crate_name.clone(), package.clone());
+    }
+    for (gear, package, version) in &aliased {
+        diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::GenGearsFromLock,
+                format!(
+                    "`{gear}` is taken as `{package}` {version}, the package the product's \
+                     Cargo.toml links its library under and its Cargo.lock pins"
+                ),
+            )
+            .with_help("its description names another crate; the published name wins")
+            .at(where_.clone()),
+        );
+    }
+    diagnostics
+}
+
 /// Fold the product's lock into the registry plan.
 ///
 /// Returns `plan` untouched for `GearsFrom::Source`, and when no lock was found
@@ -479,7 +587,16 @@ pub fn apply(
 
     let had_plan = plan.is_some();
     let mut plan = plan.unwrap_or_default();
-    let pinned = pin_crates(&mut plan, &named_crates(product), &locked);
+    let mut pinned = pin_crates(&mut plan, &named_crates(product), &locked);
+
+    diagnostics.extend(take_published_names(
+        &mut plan,
+        &mut pinned,
+        product,
+        &found.path,
+        &locked,
+        &where_,
+    ));
 
     // A gear the lock does not name that would reach a pinned crate by path
     // from the checkout: from crates.io when its requirements fit the lock.
