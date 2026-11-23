@@ -171,6 +171,22 @@ impl Parse for GearArgs {
                 continue;
             }
 
+            // Any other `name(...)` is a nested clause this parser does not
+            // model -- `gts_publication(...)` arrived that way. The macro
+            // refuses what it does not know, so the crate compiles with it;
+            // reading it as `name = value` failed the whole product on
+            // "expected `=`". It is a gap like an unknown `name = value`.
+            if input.peek(syn::token::Paren) {
+                let inner;
+                syn::parenthesized!(inner in input);
+                let _: proc_macro2::TokenStream = inner.parse()?;
+                out.unmodelled.push(name);
+                if input.peek(Token![,]) {
+                    input.parse::<Token![,]>()?;
+                }
+                continue;
+            }
+
             input.parse::<Token![=]>()?;
 
             match name.as_str() {

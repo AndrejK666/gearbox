@@ -74,6 +74,24 @@ fn an_argument_this_parser_does_not_model_is_recorded_as_a_gap() {
     assert_eq!(projected.unmodelled, ["something_new"]);
 }
 
+/// A nested clause the parser does not model is a gap too, not a parse
+/// error: `gts_publication(...)` failed every product that named such a gear
+/// with "expected `=`", and the arguments after it are still read.
+#[test]
+fn an_unmodelled_nested_clause_is_recorded_as_a_gap() {
+    let projected = parse(&parse_quote!(
+        name = "studio-authz-plugin",
+        gts_publication(entities = Self::plugin_instance),
+        deps = [types_registry, account_management],
+    ));
+    assert_eq!(projected.name, "studio-authz-plugin");
+    assert_eq!(projected.unmodelled, ["gts_publication"]);
+    assert_eq!(
+        projected.colocated_deps,
+        ["types-registry", "account-management"]
+    );
+}
+
 /// The nested list had the same hole and no surfacing at all: an unknown
 /// `lifecycle(...)` key was consumed and thrown away, so the next lifecycle
 /// argument to land in the macro would have been reported by nothing.
