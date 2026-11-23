@@ -121,6 +121,12 @@ impl Parse for LifecycleArgs {
                 match name.as_str() {
                     "entry" => out.entry = Some(input.parse::<LitStr>()?.value()),
                     "stop_timeout" => out.stop_timeout = Some(input.parse::<LitStr>()?.value()),
+                    // Read and discarded: a function the runtime calls for the
+                    // timeout, so there is no value to project. `stop_timeout`
+                    // stays absent rather than guessed.
+                    "stop_timeout_fn" => {
+                        let _: Expr = input.parse()?;
+                    }
                     "await_ready" => out.await_ready = input.parse::<LitBool>()?.value(),
                     other => {
                         unmodelled.push(format!("lifecycle.{other}"));
@@ -165,6 +171,20 @@ impl Parse for GearArgs {
                 let parsed = inner.parse::<LifecycleArgs>()?;
                 out.lifecycle = Some(parsed.lifecycle);
                 out.unmodelled.extend(parsed.unmodelled);
+                if input.peek(Token![,]) {
+                    input.parse::<Token![,]>()?;
+                }
+                continue;
+            }
+
+            // `gts_publication(crates = [...], entities = ..., publisher = ...)`
+            // (toolkit-macros 0.8): what the gear publishes to the types
+            // registry at start. Read and discarded: paths into the gear's own
+            // code, resolved at run time, with no product fact in them.
+            if name == "gts_publication" && input.peek(syn::token::Paren) {
+                let inner;
+                syn::parenthesized!(inner in input);
+                let _: proc_macro2::TokenStream = inner.parse()?;
                 if input.peek(Token![,]) {
                     input.parse::<Token![,]>()?;
                 }

@@ -74,18 +74,62 @@ fn an_argument_this_parser_does_not_model_is_recorded_as_a_gap() {
     assert_eq!(projected.unmodelled, ["something_new"]);
 }
 
-/// A nested clause the parser does not model is a gap too, not a parse
-/// error: `gts_publication(...)` failed every product that named such a gear
-/// with "expected `=`", and the arguments after it are still read.
+/// `gts_publication(...)` (toolkit-macros 0.8) failed every product naming
+/// such a gear with "expected `=`". It is read, carries no product fact, and
+/// the arguments after it are still read.
 #[test]
-fn an_unmodelled_nested_clause_is_recorded_as_a_gap() {
+fn gts_publication_is_read_and_not_a_gap() {
     let projected = parse(&parse_quote!(
         name = "studio-authz-plugin",
-        gts_publication(entities = Self::plugin_instance),
+        gts_publication(crates = [crate, my_sdk], entities = Self::plugin_instance),
         deps = [types_registry, account_management],
     ));
     assert_eq!(projected.name, "studio-authz-plugin");
-    assert_eq!(projected.unmodelled, ["gts_publication"]);
+    assert!(
+        projected.unmodelled.is_empty(),
+        "{:?}",
+        projected.unmodelled
+    );
+    assert_eq!(
+        projected.colocated_deps,
+        ["types-registry", "account-management"]
+    );
+}
+
+/// `lifecycle(stop_timeout_fn = ...)` is read: the timeout is computed at run
+/// time, so `stop_timeout` stays absent and nothing is reported as a gap.
+#[test]
+fn stop_timeout_fn_is_read_and_not_a_gap() {
+    let projected = parse(&parse_quote!(
+        name = "durable-execution",
+        lifecycle(
+            entry = "serve",
+            stop_timeout_fn = Self::stop_timeout,
+            await_ready
+        )
+    ));
+    assert!(
+        projected.unmodelled.is_empty(),
+        "{:?}",
+        projected.unmodelled
+    );
+    let lifecycle = projected.lifecycle.expect("a lifecycle clause");
+    assert_eq!(lifecycle.stop_timeout, None);
+    assert!(lifecycle.await_ready);
+}
+
+/// A nested clause the parser does not model is a gap, not a parse error, the
+/// way an unknown `name = value` is: the macro lands a clause first and this
+/// parser catches up afterwards.
+#[test]
+fn an_unmodelled_nested_clause_is_recorded_as_a_gap() {
+    let projected = parse(&parse_quote!(
+        name = "x",
+        something_nested(a = 1, b = [c]),
+        deps = [types_registry, account_management],
+    ));
+    assert_eq!(projected.name, "x");
+    assert_eq!(projected.unmodelled, ["something_nested"]);
     assert_eq!(
         projected.colocated_deps,
         ["types-registry", "account-management"]
